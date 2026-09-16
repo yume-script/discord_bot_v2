@@ -7,15 +7,19 @@
 """
 from __future__ import annotations
 
+import io
 import logging
 
 import discord
 from discord import Message
 from discord.ext import commands
 
+from ai.backends.base import ImageGenError
+from ai.image_engine import generate_image
 from ai.rag_engine import a_query
 from config import settings
 from core import autonomous_reply
+from core.concurrency import image_gen_pool
 from core.kakao_feed import build_feed_reply, is_feed_message as _is_feed_message
 from core.kakao_relay import parse_kakao_author
 from core.katalk_bridge import log_message, send_message
@@ -27,6 +31,13 @@ log = logging.getLogger("chat")
 
 GREETING_REPLY = "네! 저 여기 있어요. 궁금한 거 있으면 편하게 물어봐 주세요 :)"
 FAILURE_REPLY = "어라, 지금 대답을 못 만들었어요. 잠시 후 다시 불러주세요."
+
+# 디스코드 슬래시 명령어(app_commands)는 자동완성 목록을 거쳐야 파라미터가 채워지는 인터랙션
+# 방식이라, "/그림 프롬프트"를 한 번에 빠르게 쳐서 보내면 인식이 안 될 수 있다. 예전 봇처럼
+# 텍스트로 친 "/그림 ...", "/그림스타일 ... | 스타일" 도 그대로 인식해서 처리하는 경로를 따로 둔다
+# (진짜 슬래시 명령어는 cogs/image_gen.py가 계속 별도로 처리 - 둘 다 지원).
+TEXT_IMAGE_PREFIX = "/그림 "
+TEXT_IMAGE_STYLE_PREFIX = "/그림스타일 "
 
 
 class Chat(commands.Cog):
@@ -60,6 +71,18 @@ class Chat(commands.Cog):
                 room_id = user.raw_id.split("//", 1)[0]
                 await message.channel.send(feed_reply)
                 await send_message(room_id, feed_reply)
+            return
+
+        # 1-1. "/그림 프롬프트" / "/그림스타일 프롬프트 | 스타일" 텍스트 명령 - 슬래시 명령어
+        # 자동완성 UI를 거치지 않고 빠르게 타이핑해서 보내도 바로 처리된다.
+        if content.startswith(TEXT_IMAGE_STYLE_PREFIX):
+            await self._handle_text_image_command(message, content[len(TEXT_IMAGE_STYLE_PREFIX):], with_style=True)
+            return
+        if content.startswith(TEXT_IMAGE_PREFIX):
+            await self._handle_text_image_command(message, content[len(TEXT_IMAGE_PREFIX):], with_style=False)
+            return
+        if content.strip() in ("/그림", "/그림스타일"):
+            await message.reply("사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`")
             return
 
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
@@ -116,6 +139,38 @@ class Chat(commands.Cog):
             log.exception("자율 응답 생성 실패 (channel=%s)", message.channel.id)
         finally:
             autonomous_reply.clear_active(key)
+
+    async def _handle_text_image_command(self, message: Message, rest: str, *, with_style: bool) -> None:
+        prompt = rest.strip()
+        style = None
+        if with_style and "|" in prompt:
+            prompt, _, style = prompt.rpartition("|")
+            prompt = prompt.strip()
+            style = style.strip() or None
+
+        if not prompt:
+            usage = "사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`"
+            await message.reply(usage)
+            return
+
+        user = UserRef.from_discord(message.author.id, message.author.display_name)
+
+        async def job():
+            return await generate_image(prompt, style=style)
+
+        try:
+            async with message.channel.typing():
+                result = await image_gen_pool.submit(user, job)
+        except ImageGenError as exc:
+            await message.reply(f"이미지 생성 실패: {exc}")
+            return
+        except Exception:
+            log.exception("텍스트 명령 이미지 생성 실패 (user=%s, prompt=%s)", user.key, prompt)
+            await message.reply("이미지 생성 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+            return
+
+        file = discord.File(io.BytesIO(result.image_bytes), filename="generated.png")
+        await message.reply(content=f"`{prompt}` ({result.backend}/{result.model})", file=file)
 
     async def _safe_reply(self, message: Message, text: str) -> None:
         try:

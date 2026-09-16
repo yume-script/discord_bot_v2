@@ -99,6 +99,13 @@ python app.py
 - `ai/image_engine.py`가 단일 진입점 — 명령어(`cogs/image_gen.py`)와 자율대화가 이 함수 하나만 호출한다.
 - 백엔드는 AI Horde 하나만 사용.
 - 기본 모델은 `HORDE_DEFAULT_MODEL=Nova Anime XL` (기존 봇의 자율대화 기본 모델 승격 결정을 반영).
+- **두 가지 방식 모두 지원**:
+  - 진짜 디스코드 슬래시 명령어 (`/그림`, `/그림스타일`) — `cogs/image_gen.py`. 자동완성 목록을
+    거쳐 파라미터를 채우는 인터랙션 방식.
+  - 텍스트로 빠르게 치는 `/그림 프롬프트`, `/그림스타일 프롬프트 | 스타일명` — `cogs/chat.py`의
+    `on_message`에서 직접 감지해서 처리 (슬래시 명령어 UI를 거치지 않고 한 번에 타이핑해서
+    보내도 바로 인식됨, 예전 봇과 동일한 방식). 둘 다 같은 `ai/image_engine.generate_image()`와
+    `core/concurrency.image_gen_pool`을 공유한다.
 
 ## 아직 안 된 것 (TODO)
 - [x] `core/money_system.py` 원본 소스로 교체 완료
