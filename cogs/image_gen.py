@@ -29,20 +29,25 @@ class ImageGen(commands.Cog):
 
     @app_commands.command(name="그림", description="이미지를 생성합니다")
     async def generate(self, interaction: Interaction, prompt: str):
+        log.info("/그림 수신 (user=%s, channel=%s, prompt=%r)", interaction.user.id, interaction.channel_id, prompt)
         await interaction.response.defer()
+        log.info("/그림 defer 완료 - 큐에 제출합니다")
         user = UserRef.from_discord(interaction.user.id, interaction.user.display_name)
 
         async def job():
+            log.info("/그림 워커가 작업을 시작합니다 (user=%s)", user.key)
             return await generate_image(prompt)
 
         await self._run_and_reply(interaction, user, job, prompt)
 
     @app_commands.command(name="그림스타일", description="스타일(모델)을 지정해 이미지를 생성합니다")
     async def generate_with_style(self, interaction: Interaction, prompt: str, style: str):
+        log.info("/그림스타일 수신 (user=%s, prompt=%r, style=%r)", interaction.user.id, prompt, style)
         await interaction.response.defer()
         user = UserRef.from_discord(interaction.user.id, interaction.user.display_name)
 
         async def job():
+            log.info("/그림스타일 워커가 작업을 시작합니다 (user=%s)", user.key)
             return await generate_image(prompt, style=style)
 
         await self._run_and_reply(interaction, user, job, prompt)
@@ -60,6 +65,7 @@ class ImageGen(commands.Cog):
             await interaction.followup.send("이미지 생성 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
             return
 
+        log.info("/그림 생성 완료 - 디스코드로 전송합니다 (backend=%s, model=%s)", result.backend, result.model)
         file = discord.File(io.BytesIO(result.image_bytes), filename="generated.png")
         await interaction.followup.send(
             content=f"`{prompt}` ({result.backend}/{result.model})", file=file

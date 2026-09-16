@@ -34,6 +34,10 @@ class AesunBot(commands.Bot):
 
         image_gen_pool.start()
 
+        # 슬래시 명령어 실행 중 예외가 나면 기본 핸들러가 조용히 삼킬 수 있어서
+        # 트리 전역 에러 핸들러를 직접 붙인다.
+        self.tree.on_error = self._on_app_command_error
+
         for cog in INITIAL_COGS:
             await self.load_extension(cog)
             log.info("loaded cog: %s", cog)
@@ -66,6 +70,33 @@ class AesunBot(commands.Bot):
 
     async def on_ready(self):
         log.info("logged in as %s", self.user)
+
+    async def _on_app_command_error(self, interaction: discord.Interaction, error: Exception):
+        log.exception(
+            "슬래시 명령어 실행 중 예외 (command=%s, user=%s)",
+            getattr(interaction.command, "name", None),
+            interaction.user.id,
+            exc_info=error,
+        )
+        msg = "명령어 처리 중 오류가 발생했어요."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(msg)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+        except discord.HTTPException:
+            log.exception("에러 메시지 전송조차 실패")
+
+    async def on_interaction(self, interaction: discord.Interaction):
+        # 슬래시 명령어가 봇까지 도달했는지 자체를 확인하기 위한 진단 로그.
+        # "명령어는 보이는데 아무 반응 없음"일 때, 여기가 찍히면 도달은 한 것이고
+        # 안 찍히면 디스코드->봇 전달 단계(중복 인스턴스, 게이트웨이 세션 등) 문제다.
+        log.info(
+            "interaction 수신: type=%s, command=%s, channel=%s",
+            interaction.type,
+            getattr(interaction.command, "name", None),
+            interaction.channel_id,
+        )
 
 
 async def main():
