@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import io
+import logging
 
 import discord
 from discord import Interaction, app_commands
@@ -18,6 +19,8 @@ from ai.backends.base import ImageGenError
 from ai.image_engine import generate_image
 from core.concurrency import image_gen_pool
 from core.user_ref import UserRef
+
+log = logging.getLogger("image_gen")
 
 
 class ImageGen(commands.Cog):
@@ -49,6 +52,12 @@ class ImageGen(commands.Cog):
             result = await image_gen_pool.submit(user, job)
         except ImageGenError as exc:
             await interaction.followup.send(f"이미지 생성 실패: {exc}")
+            return
+        except Exception:
+            # HORDE_API_KEY 누락, 네트워크 오류 등 ImageGenError로 안 감싸진 예외까지 전부 잡아서
+            # 최소한 "조용히 2분째 무반응"은 안 나게 한다.
+            log.exception("이미지 생성 중 예상 못한 예외 (user=%s, prompt=%s)", user.key, prompt)
+            await interaction.followup.send("이미지 생성 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
             return
 
         file = discord.File(io.BytesIO(result.image_bytes), filename="generated.png")

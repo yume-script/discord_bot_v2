@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import logging
+
 import discord
 from discord import Message
 from discord.ext import commands
@@ -18,7 +20,10 @@ from core.kakao_relay import parse_kakao_author
 from core.katalk_bridge import log_message, send_message
 from core.user_ref import UserRef
 
+log = logging.getLogger("chat")
+
 GREETING_REPLY = "네! 저 여기 있어요. 궁금한 거 있으면 편하게 물어봐 주세요 :)"
+FAILURE_REPLY = "어라, 지금 대답을 못 만들었어요. 잠시 후 다시 불러주세요."
 
 
 class Chat(commands.Cog):
@@ -61,6 +66,10 @@ class Chat(commands.Cog):
             try:
                 reply = GREETING_REPLY if not prompt else await self._generate(message, prompt)
                 await self._reply(message, user, is_kakao, reply)
+            except Exception:
+                # LLM/LiteLLM 인증 실패, 타임아웃 등 - 조용히 실패하지 않고 최소한 사용자에게 알린다.
+                log.exception("호출어 응답 생성 실패 (channel=%s)", message.channel.id)
+                await self._safe_reply(message, FAILURE_REPLY)
             finally:
                 autonomous_reply.clear_active(key)
             return
@@ -80,8 +89,18 @@ class Chat(commands.Cog):
         try:
             reply = await self._generate(message, content)
             await self._reply(message, user, is_kakao, reply)
+        except Exception:
+            # 자율 응답은 원래 확률적으로 참견하는 거라, 실패했다고 채널에 에러 메시지까지
+            # 남기면 오히려 더 어색하다 - 로그만 남기고 조용히 넘어간다.
+            log.exception("자율 응답 생성 실패 (channel=%s)", message.channel.id)
         finally:
             autonomous_reply.clear_active(key)
+
+    async def _safe_reply(self, message: Message, text: str) -> None:
+        try:
+            await message.reply(text)
+        except discord.HTTPException:
+            log.exception("실패 메시지 전송조차 실패 (channel=%s)", message.channel.id)
 
     async def _generate(self, message: Message, prompt: str) -> str:
         async with message.channel.typing():
