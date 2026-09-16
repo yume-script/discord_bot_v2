@@ -74,11 +74,12 @@ python app.py
   - `core/nickname_watch.py` — 원본 `check_and_update_nickname.py`를 그대로 옮김. 카톡 발신자의
     닉네임 변경을 감지해서, 바뀐 경우에만 변경 이력을 담은 알림을 만든다 (`storage/nickname_detect/`에
     방ID_유저ID별 JSONL로 이력 저장).
-  - `core/money_system.py` — **[주의] 원본 `money_system.py` 소스를 못 구해서 새로 작성한 버전이다.**
-    `app_kakao_handler.py`의 호출부(`transaction(room_id=, user_id=, amount=10,
-    transaction_type='chat')`)와 같은 인터페이스로만 맞췄고, 잔액 저장 방식(`storage/money/`에
-    방ID별 JSON 잔액 + JSONL 거래내역)은 새로 설계한 것이라 원본과 다를 수 있다. 원본 파일을
-    구하면 교체할 것.
+  - `core/money_system.py` — 원본 `money_system.py`를 그대로 이식 (저장 폴더만 `storage/money/`로
+    조정). 방ID+유저ID별 JSONL에 거래 기록을 append하고 마지막 줄을 최신 잔액/빚으로 취급한다.
+    수익 발생 시 빚이 있으면 10% 자동 상환, 같은 날 채팅 보상은 한 줄로 합쳐서 파일 비대화를
+    막고, 하루 한 번 100원 대출(`borrow_money`, 빚으로 잡힘) 기능도 포함되어 있다. `transaction()`은
+    `(성공여부, 새 잔액 또는 메시지)` 튜플을 반환하지만 채팅 보상 호출부(`cogs/chat.py`)는
+    원본처럼 반환값을 쓰지 않는다.
   - 카톡 일반 메시지(피드/명령어 제외)마다 닉네임 변경 체크 + 채팅 머니 10원 지급이 자동으로
     실행된다 (`cogs/chat.py`, 호출어/자율응답 여부와 무관하게 항상 실행 — 원본과 동일).
 
@@ -100,7 +101,7 @@ python app.py
 - 기본 모델은 `HORDE_DEFAULT_MODEL=Nova Anime XL` (기존 봇의 자율대화 기본 모델 승격 결정을 반영).
 
 ## 아직 안 된 것 (TODO)
-- [ ] `core/money_system.py` 원본 소스 확보 후 정확한 버전으로 교체 (지금은 인터페이스만 맞춘 새 구현)
+- [x] `core/money_system.py` 원본 소스로 교체 완료
 - [ ] `core/discord_channel_log.py`: 순수 디스코드 채널 로그 저장 (자율 응답 맥락용, 카톡 로그와 분리 - `DISCORD_LOG_CHANNEL_IDS`)
 - [ ] `ai/rag_engine.py`의 tool_calls 실행 루프 완성
 - [ ] `config/mcp_servers.yaml`에 실제 MCP 서버 등록 (예: BookOasis mcp_server.py)
