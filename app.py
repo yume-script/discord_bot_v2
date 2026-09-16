@@ -45,9 +45,18 @@ class AesunBot(commands.Bot):
             if settings.DISCORD_GUILD_ID:
                 guild = discord.Object(id=settings.DISCORD_GUILD_ID)
                 self.tree.copy_global_to(guild=guild)
-                await self.tree.sync(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                log.info(
+                    "슬래시 명령어 동기화 완료: %d개 (guild=%s, 즉시 반영됨) - %s",
+                    len(synced), settings.DISCORD_GUILD_ID, [c.name for c in synced],
+                )
             else:
-                await self.tree.sync()
+                synced = await self.tree.sync()
+                log.warning(
+                    "슬래시 명령어 동기화 완료: %d개 (글로벌 - 디스코드 클라이언트 반영까지 "
+                    "최대 1시간 걸릴 수 있음. DISCORD_GUILD_ID를 설정하면 즉시 반영됨) - %s",
+                    len(synced), [c.name for c in synced],
+                )
         except discord.HTTPException:
             log.exception(
                 "슬래시 명령어 동기화 실패 - 봇 초대 URL에 'applications.commands' 스코프가 "
