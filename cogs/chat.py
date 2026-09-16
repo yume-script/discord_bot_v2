@@ -16,6 +16,7 @@ from discord.ext import commands
 
 from ai.backends.base import ImageGenError
 from ai.image_engine import generate_image
+from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
 from core import autonomous_reply
@@ -85,6 +86,27 @@ class Chat(commands.Cog):
             await message.reply("사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`")
             return
 
+        # 1-2. "/날씨", "/전국날씨", "/환율", "/주식" 텍스트 명령 - 슬래시 명령어(cogs/lookup.py)와
+        # 같은 ai/local_tools.py 함수를 호출한다.
+        if content.startswith("/전국날씨"):
+            await self._handle_lookup(message, get_nationwide_weather, {})
+            return
+        if content.startswith("/날씨"):
+            location = content[len("/날씨"):].strip() or "서울"
+            await self._handle_lookup(message, get_weather, {"location": location})
+            return
+        if content.startswith("/환율"):
+            currency = content[len("/환율"):].strip() or "USD"
+            await self._handle_lookup(message, get_exchange_rate, {"currency": currency})
+            return
+        if content.startswith("/주식"):
+            ticker = content[len("/주식"):].strip()
+            if not ticker:
+                await message.reply("사용법: `/주식 005930.KS` (코스피), `/주식 AAPL` (미국주식)")
+                return
+            await self._handle_lookup(message, get_stock_price, {"ticker": ticker})
+            return
+
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
         # 늦게 기록하면 "봇이 이미 응답 중일 때 온 메시지"가 조용히 로그에서 누락됨)
         if not is_command and not is_feed_message:
@@ -139,6 +161,15 @@ class Chat(commands.Cog):
             log.exception("자율 응답 생성 실패 (channel=%s)", message.channel.id)
         finally:
             autonomous_reply.clear_active(key)
+
+    async def _handle_lookup(self, message: Message, tool_fn, args: dict) -> None:
+        try:
+            async with message.channel.typing():
+                result = await tool_fn.ainvoke(args)
+            await message.reply(result)
+        except Exception:
+            log.exception("조회 명령 실패 (tool=%s, args=%s)", getattr(tool_fn, "name", tool_fn), args)
+            await message.reply("조회 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
 
     async def _handle_text_image_command(self, message: Message, rest: str, *, with_style: bool) -> None:
         prompt = rest.strip()

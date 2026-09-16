@@ -14,6 +14,7 @@ log = logging.getLogger("app")
 INITIAL_COGS = [
     "cogs.image_gen",
     "cogs.attendance",
+    "cogs.lookup",
     "cogs.chat",
 ]
 

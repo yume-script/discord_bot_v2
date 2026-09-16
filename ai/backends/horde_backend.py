@@ -17,7 +17,7 @@ from config import settings
 
 HORDE_BASE_URL = "https://aihorde.net/api/v2"
 POLL_INTERVAL_SEC = 4
-MAX_WAIT_SEC = 180
+MAX_WAIT_SEC = 1800
 
 
 class HordeBackend(ImageBackend):

@@ -56,20 +56,49 @@ class ImageGen(commands.Cog):
         try:
             result = await image_gen_pool.submit(user, job)
         except ImageGenError as exc:
-            await interaction.followup.send(f"이미지 생성 실패: {exc}")
+            await self._safe_followup(interaction, f"이미지 생성 실패: {exc}")
             return
         except Exception:
             # HORDE_API_KEY 누락, 네트워크 오류 등 ImageGenError로 안 감싸진 예외까지 전부 잡아서
             # 최소한 "조용히 2분째 무반응"은 안 나게 한다.
             log.exception("이미지 생성 중 예상 못한 예외 (user=%s, prompt=%s)", user.key, prompt)
-            await interaction.followup.send("이미지 생성 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+            await self._safe_followup(interaction, "이미지 생성 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
             return
 
         log.info("/그림 생성 완료 - 디스코드로 전송합니다 (backend=%s, model=%s)", result.backend, result.model)
-        file = discord.File(io.BytesIO(result.image_bytes), filename="generated.png")
-        await interaction.followup.send(
-            content=f"`{prompt}` ({result.backend}/{result.model})", file=file
+        await self._safe_followup(
+            interaction, content=f"`{prompt}` ({result.backend}/{result.model})", image_bytes=result.image_bytes
         )
+
+    async def _safe_followup(
+        self, interaction: Interaction, content: str, image_bytes: bytes | None = None
+    ):
+        """
+        슬래시 명령어의 followup 토큰은 최대 15분(900초)까지만 유효하다. 이미지 생성
+        타임아웃(MAX_WAIT_SEC)을 그보다 길게 잡아둔 상태라, 15분 넘게 걸리면 결과가 나와도
+        followup 전송 자체가 실패할 수 있다 - 그 경우 채널에 직접 메시지로라도 보낸다
+        (사용자를 언급해서 누구에게 온 결과인지 알 수 있게).
+
+        discord.File은 한 번 전송하면 내부 스트림이 소모되므로, 재시도할 때마다 raw bytes에서
+        새로 만들어야 한다 - 그래서 File 객체가 아니라 image_bytes를 받는다.
+        """
+        try:
+            kwargs = {"content": content}
+            if image_bytes is not None:
+                kwargs["file"] = discord.File(io.BytesIO(image_bytes), filename="generated.png")
+            await interaction.followup.send(**kwargs)
+        except discord.HTTPException:
+            log.warning(
+                "followup 전송 실패(토큰 만료 가능성, 15분 제한) - 채널에 직접 전송 시도 (user=%s)",
+                interaction.user.id,
+            )
+            try:
+                channel = interaction.channel
+                if channel is not None:
+                    file = discord.File(io.BytesIO(image_bytes), filename="generated.png") if image_bytes else None
+                    await channel.send(content=f"{interaction.user.mention} {content}", file=file)
+            except discord.HTTPException:
+                log.exception("채널 직접 전송도 실패 (user=%s)", interaction.user.id)
 
 
 async def setup(bot: commands.Bot):

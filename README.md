@@ -107,10 +107,30 @@ python app.py
     보내도 바로 인식됨, 예전 봇과 동일한 방식). 둘 다 같은 `ai/image_engine.generate_image()`와
     `core/concurrency.image_gen_pool`을 공유한다.
 
+## 날씨 / 환율 / 주식
+- 원본 저장소를 다시 확인해보니 `app_command_handler.py`에 30개 이상의 명령어가 라우팅되어
+  있었다 (미니게임 7종, 날씨/환율/주식, 라그나로크M RAG 연동, mbti, 운세 등 — 새 봇에는 아직
+  일부만 옮겨져 있다). 그중 **날씨/환율/주식을 우선 이식**했다.
+- `ai/local_tools.py` — 날씨(Open-Meteo), 환율(Frankfurter/ECB 기준), 주식(Yahoo Finance
+  비공식 차트 API) 조회 함수를 LangChain `@tool`로 감쌌다. 전부 API 키가 필요 없는 공개
+  API라, 원본 `weather_district.py`/`weather_nation.py`/`exchange.py`/`stock.py` 소스를
+  확보하지 못해서 새로 작성했다 (원본을 구하면 교체 가능).
+- **명령어와 자연어 대화가 항상 같은 데이터를 쓴다** — `cogs/lookup.py`(슬래시 명령어),
+  `cogs/chat.py`의 텍스트 명령(`/날씨`, `/전국날씨`, `/환율`, `/주식`), 그리고
+  `ai/rag_engine.py`(애순이에게 자연어로 직접 물어볼 때)가 전부 `ai/local_tools.py`의
+  같은 함수를 호출한다.
+- `ai/rag_engine.py`는 이제 매 호출마다 로컬 도구(+MCP 도구)를 전부 LLM에 바인딩해두고,
+  필요하다고 판단하면 LLM이 알아서 tool_calls를 발생시켜 호출한다 (최대 4턴 왕복). 예전엔
+  의도 분류(needs_mcp) 후 필요할 때만 도구를 붙이는 방식이었는데, 분류가 틀려서 도구가
+  안 붙는 경우를 없애려고 항상 바인딩하는 쪽으로 단순화했다.
+
 ## 아직 안 된 것 (TODO)
+- [ ] 미니게임 7종(바카라/블랙잭/드래곤타이거/가위바위보/주사위/슬롯머신/다이스포커/로또) 이식
+- [ ] 라그나로크M RAG 연동 명령어(가이드/검색/카드확률/안전제련/어비스홀타이머) 이식
+- [ ] 기타 명령어(mbti, 운세, 개미소리, 위성사진, 카톡통계, 쿠폰, 오늘대화요약 등) 이식 여부 결정
 - [x] `core/money_system.py` 원본 소스로 교체 완료
 - [ ] `core/discord_channel_log.py`: 순수 디스코드 채널 로그 저장 (자율 응답 맥락용, 카톡 로그와 분리 - `DISCORD_LOG_CHANNEL_IDS`)
-- [ ] `ai/rag_engine.py`의 tool_calls 실행 루프 완성
+- [x] `ai/rag_engine.py`의 tool_calls 실행 루프 완성 (날씨/환율/주식 도구 연동과 함께)
 - [ ] `config/mcp_servers.yaml`에 실제 MCP 서버 등록 (예: BookOasis mcp_server.py)
 - [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
