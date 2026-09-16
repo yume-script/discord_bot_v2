@@ -36,12 +36,22 @@ class AesunBot(commands.Bot):
             await self.load_extension(cog)
             log.info("loaded cog: %s", cog)
 
-        if settings.DISCORD_GUILD_ID:
-            guild = discord.Object(id=settings.DISCORD_GUILD_ID)
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-        else:
-            await self.tree.sync()
+        # 슬래시 명령어 동기화는 실패해도(권한/스코프 문제 등) 봇 전체가 죽으면 안 된다.
+        # setup_hook에서 예외가 나면 discord.py가 로그인 자체를 중단시켜서 재시작 크래시루프에
+        # 빠지므로, 여기서만 예외를 잡고 경고 로그를 남긴 뒤 나머지 기동은 계속 진행한다.
+        try:
+            if settings.DISCORD_GUILD_ID:
+                guild = discord.Object(id=settings.DISCORD_GUILD_ID)
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+            else:
+                await self.tree.sync()
+        except discord.HTTPException:
+            log.exception(
+                "슬래시 명령어 동기화 실패 - 봇 초대 URL에 'applications.commands' 스코프가 "
+                "포함됐는지, DISCORD_GUILD_ID가 실제 서버 ID와 일치하는지 확인할 것. "
+                "명령어 동기화만 건너뛰고 나머지 기능은 정상 기동한다."
+            )
 
     async def on_ready(self):
         log.info("logged in as %s", self.user)
