@@ -51,15 +51,21 @@ python app.py
 
 ## 카톡 연동 (디스코드 채널 릴레이 방식)
 기존 봇과 동일한 방식을 그대로 씁니다 - **별도 수신 서버가 없습니다.**
+실제 브릿지 코드(Flask 서버, 카톡→디스코드 웹훅 릴레이)를 검토해서 정확한 형식에 맞췄습니다.
 
-- 브릿지가 카톡 메시지를 **"카톡이름//방ID//유저ID"** 형식의 닉네임으로 인코딩해서,
-  `KATALK_LINKED_CHANNEL_IDS`(기존 `TARGET_THREAD_IDS`)에 등록된 디스코드 채널에
-  일반 디스코드 메시지로 올려준다. 구분자는 `NICKNAME_DELIMITER`(기본 `//`).
-- `core/kakao_relay.py`의 `parse_kakao_author()`가 `message.author.name`을 파싱해서
-  카톡 메시지인지, 어느 방/유저인지 판별한다 (`cogs/chat.py`의 `on_message`에서 호출).
+- 브릿지가 카톡 메시지를 **`"{발신자명}//{방ID}//{유저ID}"`** 형식의 닉네임으로 인코딩해서
+  디스코드 웹훅(스레드 지정 가능)으로 올려준다. 구분자는 `NICKNAME_DELIMITER`(기본 `"//"`).
+- 브릿지는 카톡방(방ID)별로 다른 디스코드 스레드에 매핑해서 보낼 수 있고, 매핑 안 된 방은
+  기본 스레드로 몰린다 — **한 스레드에 여러 방이 섞일 수 있음**. `KATALK_LINKED_CHANNEL_IDS`에는
+  브릿지가 쓰는 모든 스레드 ID(매핑된 것 + 기본 스레드)를 넣어야 한다.
+- `core/kakao_relay.py`의 `parse_kakao_author()`가 `message.author.name`을 뒤에서부터
+  `rsplit`으로 파싱해서 카톡 메시지인지, 어느 방/유저인지 판별한다
+  (`cogs/chat.py`의 `on_message`에서 호출).
 - 봇의 답장은 디스코드 채널에도 보내고(`message.reply`), 동시에 `core/katalk_bridge.send_message()`로
-  브릿지 서버(`KATALK_BRIDGE_URL`, 기존 `192.168.0.50:3000`)에 POST해서 실제 카톡방에도 내보낸다
-  (기존 `katalk_webhook.send_katalk_webhook` 역할).
+  `KATALK_BRIDGE_URL`에 POST해서 실제 카톡방에도 내보낸다.
+  **확인 필요**: 지금까지 본 브릿지 코드는 카톡→디스코드 단방향(수신)만 구현되어 있다.
+  디스코드→카톡(봇 답장을 실제 카톡방에 전송) 쪽 엔드포인트가 별도로 있는지, 아니면 새로 만들어야
+  하는지 확인이 필요하다.
 - 카톡 메시지 로그는 `core/katalk_bridge.log_message()`가 방(room_id) 단위 JSONL로 저장한다.
 - **아직 이식 안 한 것**: 카톡 입장/퇴장 피드 메시지(`{"feedType"...}`), 닉네임 변경 알림, 채팅 머니 지급
   (기존 `app_kakao_handler.handle_kakao_features`, `money_system.py`) — 이 봇에 포함시킬지부터 결정 필요.
@@ -89,4 +95,5 @@ python app.py
 - [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
 - [ ] 포링푸드 쪽 파서를 새 `katalk_log` JSONL 포맷에 맞춰 업데이트
-- [ ] 브릿지 서버 계정이 "카톡이름//방ID//유저ID" 닉네임으로 디스코드 메시지를 올리는 쪽 동작을 새 봇 환경에서도 그대로 쓸 수 있는지 확인
+- [ ] 디스코드→카톡(봇 답장을 실제 카톡방으로) 전송 엔드포인트 확인/구현 — 검토한 브릿지 코드는 카톡→디스코드 단방향만 구현되어 있음
+- [ ] `KATALK_LINKED_CHANNEL_IDS`에 브릿지의 실제 스레드 ID 목록(방별 매핑 + 기본 스레드) 채워넣기

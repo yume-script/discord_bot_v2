@@ -22,8 +22,8 @@ DISCORD_BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 DISCORD_GUILD_ID = int(os.environ.get("DISCORD_GUILD_ID", "0") or 0)
 DISCORD_LOG_CHANNEL_IDS = _csv_ids(os.environ.get("DISCORD_LOG_CHANNEL_IDS"))
 
-# --- Kakao (디스코드 채널 릴레이 방식 - 원본 봇과 동일) ---
-# 브릿지가 카톡 메시지를 "카톡이름//방ID//유저ID" 닉네임으로 인코딩해서 아래 채널들에
+# --- Kakao (디스코드 채널 릴레이 방식 - 원본 봇과 동일, 실제 브릿지 코드로 형식 확인함) ---
+# 브릿지가 카톡 메시지를 "{발신자명}//{방ID}//{유저ID}" 닉네임으로 인코딩해서 아래 채널들에
 # 일반 디스코드 메시지로 올려준다. 이 봇은 별도 수신 서버 없이 on_message에서 파싱만 한다.
 KATALK_BRIDGE_URL = os.environ.get("KATALK_BRIDGE_URL", "")  # 답장을 내보낼 때만 사용
 KATALK_LINKED_CHANNEL_IDS = _csv_ids(os.environ.get("KATALK_LINKED_CHANNEL_IDS"))  # 기존 TARGET_THREAD_IDS
