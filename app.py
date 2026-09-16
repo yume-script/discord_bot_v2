@@ -22,7 +22,9 @@ class AesunBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
-        intents.members = True
+        # SERVER MEMBERS INTENT는 코드에서 실제로 쓰는 곳이 없어서(멤버 목록 캐싱, on_member_join
+        # 등을 안 씀) 뺐다 - MESSAGE_CONTENT INTENT만 있으면 된다. message.author.display_name은
+        # 멤버 인텐트 없이도 메시지 이벤트에 기본 포함된다.
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self) -> None:
