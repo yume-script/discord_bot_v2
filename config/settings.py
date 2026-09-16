@@ -56,4 +56,6 @@ PORING_FOOD_STATUS_JSON_PATH = Path(
 # --- Storage paths (초기화 결정: 빈 상태로 시작) ---
 KATALK_LOG_DIR = BASE_DIR / "storage" / "katalk_log"
 VECTOR_DB_DIR = BASE_DIR / "storage" / "vector_db"
+NICKNAME_DETECT_DIR = BASE_DIR / "storage" / "nickname_detect"  # 기존 check_and_update_nickname.py와 동일 용도
+MONEY_DIR = BASE_DIR / "storage" / "money"
 MCP_SERVERS_CONFIG_PATH = BASE_DIR / "config" / "mcp_servers.yaml"

@@ -67,8 +67,20 @@ python app.py
   디스코드→카톡(봇 답장을 실제 카톡방에 전송) 쪽 엔드포인트가 별도로 있는지, 아니면 새로 만들어야
   하는지 확인이 필요하다.
 - 카톡 메시지 로그는 `core/katalk_bridge.log_message()`가 방(room_id) 단위 JSONL로 저장한다.
-- **아직 이식 안 한 것**: 카톡 입장/퇴장 피드 메시지(`{"feedType"...}`), 닉네임 변경 알림, 채팅 머니 지급
-  (기존 `app_kakao_handler.handle_kakao_features`, `money_system.py`) — 이 봇에 포함시킬지부터 결정 필요.
+- **입장/퇴장 피드, 닉네임 변경 알림, 채팅 머니 지급**: 원본 `app_kakao_handler.py`를 그대로 이식했다.
+  - `core/kakao_feed.py` — `{"feedType"...}` 메시지를 파싱해서 입장(4)/퇴장(2) 환영·작별 인사를 만든다
+    (`build_feed_reply`). 원본과 동일하게 피드 메시지는 여기서 처리가 끝나고 호출어/자율응답으로
+    안 내려간다.
+  - `core/nickname_watch.py` — 원본 `check_and_update_nickname.py`를 그대로 옮김. 카톡 발신자의
+    닉네임 변경을 감지해서, 바뀐 경우에만 변경 이력을 담은 알림을 만든다 (`storage/nickname_detect/`에
+    방ID_유저ID별 JSONL로 이력 저장).
+  - `core/money_system.py` — **[주의] 원본 `money_system.py` 소스를 못 구해서 새로 작성한 버전이다.**
+    `app_kakao_handler.py`의 호출부(`transaction(room_id=, user_id=, amount=10,
+    transaction_type='chat')`)와 같은 인터페이스로만 맞췄고, 잔액 저장 방식(`storage/money/`에
+    방ID별 JSON 잔액 + JSONL 거래내역)은 새로 설계한 것이라 원본과 다를 수 있다. 원본 파일을
+    구하면 교체할 것.
+  - 카톡 일반 메시지(피드/명령어 제외)마다 닉네임 변경 체크 + 채팅 머니 10원 지급이 자동으로
+    실행된다 (`cogs/chat.py`, 호출어/자율응답 여부와 무관하게 항상 실행 — 원본과 동일).
 
 ## 자율 응답 (시간 기반, 카톡/디스코드 공용)
 - `core/autonomous_reply.py`가 기존 봇(`app.py`의 `_handle_auto_response`/`_should_skip`,
@@ -88,7 +100,7 @@ python app.py
 - 기본 모델은 `HORDE_DEFAULT_MODEL=Nova Anime XL` (기존 봇의 자율대화 기본 모델 승격 결정을 반영).
 
 ## 아직 안 된 것 (TODO)
-- [ ] 카톡 입장/퇴장 피드 메시지, 닉네임 변경 알림, 채팅 머니 지급 이식 여부 결정 및 구현
+- [ ] `core/money_system.py` 원본 소스 확보 후 정확한 버전으로 교체 (지금은 인터페이스만 맞춘 새 구현)
 - [ ] `core/discord_channel_log.py`: 순수 디스코드 채널 로그 저장 (자율 응답 맥락용, 카톡 로그와 분리 - `DISCORD_LOG_CHANNEL_IDS`)
 - [ ] `ai/rag_engine.py`의 tool_calls 실행 루프 완성
 - [ ] `config/mcp_servers.yaml`에 실제 MCP 서버 등록 (예: BookOasis mcp_server.py)

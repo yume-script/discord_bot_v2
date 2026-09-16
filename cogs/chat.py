@@ -16,8 +16,11 @@ from discord.ext import commands
 from ai.rag_engine import a_query
 from config import settings
 from core import autonomous_reply
+from core.kakao_feed import build_feed_reply, is_feed_message as _is_feed_message
 from core.kakao_relay import parse_kakao_author
 from core.katalk_bridge import log_message, send_message
+from core.money_system import money_system
+from core.nickname_watch import check_and_update_nickname
 from core.user_ref import UserRef
 
 log = logging.getLogger("chat")
@@ -47,9 +50,17 @@ class Chat(commands.Cog):
         key = f"discord:{message.channel.id}"
 
         is_command = content.startswith("/")
-        is_feed_message = content.startswith('{"feedType"')
-        # TODO: 카톡 입장/퇴장 피드 메시지 처리 (기존 app_kakao_handler.handle_kakao_features 참고)
-        # TODO: 카톡 닉네임 변경 알림 / 채팅 머니 지급 (money_system, check_and_update_nickname 이식 여부 결정 필요)
+        is_feed_message = _is_feed_message(content)
+
+        # 1. 입장/퇴장 피드 메시지 - 원본과 동일하게 여기서 바로 응답하고 끝낸다
+        # (호출어/자율응답 로직으로 안 내려가고, 로그에도 원문 JSON을 안 남긴다).
+        if is_linked_channel and is_kakao and is_feed_message:
+            feed_reply = build_feed_reply(content)
+            if feed_reply is not None:
+                room_id = user.raw_id.split("//", 1)[0]
+                await message.channel.send(feed_reply)
+                await send_message(room_id, feed_reply)
+            return
 
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
         # 늦게 기록하면 "봇이 이미 응답 중일 때 온 메시지"가 조용히 로그에서 누락됨)
@@ -57,6 +68,16 @@ class Chat(commands.Cog):
             if is_linked_channel and is_kakao:
                 log_message(user, content, direction="in")
             # TODO: DISCORD_LOG_CHANNEL_IDS(순수 디스코드 로그 채널)용 대칭 로그 저장 함수
+
+        # 2. 닉네임 변경 알림 + 채팅 머니 지급 - 카톡 일반 메시지에서 매번(호출어/자율응답 여부와
+        # 무관하게) 실행. 원본 app_kakao_handler.handle_kakao_features의 '2. 일반 메시지 처리' 그대로.
+        if is_linked_channel and is_kakao and not is_command and not is_feed_message:
+            room_id, member_no = user.raw_id.split("//", 1)
+            notice = check_and_update_nickname(user.display_name or "", member_no, room_id)
+            if notice:
+                await message.reply(notice)
+                await send_message(room_id, notice)
+            money_system.transaction(room_id=room_id, user_id=member_no, amount=10, transaction_type="chat")
 
         # 호출어("애순아"/"애순이"/"애순") - 감지되면 확률/쿨다운 없이 무조건 응답
         call_word = autonomous_reply.detect_call_word(content)
