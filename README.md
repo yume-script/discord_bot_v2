@@ -1,4 +1,4 @@
-# discord_bot_v2 (애순이 v2)
+# discord_bot_v2 (아메하나)
 
 기존 `yume-script/discord_bot`을 대체하는 새 디스코드 봇의 뼈대입니다.
 기존 봇 운영 중 겪었던 문제(구조·보안·동시성·중복 구현)를 반영해 초기 구조를 잡았고,
@@ -6,6 +6,9 @@
 그대로 이식했습니다.
 
 ## 결정된 방향
+- **페르소나**: 이 봇(디스코드/카톡)은 **"아메하나"**. 포링푸드(porning_food)는 별개 봇 인격
+  **"애순이"**를 그대로 유지 — 두 프로젝트는 완전히 독립적이라 서로 페르소나가 섞이지 않는다
+  (자세한 관계는 아래 TODO의 "포링푸드" 항목 참고).
 - 카톡 로그 / 벡터DB / 회원상태: **초기화** (이관하지 않음, `storage/`는 빈 상태로 시작)
 - 카카오톡 연동: **유지** (디스코드 채널 릴레이 방식 - 아래 "카톡 연동" 참고)
 - 포링푸드(porning_food) 연동: **유지** (`integrations/poring_food_bridge.py` 참고)
@@ -97,7 +100,7 @@ python app.py
   자동 호출 안 됨 - 필요해지면 스케줄러에 연결).
 - `ai/rag_engine.py`의 `a_query(conversation_key, message)`가 응답을 만들 때마다
   `CONVERSATION_CONTEXT_LIMIT`(기본 12개)만큼 최근 메시지를 불러와 LLM에 대화 맥락으로 먼저
-  넣어준다 — 애순이가 직전 대화 내용을 참고해서 답하게 하려는 목적. 카톡/디스코드 모두 같은
+  넣어준다 — 아메하나가 직전 대화 내용을 참고해서 답하게 하려는 목적. 카톡/디스코드 모두 같은
   구조를 쓴다.
 - 봇 자신의 답장(`direction='out'`)도 저장되기 때문에, 맥락에는 "무슨 말을 들었고 내가 뭐라고
   답했는지"가 둘 다 들어간다.
@@ -105,8 +108,10 @@ python app.py
 ## 자율 응답 (시간 기반, 카톡/디스코드 공용)
 - `core/autonomous_reply.py`가 기존 봇(`app.py`의 `_handle_auto_response`/`_should_skip`,
   호출어 감지)을 그대로 이식한 곳. 로직 값(호출어, 쿨다운, 확률)은 바꾸지 않았다.
-- **호출어**: "애순아" / "애순이" / "애순" 중 하나라도 있으면 무조건 응답.
-- **일반 메시지**: `AUTO_REPLY_TRIGGER_KEYWORDS`(기본 "애순,똑똑,안녕")가 있으면 바로,
+- **호출어**: "하나야"가 있으면 무조건 응답. "아메하나야"/"아메하나"/"하나"도 넣어봤는데
+  "하나"가 부분 문자열로 걸리다 보니 "아메리카노 하나 주세요", "오늘 하나만 살게요" 같은
+  무관한 대화에도 반응하는 오탐이 심해서, 최종적으로 "하나야" 하나로만 좁혔다.
+- **일반 메시지**: `AUTO_REPLY_TRIGGER_KEYWORDS`(기본 "아메하나,똑똑,안녕")가 있으면 바로,
   없으면 쿨다운(`AUTO_REPLY_COOLDOWN_SEC`, 기본 60초) + 확률(`AUTO_REPLY_PROBABILITY`, 기본 3%)을
   둘 다 통과해야 참견.
 - **상태 공유**: 마지막 참견 시각과 활성 채널 집합이 모듈 전역이라, 카톡이든 디스코드든 같은
@@ -173,7 +178,7 @@ python app.py
   확보하지 못해서 새로 작성했다 (원본을 구하면 교체 가능).
 - **명령어와 자연어 대화가 항상 같은 데이터를 쓴다** — `cogs/lookup.py`(슬래시 명령어),
   `cogs/chat.py`의 텍스트 명령(`/날씨`, `/전국날씨`, `/환율`, `/주식`), 그리고
-  `ai/rag_engine.py`(애순이에게 자연어로 직접 물어볼 때)가 전부 `ai/local_tools.py`의
+  `ai/rag_engine.py`(아메하나에게 자연어로 직접 물어볼 때)가 전부 `ai/local_tools.py`의
   같은 함수를 호출한다.
 - `ai/rag_engine.py`는 이제 매 호출마다 로컬 도구(+MCP 도구)를 전부 LLM에 바인딩해두고,
   필요하다고 판단하면 LLM이 알아서 tool_calls를 발생시켜 호출한다 (최대 4턴 왕복). 예전엔
@@ -270,6 +275,7 @@ python app.py
 - [x] `config/mcp_servers.yaml`에 BookOasis MCP 서버 접속정보 확정 (`root@192.168.0.31`, 컨테이너 `bookoasis`, `/app/tools/mcp_server.py`)
 - [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
-- [ ] 포링푸드 쪽 파서를 새 저장 방식(SQLite, `storage/conversations.db`)에 맞춰 업데이트 — 기존 JSONL을 읽던 방식은 더 이상 안 맞음
+- [x] ~~포링푸드 쪽 파서를 새 저장 방식(SQLite)에 맞춰 업데이트~~ → **정정: 포링푸드는 애초에 카톡 로그를 안 읽는다** (전체 소스 확인 완료, `loader.py`가 자기 저장소의 조직도/이슈/페르소나 JSON만 읽음). 유일한 실제 연결은 카톡 브릿지 서버 공유(코드 공유 아님)와, 포링푸드가 `/mnt/discord_bot/aesun_current_status.json`(옛날 봇 경로, 아무도 안 읽음)에 상태를 쓰는 것뿐. `integrations/poring_food_bridge.py`를 올바른 방향(읽기, `read_current_status()`)으로 정정함 - 실제로 쓰려면 포링푸드 쪽 경로 수정 + 이 봇에서 호출 배선이 필요 (지금은 미사용)
+- [x] **페르소나 분리**: 이 봇을 "아메하나"로, 포링푸드는 "애순이"로 유지하기로 결정 - 호출어(`core/autonomous_reply.py`의 `CALL_TRIGGER_WORDS`), 자율응답 기본 키워드(`AUTO_REPLY_TRIGGER_KEYWORDS`), 시스템 프롬프트(`ai/prompts.py`), MBTI 분석 프롬프트(`core/mbti.py`) 전부 "아메하나"로 교체 완료. 포링푸드 쪽 코드/설정은 건드리지 않음 (별도 프로젝트, 매시 3분 공장일지 발송은 그대로 유지)
 - [x] 디스코드→카톡 전송 엔드포인트 확인/구현 완료 (`core/katalk_bridge.py`, 원본 `katalk_webhook.py` 그대로 이식)
 - [ ] `KATALK_LINKED_CHANNEL_IDS`에 브릿지의 실제 스레드 ID 목록(방별 매핑 + 기본 스레드) 채워넣기

@@ -14,8 +14,10 @@ import time
 
 from config import settings
 
-# 명시적 호출어 - 감지되면 확률/쿨다운 계산 없이 무조건 응답 (app_chat_handler.py의 trigger_words 그대로)
-CALL_TRIGGER_WORDS = ["애순아", "애순이", "애순"]
+# 명시적 호출어 - 감지되면 확률/쿨다운 계산 없이 무조건 응답 (원본의 trigger_words 자리 -
+# 원본은 "애순아/애순이/애순"이었는데, 이 봇의 페르소나가 "아메하나"로 바뀌면서 교체했다.
+# "하나만"/"하나 주세요" 같은 무관한 대화까지 반응하는 오탐이 있어서, "하나야" 하나로만 좁혔다.
+CALL_TRIGGER_WORDS = ["하나야"]
 
 _last_active_time: float = 0.0
 _active_keys: set[str] = set()
@@ -53,7 +55,7 @@ def should_auto_reply(text: str) -> bool:
     """
     호출어가 없는 일반 메시지에 대해 확률적으로 참견할지 결정한다 (기존 _handle_auto_response).
 
-    - AUTO_REPLY_TRIGGER_KEYWORDS(기본 "애순,똑똑,안녕") 중 하나라도 포함되면
+    - AUTO_REPLY_TRIGGER_KEYWORDS(기본 "아메하나,똑똑,안녕") 중 하나라도 포함되면
       쿨다운/확률 계산을 건너뛰고 바로 응답 시도.
     - 아니면 마지막 자율 응답 이후 AUTO_REPLY_COOLDOWN_SEC(기본 60초)가 지나야 하고,
       그 후에도 AUTO_REPLY_PROBABILITY(기본 3%) 확률을 통과해야 응답.

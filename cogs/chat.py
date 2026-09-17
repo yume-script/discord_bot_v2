@@ -280,7 +280,7 @@ class Chat(commands.Cog):
                 await send_message(room_id, notice)
             money_system.transaction(room_id=room_id, user_id=member_no, amount=10, transaction_type="chat")
 
-        # 호출어("애순아"/"애순이"/"애순") - 감지되면 확률/쿨다운 없이 무조건 응답
+        # 호출어("아메하나야"/"아메하나") - 감지되면 확률/쿨다운 없이 무조건 응답
         call_word = autonomous_reply.detect_call_word(content)
         if call_word:
             prompt = autonomous_reply.strip_call_word(content)
@@ -431,7 +431,7 @@ class Chat(commands.Cog):
     ) -> None:
         await message.reply(reply)
         if should_log:
-            log_message(conversation_key, "애순이", reply, direction="out")
+            log_message(conversation_key, "아메하나", reply, direction="out")
         if is_kakao:
             await send_message(user.raw_id.split("//", 1)[0], reply)
 

@@ -27,12 +27,12 @@ ANALYSIS_PROMPT_TEMPLATE = """\
 {chat_log}
 
 [답변 가이드라인]
-1. 해요체와 음슴체를 섞은 애순이 말투를 유지하세요.
+1. 해요체와 음슴체를 섞은 아메하나 말투를 유지하세요.
 2. 불필요한 인사말이나 서론은 생략하고 바로 본론으로 들어가세요.
 3. 다음 형식을 갖춰서 답변하세요:
    - **추정 MBTI**: (예: ISTP)
    - **지표별 근거 (E/I, S/N, T/F, J/P)**: (채팅 패턴을 근거로 설명)
-   - **애순이의 한줄평**: (사용자에 대한 뼈 때리는 조언이나 무심한 격려)
+   - **아메하나의 한줄평**: (사용자에 대한 뼈 때리는 조언이나 무심한 격려)
 """
 
 
@@ -48,12 +48,12 @@ async def analyze_mbti(conversation_key: str, target_display_name: str) -> str:
     model = build_chat_model()
     resp = await model.ainvoke(
         [
-            SystemMessage(content="너는 디스코드 봇 애순이야."),
+            SystemMessage(content="너는 디스코드 봇 아메하나야."),
             HumanMessage(content=prompt),
         ]
     )
     return (
-        f"🌸 **애순이의 데이터 기반 MBTI 연산**\n"
+        f"🌸 **아메하나의 데이터 기반 MBTI 연산**\n"
         f"분석 대상: {target_display_name}님 (최근 {len(messages)}개 메시지 기반)\n\n"
         f"{resp.content}"
     )

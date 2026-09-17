@@ -37,7 +37,7 @@ NICKNAME_DELIMITER = os.environ.get("NICKNAME_DELIMITER", "//")
 # --- 자율 응답(호출어 없이 확률적으로 참견) 설정 - core/autonomous_reply.py ---
 # 기존 봇(app.py의 _handle_auto_response)과 동일한 기본값: 60초 쿨다운, 3% 확률.
 # 카톡/디스코드 구분 없이 전역으로 공유된다 (기존 봇도 last_aesun_active_time이 전역 단일값이었음).
-AUTO_REPLY_TRIGGER_KEYWORDS = _csv_ids(os.environ.get("AUTO_REPLY_TRIGGER_KEYWORDS", "애순,똑똑,안녕"))
+AUTO_REPLY_TRIGGER_KEYWORDS = _csv_ids(os.environ.get("AUTO_REPLY_TRIGGER_KEYWORDS", "아메하나,똑똑,안녕"))
 AUTO_REPLY_COOLDOWN_SEC = int(os.environ.get("AUTO_REPLY_COOLDOWN_SEC", "60"))
 AUTO_REPLY_PROBABILITY = float(os.environ.get("AUTO_REPLY_PROBABILITY", "0.03"))
 
