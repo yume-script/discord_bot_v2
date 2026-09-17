@@ -17,6 +17,7 @@ INITIAL_COGS = [
     "cogs.lookup",
     "cogs.games",
     "cogs.admin",
+    "cogs.fun",
     "cogs.chat",
 ]
 

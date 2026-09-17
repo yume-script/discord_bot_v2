@@ -192,6 +192,34 @@ python app.py
 - 둘 다 슬래시 명령어(`cogs/lookup.py`)와 텍스트 명령(`cogs/chat.py`, `/운세 양띠`, `/mbti INTJ`)
   양쪽 다 지원한다.
 
+## 개미소리 / 위성사진
+- **개미소리** (`core/ant_voice.py`) — 원본 `ant_voice_gen.py`를 그대로 이식. 원본 소스
+  이미지(`ant_source.webp`)와 폰트(`NanumGothicCoding.ttf`)는 원본 저장소(Public)에서
+  최초 1회 다운로드해 `storage/assets/`에 캐싱한다. **실제로 이미지 생성까지 테스트 완료.**
+- **위성사진** (`core/satellite.py`) — **[주의] 원본 `satellite.py` 소스를 확보하지 못해서
+  새로 작성했다** (저장소 파일 목록에서 링크를 못 찾음). 히마와리-9 실시간 위성사진
+  (NICT 제공, `himawari8.nict.go.jp`, 무료/API 키 불필요)을 가져온다. **[검증 안 됨]** 이
+  작업 환경의 네트워크 정책이 해당 도메인을 막고 있어서 실제 호출을 테스트하지 못했다 —
+  서버에 배포한 뒤 `/위성사진` 직접 확인 필요.
+- 카톡 쪽 이미지 전송은 `core/katalk_bridge.send_image()`를 새로 추가했다. **[주의]** 원본은
+  `send_katalk_image_webhook`이라는 별도 웹훅을 썼는데 정확한 API 계약(엔드포인트/payload
+  형식)을 확보하지 못해서, 텍스트 전송과 비슷한 형태로 추정해 구현했다 — 실제 브릿지 서버
+  구현에 맞춰 조정이 필요할 수 있다.
+- 슬래시 명령어(`cogs/fun.py`)와 텍스트 명령(`cogs/chat.py`, `/개미소리 내용`, `/위성사진`)
+  둘 다 지원.
+
+## MCP 서버 연동 (BookOasis)
+- `config/mcp_servers.yaml`에 BookOasis의 `tools/mcp_server.py`를 SSH+`docker exec`로 접속하는
+  stdio MCP 서버로 등록했다. SSH 키 기반 무인증 접속이 전제 (MCP는 대화형 비밀번호 입력이
+  안 되므로 필수).
+- **진행 중** — SSH 키 발급 절차 안내 완료, 실제 유저명/컨테이너 내부 경로 확인은 서버에서
+  진행 중. 컨테이너명은 192.168.0.31의 `bookoasis`로 잠정 확인.
+- `ai/prompts.py`의 `RESPONSE_SYSTEM_PROMPT`에 "bookoasis"와 "북오아시스"가 같은 서비스를
+  가리킨다는 걸 명시해서, 자연어 대화에서 어느 이름으로 불러도 관련 도구를 쓰도록 했다.
+- **안정성 보완**: `ai/mcp_manager.py`의 `init_mcp()`가 예외를 흡수하도록 고쳤다 — MCP 연결
+  실패(SSH 오류, 컨테이너 없음, 경로 오류 등)가 `setup_hook()` 맨 앞에서 무방비로 터지면
+  봇 전체가 크래시 루프에 빠지는 문제가 있었음. 이제 MCP가 실패해도 나머지 기능은 정상 기동.
+
 ## 라그나로크M RAG 연동 — 방향성만 정리 (아직 구현 안 함)
 원본은 `/가이드`, `/검색`, `/카뽑`(카드확률), `/안전제련`, `/어구`(어비스홀 타이머) 5개
 명령어가 라그나로크M 게임 데이터(RAG 벡터DB + `card_probabilities.jsonl`)에 물려있었다.
@@ -223,11 +251,13 @@ python app.py
 - [x] 운세(`core/fortune.py`, 원본 그대로) / MBTI(`core/mbti.py`, 새로 작성 - 원본 미확보) 이식
 - [x] 로또는 폐기하기로 함 (스케줄 추첨 방식이라 성격이 다름)
 - [ ] 라그나로크M RAG 연동 — 방향성만 정리됨, 데이터 소스 확보부터 필요 (위 섹션 참고)
-- [ ] 기타 명령어(개미소리, 위성사진, 카톡통계, 쿠폰, 오늘대화요약 등) 이식 여부 결정
+- [x] 개미소리(`core/ant_voice.py`, 원본 그대로 - 테스트 완료) / 위성사진(`core/satellite.py`, 새로 작성 - 미검증) 이식
+- [ ] `core/katalk_bridge.send_image()`의 브릿지 API 계약(엔드포인트/payload) 실제 확인 - 추정으로 구현함
+- [ ] 기타 명령어(카톡통계, 쿠폰, 오늘대화요약 등) 이식 여부 결정
 - [x] `core/money_system.py` 원본 소스로 교체 완료
 - [x] `core/discord_channel_log.py` 역할 → `core/conversation_store.py`(SQLite)로 흡수 완료
 - [x] `ai/rag_engine.py`의 tool_calls 실행 루프 완성 (날씨/환율/주식 도구 연동과 함께)
-- [ ] `config/mcp_servers.yaml`에 실제 MCP 서버 등록 (예: BookOasis mcp_server.py)
+- [ ] `config/mcp_servers.yaml`에 BookOasis MCP 서버 접속정보 확정 (SSH 유저명, mcp_server.py 경로) - SSH 키는 발급 진행 중, 컨테이너는 192.168.0.31의 `bookoasis`로 잠정 확인
 - [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
 - [ ] 포링푸드 쪽 파서를 새 저장 방식(SQLite, `storage/conversations.db`)에 맞춰 업데이트 — 기존 JSONL을 읽던 방식은 더 이상 안 맞음

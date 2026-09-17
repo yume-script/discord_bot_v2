@@ -19,13 +19,13 @@ from ai.image_engine import generate_image
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
-from core import autonomous_reply, fortune, game_engine, mbti
+from core import ant_voice, autonomous_reply, fortune, game_engine, mbti, satellite
 from core.admin_auth import is_admin
 from core.concurrency import image_gen_pool
 from core.conversation_store import log_message
 from core.kakao_feed import build_feed_reply, is_feed_message as _is_feed_message
 from core.kakao_relay import parse_kakao_author
-from core.katalk_bridge import send_message
+from core.katalk_bridge import send_image, send_message
 from core.money_system import money_system
 from core.nickname_watch import check_and_update_nickname
 from core.user_ref import UserRef
@@ -217,6 +217,41 @@ class Chat(commands.Cog):
             await message.reply(
                 f"✅ {target.display_name}님의 잔액을 {amount:,}원으로 설정했어요." if ok else f"❌ 오류: {result}"
             )
+            return
+
+        # 1-7. "/개미소리", "/위성사진" 텍스트 명령
+        if content.startswith("/개미소리"):
+            text = content[len("/개미소리"):].strip()
+            if not text:
+                await message.reply("🐜 내용을 입력해주세요! (예: `/개미소리 가즈아!!`)")
+                return
+            image_bytes = await ant_voice.generate_ant_voice(text)
+            if image_bytes is None:
+                await message.reply("❌ 이미지 생성에 실패했어요 (에셋을 못 가져왔어요).")
+                return
+            file = discord.File(io.BytesIO(image_bytes), filename="ant_voice.webp")
+            await message.reply(content=f"🐜 **개미의 외침:** {text}", file=file)
+            if is_kakao:
+                room_id = user.raw_id.split("//", 1)[0]
+                try:
+                    await send_image(room_id, image_bytes, filename="ant_voice.webp")
+                except Exception:
+                    log.exception("카톡 이미지 전송 실패 (room=%s)", room_id)
+            return
+
+        if content.startswith("/위성사진"):
+            image_bytes = await satellite.get_satellite_image()
+            if image_bytes is None:
+                await message.reply("❌ 위성사진을 가져오지 못했어요. 잠시 후 다시 시도해주세요.")
+                return
+            file = discord.File(io.BytesIO(image_bytes), filename="satellite.png")
+            await message.reply(content="🛰️ 최신 위성사진이에요", file=file)
+            if is_kakao:
+                room_id = user.raw_id.split("//", 1)[0]
+                try:
+                    await send_image(room_id, image_bytes, filename="satellite.png")
+                except Exception:
+                    log.exception("카톡 이미지 전송 실패 (room=%s)", room_id)
             return
 
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
