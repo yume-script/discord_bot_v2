@@ -84,10 +84,10 @@ class Chat(commands.Cog):
         # 1-1. "/그림 프롬프트" / "/그림스타일 프롬프트 | 스타일" 텍스트 명령 - 슬래시 명령어
         # 자동완성 UI를 거치지 않고 빠르게 타이핑해서 보내도 바로 처리된다.
         if content.startswith(TEXT_IMAGE_STYLE_PREFIX):
-            await self._handle_text_image_command(message, content[len(TEXT_IMAGE_STYLE_PREFIX):], with_style=True)
+            await self._handle_text_image_command(message, user, content[len(TEXT_IMAGE_STYLE_PREFIX):], with_style=True)
             return
         if content.startswith(TEXT_IMAGE_PREFIX):
-            await self._handle_text_image_command(message, content[len(TEXT_IMAGE_PREFIX):], with_style=False)
+            await self._handle_text_image_command(message, user, content[len(TEXT_IMAGE_PREFIX):], with_style=False)
             return
         if content.strip() in ("/그림", "/그림스타일"):
             await message.reply("사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`")
@@ -96,22 +96,22 @@ class Chat(commands.Cog):
         # 1-2. "/날씨", "/전국날씨", "/환율", "/주식" 텍스트 명령 - 슬래시 명령어(cogs/lookup.py)와
         # 같은 ai/local_tools.py 함수를 호출한다.
         if content.startswith("/전국날씨"):
-            await self._handle_lookup(message, get_nationwide_weather, {})
+            await self._handle_lookup(message, user, get_nationwide_weather, {})
             return
         if content.startswith("/날씨"):
             location = content[len("/날씨"):].strip() or "서울"
-            await self._handle_lookup(message, get_weather, {"location": location})
+            await self._handle_lookup(message, user, get_weather, {"location": location})
             return
         if content.startswith("/환율"):
             currency = content[len("/환율"):].strip() or "USD"
-            await self._handle_lookup(message, get_exchange_rate, {"currency": currency})
+            await self._handle_lookup(message, user, get_exchange_rate, {"currency": currency})
             return
         if content.startswith("/주식"):
             ticker = content[len("/주식"):].strip()
             if not ticker:
                 await message.reply("사용법: `/주식 005930.KS` (코스피), `/주식 AAPL` (미국주식)")
                 return
-            await self._handle_lookup(message, get_stock_price, {"ticker": ticker})
+            await self._handle_lookup(message, user, get_stock_price, {"ticker": ticker})
             return
 
         # 1-3. 미니게임 7종 텍스트 명령 - "/가위 100", "/용호 용 500"처럼 바로 타이핑.
@@ -353,16 +353,16 @@ class Chat(commands.Cog):
         if user.channel.value == "kakao":
             await send_message(user.raw_id.split("//", 1)[0], result)
 
-    async def _handle_lookup(self, message: Message, tool_fn, args: dict) -> None:
+    async def _handle_lookup(self, message: Message, user: UserRef, tool_fn, args: dict) -> None:
         try:
             async with message.channel.typing():
                 result = await tool_fn.ainvoke(args)
-            await message.reply(result)
+            await self._send_game_result(message, user, result)
         except Exception:
             log.exception("조회 명령 실패 (tool=%s, args=%s)", getattr(tool_fn, "name", tool_fn), args)
             await message.reply("조회 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
 
-    async def _handle_text_image_command(self, message: Message, rest: str, *, with_style: bool) -> None:
+    async def _handle_text_image_command(self, message: Message, user: UserRef, rest: str, *, with_style: bool) -> None:
         prompt = rest.strip()
         style = None
         if with_style and "|" in prompt:
@@ -374,8 +374,6 @@ class Chat(commands.Cog):
             usage = "사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`"
             await message.reply(usage)
             return
-
-        user = UserRef.from_discord(message.author.id, message.author.display_name)
 
         async def job():
             return await generate_image(prompt, style=style)
@@ -392,7 +390,13 @@ class Chat(commands.Cog):
             return
 
         file = discord.File(io.BytesIO(result.image_bytes), filename="generated.png")
-        await message.reply(content=f"`{prompt}` ({result.backend}/{result.model})", file=file)
+        caption = f"`{prompt}` ({result.backend}/{result.model})"
+        await message.reply(content=caption, file=file)
+        if user.channel.value == "kakao":
+            try:
+                await send_image(user.raw_id.split("//", 1)[0], result.image_bytes, filename="generated.png")
+            except Exception:
+                log.exception("카톡 이미지 전송 실패 (user=%s)", user.key)
 
     async def _safe_reply(self, message: Message, text: str) -> None:
         try:
