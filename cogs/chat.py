@@ -90,7 +90,7 @@ class Chat(commands.Cog):
             await self._handle_text_image_command(message, user, content[len(TEXT_IMAGE_PREFIX):], with_style=False)
             return
         if content.strip() in ("/그림", "/그림스타일"):
-            await message.reply("사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`")
+            await self._send_game_result(message, user, "사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`")
             return
 
         # 1-2. "/날씨", "/전국날씨", "/환율", "/주식" 텍스트 명령 - 슬래시 명령어(cogs/lookup.py)와
@@ -109,7 +109,7 @@ class Chat(commands.Cog):
         if content.startswith("/주식"):
             ticker = content[len("/주식"):].strip()
             if not ticker:
-                await message.reply("사용법: `/주식 005930.KS` (코스피), `/주식 AAPL` (미국주식)")
+                await self._send_game_result(message, user, "사용법: `/주식 005930.KS` (코스피), `/주식 AAPL` (미국주식)")
                 return
             await self._handle_lookup(message, user, get_stock_price, {"ticker": ticker})
             return
@@ -158,7 +158,7 @@ class Chat(commands.Cog):
                 return
             target_name = content[len("/mbti"):].strip() or (user.display_name or "")
             if not target_name:
-                await message.reply("❌ 분석할 대상 이름을 알 수 없어요.")
+                await self._send_game_result(message, user, "❌ 분석할 대상 이름을 알 수 없어요.")
                 return
             async with message.channel.typing():
                 result = await mbti.analyze_mbti(conversation_key, target_name)
@@ -228,11 +228,11 @@ class Chat(commands.Cog):
         if content.startswith("/개미소리"):
             text = content[len("/개미소리"):].strip()
             if not text:
-                await message.reply("🐜 내용을 입력해주세요! (예: `/개미소리 가즈아!!`)")
+                await self._send_game_result(message, user, "🐜 내용을 입력해주세요! (예: `/개미소리 가즈아!!`)")
                 return
             image_bytes = await ant_voice.generate_ant_voice(text)
             if image_bytes is None:
-                await message.reply("❌ 이미지 생성에 실패했어요 (에셋을 못 가져왔어요).")
+                await self._send_game_result(message, user, "❌ 이미지 생성에 실패했어요 (에셋을 못 가져왔어요).")
                 return
             file = discord.File(io.BytesIO(image_bytes), filename="ant_voice.webp")
             await message.reply(content=f"🐜 **개미의 외침:** {text}", file=file)
@@ -246,7 +246,7 @@ class Chat(commands.Cog):
         if content.startswith("/위성사진"):
             result = await satellite.get_satellite_image()
             if result is None:
-                await message.reply("❌ 위성사진을 가져오지 못했어요. 잠시 후 다시 시도해주세요.")
+                await self._send_game_result(message, user, "❌ 위성사진을 가져오지 못했어요. 잠시 후 다시 시도해주세요.")
                 return
             image_bytes, obs_time = result
             file = discord.File(io.BytesIO(image_bytes), filename="satellite_latest.png")
@@ -284,7 +284,7 @@ class Chat(commands.Cog):
             except Exception:
                 # LLM/LiteLLM 인증 실패, 타임아웃 등 - 조용히 실패하지 않고 최소한 사용자에게 알린다.
                 log.exception("호출어 응답 생성 실패 (channel=%s)", message.channel.id)
-                await self._safe_reply(message, FAILURE_REPLY)
+                await self._safe_reply(message, user, FAILURE_REPLY)
             finally:
                 autonomous_reply.clear_active(key)
             return
@@ -315,7 +315,7 @@ class Chat(commands.Cog):
         try:
             bet = int(rest.strip())
         except ValueError:
-            await message.reply(f"사용법: `/{choice} 금액`")
+            await self._send_game_result(message, user, f"사용법: `/{choice} 금액`")
             return
         room_id, user_id = game_engine.room_user(user)
         result = game_engine.play_rps(room_id, user_id, choice, bet)
@@ -325,7 +325,7 @@ class Chat(commands.Cog):
         try:
             bet = int(rest.strip())
         except ValueError:
-            await message.reply("사용법: `/명령어 금액` (금액은 숫자로 입력해주세요)")
+            await self._send_game_result(message, user, "사용법: `/명령어 금액` (금액은 숫자로 입력해주세요)")
             return
         room_id, user_id = game_engine.room_user(user)
         result = play_fn(room_id, user_id, bet)
@@ -336,13 +336,13 @@ class Chat(commands.Cog):
     ) -> None:
         parts = rest.strip().split(maxsplit=1)
         if len(parts) < 2:
-            await message.reply(f"사용법: `/명령어 [{choices_hint}] 금액`")
+            await self._send_game_result(message, user, f"사용법: `/명령어 [{choices_hint}] 금액`")
             return
         choice, bet_str = parts[0], parts[1]
         try:
             bet = int(bet_str)
         except ValueError:
-            await message.reply("금액은 숫자로 입력해주세요.")
+            await self._send_game_result(message, user, "금액은 숫자로 입력해주세요.")
             return
         room_id, user_id = game_engine.room_user(user)
         result = play_fn(room_id, user_id, choice, bet)
@@ -360,7 +360,7 @@ class Chat(commands.Cog):
             await self._send_game_result(message, user, result)
         except Exception:
             log.exception("조회 명령 실패 (tool=%s, args=%s)", getattr(tool_fn, "name", tool_fn), args)
-            await message.reply("조회 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+            await self._send_game_result(message, user, "조회 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
 
     async def _handle_text_image_command(self, message: Message, user: UserRef, rest: str, *, with_style: bool) -> None:
         prompt = rest.strip()
@@ -372,7 +372,7 @@ class Chat(commands.Cog):
 
         if not prompt:
             usage = "사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`"
-            await message.reply(usage)
+            await self._send_game_result(message, user, usage)
             return
 
         async def job():
@@ -382,11 +382,11 @@ class Chat(commands.Cog):
             async with message.channel.typing():
                 result = await image_gen_pool.submit(user, job)
         except ImageGenError as exc:
-            await message.reply(f"이미지 생성 실패: {exc}")
+            await self._send_game_result(message, user, f"이미지 생성 실패: {exc}")
             return
         except Exception:
             log.exception("텍스트 명령 이미지 생성 실패 (user=%s, prompt=%s)", user.key, prompt)
-            await message.reply("이미지 생성 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
+            await self._send_game_result(message, user, "이미지 생성 중 예상치 못한 오류가 발생했어요. 잠시 후 다시 시도해주세요.")
             return
 
         file = discord.File(io.BytesIO(result.image_bytes), filename="generated.png")
@@ -398,11 +398,16 @@ class Chat(commands.Cog):
             except Exception:
                 log.exception("카톡 이미지 전송 실패 (user=%s)", user.key)
 
-    async def _safe_reply(self, message: Message, text: str) -> None:
+    async def _safe_reply(self, message: Message, user: UserRef, text: str) -> None:
         try:
             await message.reply(text)
         except discord.HTTPException:
             log.exception("실패 메시지 전송조차 실패 (channel=%s)", message.channel.id)
+        if user.channel.value == "kakao":
+            try:
+                await send_message(user.raw_id.split("//", 1)[0], text)
+            except Exception:
+                log.exception("카톡 실패 메시지 전송 실패 (user=%s)", user.key)
 
     async def _generate(self, conversation_key: str, message: Message, prompt: str) -> str:
         async with message.channel.typing():
