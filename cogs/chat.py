@@ -19,7 +19,7 @@ from ai.image_engine import generate_image
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
-from core import autonomous_reply
+from core import autonomous_reply, game_engine
 from core.concurrency import image_gen_pool
 from core.conversation_store import log_message
 from core.kakao_feed import build_feed_reply, is_feed_message as _is_feed_message
@@ -114,6 +114,36 @@ class Chat(commands.Cog):
             await self._handle_lookup(message, get_stock_price, {"ticker": ticker})
             return
 
+        # 1-3. 미니게임 7종 텍스트 명령 - "/가위 100", "/용호 용 500"처럼 바로 타이핑.
+        # 카톡 유저는 슬래시 인터랙션(cogs/games.py)을 못 쓰니까 이 경로가 유일한 진입점이다.
+        if content.startswith("/가위 "):
+            await self._handle_game_rps(message, user, "가위", content[len("/가위 "):])
+            return
+        if content.startswith("/바위 "):
+            await self._handle_game_rps(message, user, "바위", content[len("/바위 "):])
+            return
+        if content.startswith("/보 "):
+            await self._handle_game_rps(message, user, "보", content[len("/보 "):])
+            return
+        if content.startswith("/주사위 "):
+            await self._handle_game_bet_only(message, user, game_engine.play_dice, content[len("/주사위 "):])
+            return
+        if content.startswith("/슬롯머신 "):
+            await self._handle_game_bet_only(message, user, game_engine.play_slot, content[len("/슬롯머신 "):])
+            return
+        if content.startswith("/다이스포커 "):
+            await self._handle_game_bet_only(message, user, game_engine.play_dice_poker, content[len("/다이스포커 "):])
+            return
+        if content.startswith("/블랙잭 "):
+            await self._handle_game_bet_only(message, user, game_engine.play_blackjack, content[len("/블랙잭 "):])
+            return
+        if content.startswith("/용호 "):
+            await self._handle_game_choice(message, user, game_engine.play_dragontiger, content[len("/용호 "):], "용/호랑이/무승부")
+            return
+        if content.startswith("/바카라 "):
+            await self._handle_game_choice(message, user, game_engine.play_baccarat, content[len("/바카라 "):], "홀/짝")
+            return
+
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
         # 늦게 기록하면 "봇이 이미 응답 중일 때 온 메시지"가 조용히 로그에서 누락됨)
         if not is_command and not is_feed_message and should_log:
@@ -166,6 +196,49 @@ class Chat(commands.Cog):
             log.exception("자율 응답 생성 실패 (channel=%s)", message.channel.id)
         finally:
             autonomous_reply.clear_active(key)
+
+    async def _handle_game_rps(self, message: Message, user: UserRef, choice: str, rest: str) -> None:
+        try:
+            bet = int(rest.strip())
+        except ValueError:
+            await message.reply(f"사용법: `/{choice} 금액`")
+            return
+        room_id, user_id = game_engine.room_user(user)
+        result = game_engine.play_rps(room_id, user_id, choice, bet)
+        await self._send_game_result(message, user, result)
+
+    async def _handle_game_bet_only(self, message: Message, user: UserRef, play_fn, rest: str) -> None:
+        try:
+            bet = int(rest.strip())
+        except ValueError:
+            await message.reply("사용법: `/명령어 금액` (금액은 숫자로 입력해주세요)")
+            return
+        room_id, user_id = game_engine.room_user(user)
+        result = play_fn(room_id, user_id, bet)
+        await self._send_game_result(message, user, result)
+
+    async def _handle_game_choice(
+        self, message: Message, user: UserRef, play_fn, rest: str, choices_hint: str
+    ) -> None:
+        parts = rest.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            await message.reply(f"사용법: `/명령어 [{choices_hint}] 금액`")
+            return
+        choice, bet_str = parts[0], parts[1]
+        try:
+            bet = int(bet_str)
+        except ValueError:
+            await message.reply("금액은 숫자로 입력해주세요.")
+            return
+        room_id, user_id = game_engine.room_user(user)
+        result = play_fn(room_id, user_id, choice, bet)
+        await self._send_game_result(message, user, result)
+
+    async def _send_game_result(self, message: Message, user: UserRef, result: str) -> None:
+        await message.reply(result)
+        if user.channel.value == "kakao":
+            room_id = user.raw_id.split("//", 1)[0]
+            await send_message(room_id, result)
 
     async def _handle_lookup(self, message: Message, tool_fn, args: dict) -> None:
         try:

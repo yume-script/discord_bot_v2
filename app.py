@@ -15,6 +15,7 @@ INITIAL_COGS = [
     "cogs.image_gen",
     "cogs.attendance",
     "cogs.lookup",
+    "cogs.games",
     "cogs.chat",
 ]
 
