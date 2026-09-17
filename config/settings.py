@@ -54,7 +54,8 @@ PORING_FOOD_STATUS_JSON_PATH = Path(
 )
 
 # --- Storage paths (초기화 결정: 빈 상태로 시작) ---
-KATALK_LOG_DIR = BASE_DIR / "storage" / "katalk_log"
+CONVERSATION_DB_PATH = BASE_DIR / "storage" / "conversations.db"  # 대화 로그 (SQLite - 최근 맥락 조회용)
+CONVERSATION_CONTEXT_LIMIT = int(os.environ.get("CONVERSATION_CONTEXT_LIMIT", "12"))
 VECTOR_DB_DIR = BASE_DIR / "storage" / "vector_db"
 NICKNAME_DETECT_DIR = BASE_DIR / "storage" / "nickname_detect"  # 기존 check_and_update_nickname.py와 동일 용도
 MONEY_DIR = BASE_DIR / "storage" / "money"

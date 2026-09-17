@@ -21,9 +21,10 @@ from ai.rag_engine import a_query
 from config import settings
 from core import autonomous_reply
 from core.concurrency import image_gen_pool
+from core.conversation_store import log_message
 from core.kakao_feed import build_feed_reply, is_feed_message as _is_feed_message
 from core.kakao_relay import parse_kakao_author
-from core.katalk_bridge import log_message, send_message
+from core.katalk_bridge import send_message
 from core.money_system import money_system
 from core.nickname_watch import check_and_update_nickname
 from core.user_ref import UserRef
@@ -63,6 +64,12 @@ class Chat(commands.Cog):
 
         is_command = content.startswith("/")
         is_feed_message = _is_feed_message(content)
+
+        # 대화 로그를 남길지, 남긴다면 어떤 conversation_key로 묶을지.
+        # 카톡은 방(room_id) 단위로, 순수 디스코드는 채널 단위로 맥락을 분리한다.
+        is_discord_log_channel = str(message.channel.id) in settings.DISCORD_LOG_CHANNEL_IDS
+        should_log = (is_linked_channel and is_kakao) or is_discord_log_channel
+        conversation_key = (user.raw_id.split("//", 1)[0] if is_kakao else key)
 
         # 1. 입장/퇴장 피드 메시지 - 원본과 동일하게 여기서 바로 응답하고 끝낸다
         # (호출어/자율응답 로직으로 안 내려가고, 로그에도 원문 JSON을 안 남긴다).
@@ -109,10 +116,8 @@ class Chat(commands.Cog):
 
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
         # 늦게 기록하면 "봇이 이미 응답 중일 때 온 메시지"가 조용히 로그에서 누락됨)
-        if not is_command and not is_feed_message:
-            if is_linked_channel and is_kakao:
-                log_message(user, content, direction="in")
-            # TODO: DISCORD_LOG_CHANNEL_IDS(순수 디스코드 로그 채널)용 대칭 로그 저장 함수
+        if not is_command and not is_feed_message and should_log:
+            log_message(conversation_key, user.display_name, content, direction="in")
 
         # 2. 닉네임 변경 알림 + 채팅 머니 지급 - 카톡 일반 메시지에서 매번(호출어/자율응답 여부와
         # 무관하게) 실행. 원본 app_kakao_handler.handle_kakao_features의 '2. 일반 메시지 처리' 그대로.
@@ -130,8 +135,8 @@ class Chat(commands.Cog):
             prompt = autonomous_reply.strip_call_word(content)
             autonomous_reply.mark_active(key)
             try:
-                reply = GREETING_REPLY if not prompt else await self._generate(message, prompt)
-                await self._reply(message, user, is_kakao, reply)
+                reply = GREETING_REPLY if not prompt else await self._generate(conversation_key, message, prompt)
+                await self._reply(message, user, is_kakao, reply, conversation_key, should_log)
             except Exception:
                 # LLM/LiteLLM 인증 실패, 타임아웃 등 - 조용히 실패하지 않고 최소한 사용자에게 알린다.
                 log.exception("호출어 응답 생성 실패 (channel=%s)", message.channel.id)
@@ -153,8 +158,8 @@ class Chat(commands.Cog):
 
         autonomous_reply.mark_active(key)
         try:
-            reply = await self._generate(message, content)
-            await self._reply(message, user, is_kakao, reply)
+            reply = await self._generate(conversation_key, message, content)
+            await self._reply(message, user, is_kakao, reply, conversation_key, should_log)
         except Exception:
             # 자율 응답은 원래 확률적으로 참견하는 거라, 실패했다고 채널에 에러 메시지까지
             # 남기면 오히려 더 어색하다 - 로그만 남기고 조용히 넘어간다.
@@ -209,15 +214,24 @@ class Chat(commands.Cog):
         except discord.HTTPException:
             log.exception("실패 메시지 전송조차 실패 (channel=%s)", message.channel.id)
 
-    async def _generate(self, message: Message, prompt: str) -> str:
+    async def _generate(self, conversation_key: str, message: Message, prompt: str) -> str:
         async with message.channel.typing():
-            return await a_query(prompt)
+            return await a_query(conversation_key, prompt)
 
-    async def _reply(self, message: Message, user: UserRef, is_kakao: bool, reply: str) -> None:
+    async def _reply(
+        self,
+        message: Message,
+        user: UserRef,
+        is_kakao: bool,
+        reply: str,
+        conversation_key: str,
+        should_log: bool,
+    ) -> None:
         await message.reply(reply)
+        if should_log:
+            log_message(conversation_key, "애순이", reply, direction="out")
         if is_kakao:
             room_id = user.raw_id.split("//", 1)[0]
-            log_message(user, reply, direction="out")
             await send_message(room_id, reply)
 
     async def _should_skip(self, message: Message, key: str) -> bool:

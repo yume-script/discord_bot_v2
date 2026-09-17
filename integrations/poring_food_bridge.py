@@ -1,11 +1,11 @@
 """
 포링푸드(porning_food, 별도 저장소/프로세스, crontab 매시 3분 실행)는
 이 봇과 파일 기반으로 연동된다:
-  - 읽음: storage/katalk_log/*.jsonl  (core/katalk_bridge.py가 씀)
+  - 읽음: storage/conversations.db (SQLite, core/conversation_store.py가 씀 - 예전엔
+          storage/katalk_log/*.jsonl 였는데 SQLite로 전환됨. 포링푸드 쪽 파서도 SQLite
+          조회로 갱신 필요 - messages 테이블, conversation_key/display_name/direction/text/ts 컬럼)
   - 씀:   PORING_FOOD_STATUS_JSON_PATH (aesun_current_status.json)
 
-데이터 초기화 결정으로 katalk_log 포맷을 새로 정했으므로 (core/katalk_bridge.py의
-JSONL 구조: ts/user/direction/text), 포링푸드 쪽 파서도 이 포맷에 맞춰 갱신이 필요하다.
 이 파일은 "이 봇이 쓰는 쪽" 계약만 담당한다 - 포맷을 바꿀 땐 여기 한 곳만 보면 된다.
 """
 from __future__ import annotations

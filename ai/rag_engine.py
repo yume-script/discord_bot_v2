@@ -1,31 +1,45 @@
 """
-a_query()가 메인 진입점. 매 호출마다 로컬 도구(ai/local_tools.py - 날씨/환율/주식)와
-MCP 도구(연결돼 있다면)를 전부 LLM에 바인딩해두고, LLM이 필요하다고 판단하면 알아서
-tool_calls를 발생시켜 호출한다 (최대 MAX_TOOL_TURNS번 왕복). 도구가 필요 없는 일반
-대화는 그냥 한 턴만에 끝난다.
+a_query()가 메인 진입점. conversation_key로 최근 대화 맥락(core/conversation_store.py)을
+불러와 LLM에 먼저 넣어준 다음, 로컬 도구(ai/local_tools.py - 날씨/환율/주식)와 MCP 도구를
+바인딩해서 필요하면 LLM이 알아서 tool_calls를 호출하게 한다 (최대 MAX_TOOL_TURNS번 왕복).
 
 기존 봇의 aesun_rag_engine.py / aesun_rag_engine_models.py 구조를 정리해서 옮긴 것.
 """
 from __future__ import annotations
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from ai.llm_client import build_chat_model
 from ai.local_tools import LOCAL_TOOLS
 from ai.mcp_manager import get_tools
 from ai.prompts import RESPONSE_SYSTEM_PROMPT
+from core.conversation_store import get_recent_context
 
 MAX_TOOL_TURNS = 4
 
 
-async def a_query(message: str) -> str:
+def _build_history_messages(conversation_key: str) -> list:
+    history = get_recent_context(conversation_key)
+    messages = []
+    for display_name, text, direction in history:
+        if direction == "out":
+            messages.append(AIMessage(content=text))
+        else:
+            content = f"{display_name}: {text}" if display_name else text
+            messages.append(HumanMessage(content=content))
+    return messages
+
+
+async def a_query(conversation_key: str, message: str) -> str:
     tools = [*LOCAL_TOOLS, *get_tools()]
     tools_by_name = {t.name: t for t in tools}
 
     model = build_chat_model()
     bound_model = model.bind_tools(tools) if tools else model
 
-    messages = [SystemMessage(content=RESPONSE_SYSTEM_PROMPT), HumanMessage(content=message)]
+    messages = [SystemMessage(content=RESPONSE_SYSTEM_PROMPT)]
+    messages.extend(_build_history_messages(conversation_key))
+    messages.append(HumanMessage(content=message))
 
     for _ in range(MAX_TOOL_TURNS):
         ai_msg = await bound_model.ainvoke(messages)

@@ -66,7 +66,8 @@ python app.py
   **확인 필요**: 지금까지 본 브릿지 코드는 카톡→디스코드 단방향(수신)만 구현되어 있다.
   디스코드→카톡(봇 답장을 실제 카톡방에 전송) 쪽 엔드포인트가 별도로 있는지, 아니면 새로 만들어야
   하는지 확인이 필요하다.
-- 카톡 메시지 로그는 `core/katalk_bridge.log_message()`가 방(room_id) 단위 JSONL로 저장한다.
+- 카톡 메시지 로그는 `core/conversation_store.py`가 SQLite(`storage/conversations.db`)에
+  저장한다 (아래 "대화 맥락" 항목 참고).
 - **입장/퇴장 피드, 닉네임 변경 알림, 채팅 머니 지급**: 원본 `app_kakao_handler.py`를 그대로 이식했다.
   - `core/kakao_feed.py` — `{"feedType"...}` 메시지를 파싱해서 입장(4)/퇴장(2) 환영·작별 인사를 만든다
     (`build_feed_reply`). 원본과 동일하게 피드 메시지는 여기서 처리가 끝나고 호출어/자율응답으로
@@ -82,6 +83,23 @@ python app.py
     원본처럼 반환값을 쓰지 않는다.
   - 카톡 일반 메시지(피드/명령어 제외)마다 닉네임 변경 체크 + 채팅 머니 10원 지급이 자동으로
     실행된다 (`cogs/chat.py`, 호출어/자율응답 여부와 무관하게 항상 실행 — 원본과 동일).
+
+## 대화 맥락 (SQLite)
+- `core/conversation_store.py` — `storage/conversations.db` 하나에 모든 대화를 저장한다.
+  카톡은 방(room_id), 순수 디스코드는 채널(`discord:{channel_id}`) 단위로 `conversation_key`가
+  나뉜다.
+- **저장 대상**: 카톡 연동 채널(`KATALK_LINKED_CHANNEL_IDS`)의 카톡 메시지 + `DISCORD_LOG_CHANNEL_IDS`에
+  등록된 순수 디스코드 채널의 메시지. 둘 다 아닌 채널은 저장되지 않는다.
+- 원래는 방별 JSONL 파일에 무한정 append하는 방식이었는데, "최근 N개 메시지"를 가져오려면
+  매번 파일 전체를 읽어야 하는 게 문제였다. SQLite로 바꿔서 인덱스 조회 한 번으로 해결했고,
+  나중에 오래된 데이터를 정리하고 싶어지면 `prune_older_than(days)` 하나로 가능하다 (지금은
+  자동 호출 안 됨 - 필요해지면 스케줄러에 연결).
+- `ai/rag_engine.py`의 `a_query(conversation_key, message)`가 응답을 만들 때마다
+  `CONVERSATION_CONTEXT_LIMIT`(기본 12개)만큼 최근 메시지를 불러와 LLM에 대화 맥락으로 먼저
+  넣어준다 — 애순이가 직전 대화 내용을 참고해서 답하게 하려는 목적. 카톡/디스코드 모두 같은
+  구조를 쓴다.
+- 봇 자신의 답장(`direction='out'`)도 저장되기 때문에, 맥락에는 "무슨 말을 들었고 내가 뭐라고
+  답했는지"가 둘 다 들어간다.
 
 ## 자율 응답 (시간 기반, 카톡/디스코드 공용)
 - `core/autonomous_reply.py`가 기존 봇(`app.py`의 `_handle_auto_response`/`_should_skip`,
@@ -129,11 +147,11 @@ python app.py
 - [ ] 라그나로크M RAG 연동 명령어(가이드/검색/카드확률/안전제련/어비스홀타이머) 이식
 - [ ] 기타 명령어(mbti, 운세, 개미소리, 위성사진, 카톡통계, 쿠폰, 오늘대화요약 등) 이식 여부 결정
 - [x] `core/money_system.py` 원본 소스로 교체 완료
-- [ ] `core/discord_channel_log.py`: 순수 디스코드 채널 로그 저장 (자율 응답 맥락용, 카톡 로그와 분리 - `DISCORD_LOG_CHANNEL_IDS`)
+- [x] `core/discord_channel_log.py` 역할 → `core/conversation_store.py`(SQLite)로 흡수 완료
 - [x] `ai/rag_engine.py`의 tool_calls 실행 루프 완성 (날씨/환율/주식 도구 연동과 함께)
 - [ ] `config/mcp_servers.yaml`에 실제 MCP 서버 등록 (예: BookOasis mcp_server.py)
 - [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
-- [ ] 포링푸드 쪽 파서를 새 `katalk_log` JSONL 포맷에 맞춰 업데이트
+- [ ] 포링푸드 쪽 파서를 새 저장 방식(SQLite, `storage/conversations.db`)에 맞춰 업데이트 — 기존 JSONL을 읽던 방식은 더 이상 안 맞음
 - [ ] 디스코드→카톡(봇 답장을 실제 카톡방으로) 전송 엔드포인트 확인/구현 — 검토한 브릿지 코드는 카톡→디스코드 단방향만 구현되어 있음
 - [ ] `KATALK_LINKED_CHANNEL_IDS`에 브릿지의 실제 스레드 ID 목록(방별 매핑 + 기본 스레드) 채워넣기
