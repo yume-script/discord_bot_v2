@@ -77,9 +77,8 @@ class Chat(commands.Cog):
         if is_linked_channel and is_kakao and is_feed_message:
             feed_reply = build_feed_reply(content)
             if feed_reply is not None:
-                room_id = user.raw_id.split("//", 1)[0]
                 await message.channel.send(feed_reply)
-                await send_message(room_id, feed_reply)
+                await send_message(user.raw_id.split("//", 1)[0], feed_reply)
             return
 
         # 1-1. "/그림 프롬프트" / "/그림스타일 프롬프트 | 스타일" 텍스트 명령 - 슬래시 명령어
@@ -151,12 +150,18 @@ class Chat(commands.Cog):
             result = await fortune.get_fortune(query)
             await message.reply(result)
             if user.channel.value == "kakao":
-                room_id = user.raw_id.split("//", 1)[0]
-                await send_message(room_id, fortune.to_kakao_text(result))
+                await send_message(user.raw_id.split("//", 1)[0], fortune.to_kakao_text(result))
             return
         if content.startswith("/mbti"):
-            arg = content[len("/mbti"):].strip()
-            result = mbti.set_mbti(user.key, arg) if arg else mbti.get_mbti(user.key)
+            if not should_log:
+                await message.reply("❌ 이 채널은 대화 기록이 없어서 MBTI 분석을 할 수 없어요.")
+                return
+            target_name = content[len("/mbti"):].strip() or (user.display_name or "")
+            if not target_name:
+                await message.reply("❌ 분석할 대상 이름을 알 수 없어요.")
+                return
+            async with message.channel.typing():
+                result = await mbti.analyze_mbti(conversation_key, target_name)
             await self._send_game_result(message, user, result)
             return
 
@@ -232,26 +237,25 @@ class Chat(commands.Cog):
             file = discord.File(io.BytesIO(image_bytes), filename="ant_voice.webp")
             await message.reply(content=f"🐜 **개미의 외침:** {text}", file=file)
             if is_kakao:
-                room_id = user.raw_id.split("//", 1)[0]
                 try:
-                    await send_image(room_id, image_bytes, filename="ant_voice.webp")
+                    await send_image(user.raw_id.split("//", 1)[0], image_bytes, filename="ant_voice.webp")
                 except Exception:
-                    log.exception("카톡 이미지 전송 실패 (room=%s)", room_id)
+                    log.exception("카톡 이미지 전송 실패 (user=%s)", user.key)
             return
 
         if content.startswith("/위성사진"):
-            image_bytes = await satellite.get_satellite_image()
-            if image_bytes is None:
+            result = await satellite.get_satellite_image()
+            if result is None:
                 await message.reply("❌ 위성사진을 가져오지 못했어요. 잠시 후 다시 시도해주세요.")
                 return
-            file = discord.File(io.BytesIO(image_bytes), filename="satellite.png")
-            await message.reply(content="🛰️ 최신 위성사진이에요", file=file)
+            image_bytes, obs_time = result
+            file = discord.File(io.BytesIO(image_bytes), filename="satellite_latest.png")
+            await message.reply(content=f"📡 천리안 2A호 최신 위성 영상 (관측 시간: {obs_time})", file=file)
             if is_kakao:
-                room_id = user.raw_id.split("//", 1)[0]
                 try:
-                    await send_image(room_id, image_bytes, filename="satellite.png")
+                    await send_image(user.raw_id.split("//", 1)[0], image_bytes, filename="satellite_latest.png")
                 except Exception:
-                    log.exception("카톡 이미지 전송 실패 (room=%s)", room_id)
+                    log.exception("카톡 이미지 전송 실패 (user=%s)", user.key)
             return
 
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
@@ -347,8 +351,7 @@ class Chat(commands.Cog):
     async def _send_game_result(self, message: Message, user: UserRef, result: str) -> None:
         await message.reply(result)
         if user.channel.value == "kakao":
-            room_id = user.raw_id.split("//", 1)[0]
-            await send_message(room_id, result)
+            await send_message(user.raw_id.split("//", 1)[0], result)
 
     async def _handle_lookup(self, message: Message, tool_fn, args: dict) -> None:
         try:
@@ -414,8 +417,7 @@ class Chat(commands.Cog):
         if should_log:
             log_message(conversation_key, "애순이", reply, direction="out")
         if is_kakao:
-            room_id = user.raw_id.split("//", 1)[0]
-            await send_message(room_id, reply)
+            await send_message(user.raw_id.split("//", 1)[0], reply)
 
     async def _should_skip(self, message: Message, key: str) -> bool:
         """이미 응답 생성 중이거나 직전 메시지가 봇 메시지면 건너뜀 (기존 _should_skip 이식)."""

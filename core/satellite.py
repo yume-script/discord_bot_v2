@@ -1,37 +1,34 @@
 """
-[주의] 원본 satellite.py 소스를 확보하지 못했다 (저장소 파일 목록에서 링크를 못 찾음) -
-새로 작성한 구현이다. 히마와리-9 실시간 위성사진(NICT 제공, https://himawari8.nict.go.jp,
-무료/API 키 불필요 - himawaripy 등 여러 오픈소스 프로젝트가 쓰는 공개 API)을 가져온다.
-
-[검증 안 됨] 이 도구의 샌드박스 네트워크 정책이 himawari8.nict.go.jp을 막고 있어서
-실제 호출 테스트를 못 했다. 서버에 배포한 뒤 꼭 직접 확인할 것.
+원본 satellite.py(discord_bot)를 확보해서 그대로 이식 - 기상청(KMA) 천리안 2A호 위성 영상을
+가져온다. 이전에 원본을 못 구해서 히마와리 공개 API로 추측 구현했던 버전은 폐기하고 교체했다.
 """
 from __future__ import annotations
 
 import httpx
 
-LATEST_URL = "https://himawari8.nict.go.jp/img/D531106/latest.json"
-IMAGE_URL_TEMPLATE = "https://himawari8.nict.go.jp/img/D531106/1d/550/{date_path}/{time_str}_0_0.png"
+IMAGE_LIST_URL = "https://www.weather.go.kr/w/wnuri-img/rest/sat/images/gk2a.do?mapType=img&area=ko020lc&itv=0.5"
+BASE_IMAGE_URL = "https://www.weather.go.kr"
 
 
-async def get_satellite_image() -> bytes | None:
-    """최신 히마와리 위성사진(PNG bytes)을 가져온다. 실패 시 None."""
+async def get_satellite_image() -> tuple[bytes, str] | None:
+    """(이미지 bytes, 관측시간 문자열)을 반환. 실패 시 None."""
     async with httpx.AsyncClient(timeout=15) as client:
         try:
-            resp = await client.get(LATEST_URL)
+            resp = await client.get(IMAGE_LIST_URL)
             if resp.status_code != 200:
                 return None
-            data = resp.json()
-            date_str = data["date"]  # 예: "2026-09-17 05:20:00" (UTC)
-            date_part, time_part = date_str.split(" ")
-            y, m, d = date_part.split("-")
-            hh, mm, ss = time_part.split(":")
-            url = IMAGE_URL_TEMPLATE.format(date_path=f"{y}/{m}/{d}", time_str=f"{hh}{mm}{ss}")
+            image_info_list = resp.json()
+            if not image_info_list:
+                return None
 
-            img_resp = await client.get(url)
+            latest_info = image_info_list[-1]
+            target_url = BASE_IMAGE_URL + latest_info["url"]
+            obs_time = latest_info.get("tm", "알 수 없는 시간")
+
+            img_resp = await client.get(target_url)
             if img_resp.status_code != 200:
                 return None
-            return img_resp.content
-        except Exception as e:  # noqa: BLE001
+            return img_resp.content, obs_time
+        except Exception as e:  # noqa: BLE001 - 원본과 동일하게 어떤 예외든 흡수
             print(f"[SATELLITE ERROR] {e}")
             return None

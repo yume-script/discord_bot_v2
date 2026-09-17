@@ -29,12 +29,13 @@ class Fun(commands.Cog):
     @app_commands.command(name="위성사진", description="최신 실시간 위성사진을 보여줘요")
     async def satellite_cmd(self, interaction: Interaction):
         await interaction.response.defer()
-        image_bytes = await satellite.get_satellite_image()
-        if image_bytes is None:
+        result = await satellite.get_satellite_image()
+        if result is None:
             await interaction.followup.send("❌ 위성사진을 가져오지 못했어요. 잠시 후 다시 시도해주세요.")
             return
-        file = discord.File(io.BytesIO(image_bytes), filename="satellite.png")
-        await interaction.followup.send(content="🛰️ 최신 위성사진이에요", file=file)
+        image_bytes, obs_time = result
+        file = discord.File(io.BytesIO(image_bytes), filename="satellite_latest.png")
+        await interaction.followup.send(content=f"📡 천리안 2A호 최신 위성 영상 (관측 시간: {obs_time})", file=file)
 
 
 async def setup(bot: commands.Bot):

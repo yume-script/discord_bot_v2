@@ -77,6 +77,26 @@ def get_recent_context(conversation_key: str, limit: int | None = None) -> list[
     return list(reversed(rows))
 
 
+def get_messages_by_display_name(conversation_key: str, display_name: str, limit: int = 100) -> list[str]:
+    """
+    같은 방(conversation_key) 안에서 특정 유저(display_name)가 보낸 최근 메시지 텍스트만 뽑는다
+    (/mbti의 대화 로그 기반 분석용 - 원본 mbti_system.py가 katalk_log JSONL에서 하던 걸
+    여기서는 SQLite 조회로 한다). 오래된 순서로 반환.
+    """
+    with _lock:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT text FROM messages "
+                "WHERE conversation_key = ? AND display_name = ? AND direction = 'in' "
+                "ORDER BY id DESC LIMIT ?",
+                (conversation_key, display_name, limit),
+            ).fetchall()
+        finally:
+            conn.close()
+    return [r[0] for r in reversed(rows)]
+
+
 def prune_older_than(days: int) -> int:
     """
     오래된 대화 기록을 정리하고 싶어지면 쓸 수 있는 함수 (지금은 자동으로 호출되지 않음 -

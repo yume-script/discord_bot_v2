@@ -46,11 +46,13 @@ class Lookup(commands.Cog):
         result = await fortune.get_fortune(질의)
         await interaction.followup.send(result)
 
-    @app_commands.command(name="mbti", description="MBTI를 등록하거나 조회해요 (유형 생략 시 조회)")
-    async def mbti_cmd(self, interaction: Interaction, 유형: str | None = None):
-        user_key = f"discord:{interaction.user.id}"
-        result = mbti.set_mbti(user_key, 유형) if 유형 else mbti.get_mbti(user_key)
-        await interaction.response.send_message(result)
+    @app_commands.command(name="mbti", description="이 채널 대화 기록을 바탕으로 MBTI를 분석해요 (대상 생략 시 본인)")
+    async def mbti_cmd(self, interaction: Interaction, 대상: str | None = None):
+        await interaction.response.defer()
+        conversation_key = f"discord:{interaction.channel_id}"
+        target_name = 대상 or interaction.user.display_name
+        result = await mbti.analyze_mbti(conversation_key, target_name)
+        await interaction.followup.send(result)
 
 
 async def setup(bot: commands.Bot):

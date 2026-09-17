@@ -62,10 +62,11 @@ python app.py
   `rsplit`으로 파싱해서 카톡 메시지인지, 어느 방/유저인지 판별한다
   (`cogs/chat.py`의 `on_message`에서 호출).
 - 봇의 답장은 디스코드 채널에도 보내고(`message.reply`), 동시에 `core/katalk_bridge.send_message()`로
-  `KATALK_BRIDGE_URL`에 POST해서 실제 카톡방에도 내보낸다.
-  **확인 필요**: 지금까지 본 브릿지 코드는 카톡→디스코드 단방향(수신)만 구현되어 있다.
-  디스코드→카톡(봇 답장을 실제 카톡방에 전송) 쪽 엔드포인트가 별도로 있는지, 아니면 새로 만들어야
-  하는지 확인이 필요하다.
+  실제 카톡방에도 내보낸다. **원본 `katalk_webhook.py` 소스를 확보해서 그대로 이식 완료** —
+  엔드포인트(`{KATALK_BRIDGE_URL}/reply`, 원본 하드코딩 값 `http://192.168.0.50:3000/reply`와
+  정확히 일치)와 payload 형식(`{"type": "text"|"image", "room": room_id, "data": ...}`)을
+  전부 원본과 동일하게 맞췄고, payload 구조까지 테스트로 검증했다. 원본은 curl 서브프로세스로
+  쐈는데 여기서는 프로젝트 전역에서 쓰는 httpx로 동일한 JSON POST를 보낸다 (기능은 동일).
 - 카톡 메시지 로그는 `core/conversation_store.py`가 SQLite(`storage/conversations.db`)에
   저장한다 (아래 "대화 맥락" 항목 참고).
 - **입장/퇴장 피드, 닉네임 변경 알림, 채팅 머니 지급**: 원본 `app_kakao_handler.py`를 그대로 이식했다.
@@ -185,12 +186,18 @@ python app.py
   디스코드엔 마크다운 포함 텍스트를, 카톡엔 마크다운 걷어낸 텍스트를 보내는 것도 원본과 동일.
   **주의**: 네이버가 요청을 403으로 막는 경우가 있다 (스크레이핑이라 원래도 불안정한 방식) —
   서버 환경에서 직접 테스트 필요.
-- **MBTI** (`core/mbti.py`) — **[주의] 원본 `mbti_system.py` 소스를 확보하지 못해서
-  (저장소 파일 목록이 "image_gen.py"까지만 보여서 "m"으로 시작하는 파일 링크를 못 찾음)
-  새로 작성한 최소 구현이다.** `/mbti INTJ`처럼 유형을 등록하고, `/mbti`만 치면 등록된 유형과
-  짧은 설명을 보여준다 (`storage/mbti.json`에 저장). 원본을 구하면 교체할 것.
-- 둘 다 슬래시 명령어(`cogs/lookup.py`)와 텍스트 명령(`cogs/chat.py`, `/운세 양띠`, `/mbti INTJ`)
-  양쪽 다 지원한다.
+- **MBTI** (`core/mbti.py`) — 원본 `mbti_system.py`를 확보해서 그 로직으로 교체했다 (이전에
+  못 찾아서 "자기 신고형 등록/조회"로 추측 구현했던 버전은 폐기). `/mbti [대상]`(대상 생략 시
+  본인)을 치면, **같은 방/채널 안에서 그 사람이 보낸 최근 대화(최대 100개, SQLite
+  `conversation_store`에서 조회)를 모아 LLM이 MBTI를 분석**해준다. 메시지가 5개 미만이면
+  분석 불가 안내가 나온다 (원본과 동일한 기준).
+  원본과 다른 점 2가지: (1) 로그 소스가 katalk_log JSONL → SQLite로 바뀌었고, (2) LLM 호출이
+  google-genai(Gemini 직접 호출) → 이 프로젝트가 이미 쓰는 LiteLLM 프록시 경유로 바뀌었다
+  (별도 Gemini API 키 관리가 필요 없어짐). "애순이 현재 기분" 인트로는 이 프로젝트에 그
+  페르소나 모듈이 없어서 뺐다.
+- 둘 다 슬래시 명령어(`cogs/lookup.py`)와 텍스트 명령(`cogs/chat.py`, `/운세 양띠`, `/mbti`)
+  양쪽 다 지원한다. MBTI는 대화 기록이 있는 채널(카톡 연동 채널 또는 `DISCORD_LOG_CHANNEL_IDS`)
+  에서만 동작한다.
 
 ## 개미소리 / 위성사진
 - **개미소리** (`core/ant_voice.py`) — 원본 `ant_voice_gen.py`를 그대로 이식. 원본 소스
@@ -201,10 +208,9 @@ python app.py
   (NICT 제공, `himawari8.nict.go.jp`, 무료/API 키 불필요)을 가져온다. **[검증 안 됨]** 이
   작업 환경의 네트워크 정책이 해당 도메인을 막고 있어서 실제 호출을 테스트하지 못했다 —
   서버에 배포한 뒤 `/위성사진` 직접 확인 필요.
-- 카톡 쪽 이미지 전송은 `core/katalk_bridge.send_image()`를 새로 추가했다. **[주의]** 원본은
-  `send_katalk_image_webhook`이라는 별도 웹훅을 썼는데 정확한 API 계약(엔드포인트/payload
-  형식)을 확보하지 못해서, 텍스트 전송과 비슷한 형태로 추정해 구현했다 — 실제 브릿지 서버
-  구현에 맞춰 조정이 필요할 수 있다.
+- 카톡 쪽 이미지 전송은 `core/katalk_bridge.send_image()`가 담당한다 — 원본 `katalk_webhook.py`의
+  `send_katalk_image_webhook`과 동일한 엔드포인트/payload(`{"type": "image", "room", "data": base64}`)로
+  확인 완료.
 - 슬래시 명령어(`cogs/fun.py`)와 텍스트 명령(`cogs/chat.py`, `/개미소리 내용`, `/위성사진`)
   둘 다 지원.
 
@@ -248,11 +254,11 @@ python app.py
 ## 아직 안 된 것 (TODO)
 - [x] `/잔고` 조회 + 관리자 `/머니설정` 잔액 강제 조정 기능 추가
 - [x] 미니게임 7종(바카라/블랙잭/드래곤타이거/가위바위보/주사위/슬롯머신/다이스포커) 이식 — 결과 표시는 텍스트로 단순화 (이미지 에셋 없음)
-- [x] 운세(`core/fortune.py`, 원본 그대로) / MBTI(`core/mbti.py`, 새로 작성 - 원본 미확보) 이식
+- [x] 운세(`core/fortune.py`, 원본 그대로) / MBTI(`core/mbti.py`, 원본 확보해서 교체 - SQLite+LiteLLM으로 어댑팅) 이식
 - [x] 로또는 폐기하기로 함 (스케줄 추첨 방식이라 성격이 다름)
 - [ ] 라그나로크M RAG 연동 — 방향성만 정리됨, 데이터 소스 확보부터 필요 (위 섹션 참고)
-- [x] 개미소리(`core/ant_voice.py`, 원본 그대로 - 테스트 완료) / 위성사진(`core/satellite.py`, 새로 작성 - 미검증) 이식
-- [ ] `core/katalk_bridge.send_image()`의 브릿지 API 계약(엔드포인트/payload) 실제 확인 - 추정으로 구현함
+- [x] 개미소리(`core/ant_voice.py`, 원본 그대로 - 테스트 완료) / 위성사진(`core/satellite.py`, 원본(기상청 KMA API) 확보해서 교체 - 이 환경 네트워크 정책상 미검증, 서버에서 확인 필요) 이식
+- [x] `core/katalk_bridge.py` 원본 `katalk_webhook.py` 소스 확보해서 정확한 엔드포인트/payload로 교체 완료 (테스트로 검증)
 - [ ] 기타 명령어(카톡통계, 쿠폰, 오늘대화요약 등) 이식 여부 결정
 - [x] `core/money_system.py` 원본 소스로 교체 완료
 - [x] `core/discord_channel_log.py` 역할 → `core/conversation_store.py`(SQLite)로 흡수 완료
@@ -261,5 +267,5 @@ python app.py
 - [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
 - [ ] 포링푸드 쪽 파서를 새 저장 방식(SQLite, `storage/conversations.db`)에 맞춰 업데이트 — 기존 JSONL을 읽던 방식은 더 이상 안 맞음
-- [ ] 디스코드→카톡(봇 답장을 실제 카톡방으로) 전송 엔드포인트 확인/구현 — 검토한 브릿지 코드는 카톡→디스코드 단방향만 구현되어 있음
+- [x] 디스코드→카톡 전송 엔드포인트 확인/구현 완료 (`core/katalk_bridge.py`, 원본 `katalk_webhook.py` 그대로 이식)
 - [ ] `KATALK_LINKED_CHANNEL_IDS`에 브릿지의 실제 스레드 ID 목록(방별 매핑 + 기본 스레드) 채워넣기
