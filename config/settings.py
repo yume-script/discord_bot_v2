@@ -22,6 +22,11 @@ DISCORD_BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 DISCORD_GUILD_ID = int(os.environ.get("DISCORD_GUILD_ID", "0") or 0)
 DISCORD_LOG_CHANNEL_IDS = _csv_ids(os.environ.get("DISCORD_LOG_CHANNEL_IDS"))
 
+# 머니 시스템을 마음대로 조정할 수 있는 디스코드 유저ID 목록 (comma-separated).
+# 카톡 릴레이 메시지는 브릿지 계정이 author라서 진짜 관리자인지 판별 불가 - 관리자 명령은
+# 디스코드에서 직접 실행할 때만 허용된다.
+ADMIN_DISCORD_IDS = _csv_ids(os.environ.get("ADMIN_DISCORD_IDS"))
+
 # --- Kakao (디스코드 채널 릴레이 방식 - 원본 봇과 동일, 실제 브릿지 코드로 형식 확인함) ---
 # 브릿지가 카톡 메시지를 "{발신자명}//{방ID}//{유저ID}" 닉네임으로 인코딩해서 아래 채널들에
 # 일반 디스코드 메시지로 올려준다. 이 봇은 별도 수신 서버 없이 on_message에서 파싱만 한다.

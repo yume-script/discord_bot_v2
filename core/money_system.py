@@ -153,8 +153,32 @@ class MoneySystem:
             return 0
 
     def update_balance(self, room_id, user_id, amount, description="관리자 수정"):
-        """관리자용 수동 잔액 조정"""
+        """관리자용 수동 잔액 조정 (증감식 - amount만큼 더하거나 뺌). 원본 그대로."""
         return self.transaction(room_id, user_id, amount, 'manual', description)
+
+    def set_balance(self, room_id, user_id, balance: int, description="관리자 강제 설정"):
+        """
+        [원본에 없음 - 새로 추가] 잔액을 원하는 값으로 절대 설정한다 (증감이 아니라 덮어쓰기).
+        transaction()과 달리 빚 자동상환 로직을 타지 않고, 잔액 부족 체크도 하지 않는다
+        (관리자가 의도적으로 정확한 숫자를 박아넣는 용도이므로).
+        """
+        current_debt = self.get_user_data(room_id, user_id)["debt"]
+        now = datetime.now()
+        record = {
+            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "type": "admin_set",
+            "change": balance,
+            "balance": balance,
+            "debt": current_debt,
+            "desc": description,
+        }
+        file_path = self._get_file_path(room_id, user_id)
+        try:
+            with open(file_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            return True, balance
+        except Exception as e:
+            return False, f"저장 오류: {e}"
 
 
 money_system = MoneySystem()

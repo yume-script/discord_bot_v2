@@ -19,7 +19,8 @@ from ai.image_engine import generate_image
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
-from core import autonomous_reply, game_engine
+from core import autonomous_reply, fortune, game_engine, mbti
+from core.admin_auth import is_admin
 from core.concurrency import image_gen_pool
 from core.conversation_store import log_message
 from core.kakao_feed import build_feed_reply, is_feed_message as _is_feed_message
@@ -142,6 +143,80 @@ class Chat(commands.Cog):
             return
         if content.startswith("/바카라 "):
             await self._handle_game_choice(message, user, game_engine.play_baccarat, content[len("/바카라 "):], "홀/짝")
+            return
+
+        # 1-4. "/운세", "/mbti" 텍스트 명령
+        if content.startswith("/운세"):
+            query = content[len("/운세"):].strip()
+            result = await fortune.get_fortune(query)
+            await message.reply(result)
+            if user.channel.value == "kakao":
+                room_id = user.raw_id.split("//", 1)[0]
+                await send_message(room_id, fortune.to_kakao_text(result))
+            return
+        if content.startswith("/mbti"):
+            arg = content[len("/mbti"):].strip()
+            result = mbti.set_mbti(user.key, arg) if arg else mbti.get_mbti(user.key)
+            await self._send_game_result(message, user, result)
+            return
+
+        # 1-5. "/잔고", "/머니" (조회, 누구나) - 원본 명령어 이름 그대로
+        if content.startswith("/잔고") or content.startswith("/머니") and not content.startswith("/머니설정"):
+            room_id, user_id = game_engine.room_user(user)
+            data = money_system.get_user_data(room_id, user_id)
+            result = f"💰 잔액: {data['balance']:,}원"
+            if data["debt"]:
+                result += f" | 빚: {data['debt']:,}원"
+            await self._send_game_result(message, user, result)
+            return
+
+        # 1-6. "/머니설정", "/머니설정카톡" (관리자 전용, 카톡에서는 사용 불가 - 관리자 판별 불가)
+        if content.startswith("/머니설정카톡"):
+            if is_kakao:
+                await message.reply("⚠️ 관리자 명령은 카톡에서는 사용할 수 없어요.")
+                return
+            if not is_admin(message.author.id):
+                await message.reply("🚫 관리자만 사용할 수 있는 명령이에요.")
+                return
+            parts = content[len("/머니설정카톡"):].strip().split()
+            if len(parts) != 3:
+                await message.reply("사용법: `/머니설정카톡 방ID 유저ID 금액`")
+                return
+            target_room, target_user, amount_str = parts
+            try:
+                amount = int(amount_str)
+            except ValueError:
+                await message.reply("금액은 숫자로 입력해주세요.")
+                return
+            ok, result = money_system.set_balance(
+                target_room, target_user, amount, description=f"관리자({message.author.display_name}) 설정"
+            )
+            await message.reply(f"✅ 잔액을 {amount:,}원으로 설정했어요." if ok else f"❌ 오류: {result}")
+            return
+        if content.startswith("/머니설정"):
+            if is_kakao:
+                await message.reply("⚠️ 관리자 명령은 카톡에서는 사용할 수 없어요.")
+                return
+            if not is_admin(message.author.id):
+                await message.reply("🚫 관리자만 사용할 수 있는 명령이에요.")
+                return
+            rest = content[len("/머니설정"):].strip()
+            target = message.mentions[0] if message.mentions else message.author
+            amount_str = rest
+            for m in message.mentions:
+                amount_str = amount_str.replace(m.mention, "").strip()
+            try:
+                amount = int(amount_str)
+            except ValueError:
+                await message.reply("사용법: `/머니설정 @대상 금액` (대상 생략 시 본인)")
+                return
+            room_id = user_id = str(target.id)
+            ok, result = money_system.set_balance(
+                room_id, user_id, amount, description=f"관리자({message.author.display_name}) 설정"
+            )
+            await message.reply(
+                f"✅ {target.display_name}님의 잔액을 {amount:,}원으로 설정했어요." if ok else f"❌ 오류: {result}"
+            )
             return
 
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
