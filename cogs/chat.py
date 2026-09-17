@@ -116,6 +116,10 @@ class Chat(commands.Cog):
 
         # 1-3. 미니게임 7종 텍스트 명령 - "/가위 100", "/용호 용 500"처럼 바로 타이핑.
         # 카톡 유저는 슬래시 인터랙션(cogs/games.py)을 못 쓰니까 이 경로가 유일한 진입점이다.
+        # prefix가 "/가위 "처럼 공백 포함이라, 인자 없이 "/가위"만 친 경우(공백 없음)는 아래에서
+        # 따로 잡아서 사용법을 보여준다 - 안 그러면 조건에 아예 안 걸려서 조용히 무시된다.
+        GAME_BARE_COMMANDS = ("/가위", "/바위", "/보", "/주사위", "/슬롯머신", "/다이스포커", "/블랙잭", "/용호", "/바카라")
+
         if content.startswith("/가위 "):
             await self._handle_game_rps(message, user, "가위", content[len("/가위 "):])
             return
@@ -142,6 +146,9 @@ class Chat(commands.Cog):
             return
         if content.startswith("/바카라 "):
             await self._handle_game_choice(message, user, game_engine.play_baccarat, content[len("/바카라 "):], "홀/짝")
+            return
+        if content.strip() in GAME_BARE_COMMANDS:
+            await self._send_game_result(message, user, f"사용법: `{content.strip()} 금액` (용호/바카라는 `{content.strip()} 선택 금액`)")
             return
 
         # 1-4. "/운세", "/mbti" 텍스트 명령
