@@ -6,16 +6,16 @@ bookoasis:
   command: ssh
   args:
     - "-i"
-    - "/home/discordbot/.ssh/id_ed25519_bookoasis"   # TODO: 실제 키 경로로 확인 (root면 /root/.ssh/...)
+    - "/root/.ssh/id_ed25519_bookoasis"
     - "-o"
     - "BatchMode=yes"
-    - "TODO_유저명@192.168.0.31"                      # TODO: 192.168.0.31 SSH 로그인 유저명
+    - "root@192.168.0.31"
     - "docker"
     - "exec"
     - "-i"                                            # -t(TTY) 없이 -i(stdin 유지)만 - MCP는 raw stdio 프로토콜
-    - "bookoasis"                                     # TODO: 실제 컨테이너명이 다르면 수정
+    - "bookoasis"
     - "python3"
-    - "TODO_컨테이너내부_mcp_server.py_경로"           # TODO: 6번 명령으로 찾은 경로
+    - "/app/tools/mcp_server.py"
 
 # 예시(다른 MCP 서버 추가 시 참고):
 # romel_wiki:

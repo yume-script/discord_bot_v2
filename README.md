@@ -212,8 +212,8 @@ python app.py
 - `config/mcp_servers.yaml`에 BookOasis의 `tools/mcp_server.py`를 SSH+`docker exec`로 접속하는
   stdio MCP 서버로 등록했다. SSH 키 기반 무인증 접속이 전제 (MCP는 대화형 비밀번호 입력이
   안 되므로 필수).
-- **진행 중** — SSH 키 발급 절차 안내 완료, 실제 유저명/컨테이너 내부 경로 확인은 서버에서
-  진행 중. 컨테이너명은 192.168.0.31의 `bookoasis`로 잠정 확인.
+- **연결 정보 확정 완료** — `root@192.168.0.31`, 컨테이너 `bookoasis`, 스크립트 경로
+  `/app/tools/mcp_server.py`. SSH 키(`/root/.ssh/id_ed25519_bookoasis`) 인증도 확인됨.
 - `ai/prompts.py`의 `RESPONSE_SYSTEM_PROMPT`에 "bookoasis"와 "북오아시스"가 같은 서비스를
   가리킨다는 걸 명시해서, 자연어 대화에서 어느 이름으로 불러도 관련 도구를 쓰도록 했다.
 - **안정성 보완**: `ai/mcp_manager.py`의 `init_mcp()`가 예외를 흡수하도록 고쳤다 — MCP 연결
@@ -257,7 +257,7 @@ python app.py
 - [x] `core/money_system.py` 원본 소스로 교체 완료
 - [x] `core/discord_channel_log.py` 역할 → `core/conversation_store.py`(SQLite)로 흡수 완료
 - [x] `ai/rag_engine.py`의 tool_calls 실행 루프 완성 (날씨/환율/주식 도구 연동과 함께)
-- [ ] `config/mcp_servers.yaml`에 BookOasis MCP 서버 접속정보 확정 (SSH 유저명, mcp_server.py 경로) - SSH 키는 발급 진행 중, 컨테이너는 192.168.0.31의 `bookoasis`로 잠정 확인
+- [x] `config/mcp_servers.yaml`에 BookOasis MCP 서버 접속정보 확정 (`root@192.168.0.31`, 컨테이너 `bookoasis`, `/app/tools/mcp_server.py`)
 - [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
 - [ ] 포링푸드 쪽 파서를 새 저장 방식(SQLite, `storage/conversations.db`)에 맞춰 업데이트 — 기존 JSONL을 읽던 방식은 더 이상 안 맞음
