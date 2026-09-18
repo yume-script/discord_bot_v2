@@ -268,7 +268,8 @@ python app.py
 - [ ] 라그나로크M RAG 연동 — 방향성만 정리됨, 데이터 소스 확보부터 필요 (위 섹션 참고)
 - [x] 개미소리(`core/ant_voice.py`, 원본 그대로 - 테스트 완료) / 위성사진(`core/satellite.py`, 원본(기상청 KMA API) 확보해서 교체 - 이 환경 네트워크 정책상 미검증, 서버에서 확인 필요) 이식
 - [x] `core/katalk_bridge.py` 원본 `katalk_webhook.py` 소스 확보해서 정확한 엔드포인트/payload로 교체 완료 (테스트로 검증)
-- [ ] 기타 명령어(카톡통계, 쿠폰, 오늘대화요약 등) 이식 여부 결정
+- [x] 카톡통계(`/월간카톡`, `/카톡순위`)/오늘대화요약(`/오늘대화요약`) 이식 완료 — **[주의] 원본 소스를 못 구해서 새로 작성함** (`core/katalk_stats.py`). SQLite 대화 로그(`core/conversation_store.py`)를 유저별로 집계하는 방식으로 구현 - `/카톡순위`(오늘/이번달 TOP5), `/월간카톡`(이번 달 전체 통계), `/오늘대화요약`(LLM으로 오늘 대화 요약, 메시지 5개 미만이면 스킵). 순위/통계는 시뮬레이션 테스트로 검증 완료, 요약은 메시지 수집·프롬프트 구성까지 검증(실제 LLM 호출은 이 환경에 API 키가 없어 미검증 - mbti와 동일한 한계)
+- [ ] 나머지 기타 명령어(쿠폰 등) 이식 여부 결정
 - [x] `core/money_system.py` 원본 소스로 교체 완료
 - [x] `core/discord_channel_log.py` 역할 → `core/conversation_store.py`(SQLite)로 흡수 완료
 - [x] `ai/rag_engine.py`의 tool_calls 실행 루프 완성 (날씨/환율/주식 도구 연동과 함께)

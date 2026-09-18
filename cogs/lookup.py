@@ -9,7 +9,7 @@ from discord import Interaction, app_commands
 from discord.ext import commands
 
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
-from core import fortune, mbti
+from core import fortune, katalk_stats, mbti
 
 
 class Lookup(commands.Cog):
@@ -52,6 +52,26 @@ class Lookup(commands.Cog):
         conversation_key = f"discord:{interaction.channel_id}"
         target_name = 대상 or interaction.user.display_name
         result = await mbti.analyze_mbti(conversation_key, target_name)
+        await interaction.followup.send(result)
+
+    @app_commands.command(name="월간카톡", description="이번 달 이 채널의 대화 통계를 보여줘요")
+    async def monthly_katalk(self, interaction: Interaction):
+        await interaction.response.defer()
+        conversation_key = f"discord:{interaction.channel_id}"
+        await interaction.followup.send(katalk_stats.get_monthly_stats(conversation_key))
+
+    @app_commands.command(name="카톡순위", description="채팅 순위를 보여줘요 (오늘/이번달)")
+    async def katalk_rank(self, interaction: Interaction, 기간: str = "오늘"):
+        await interaction.response.defer()
+        conversation_key = f"discord:{interaction.channel_id}"
+        period = "month" if 기간 in ("이번달", "이번 달", "월") else "today"
+        await interaction.followup.send(katalk_stats.get_ranking(conversation_key, period))
+
+    @app_commands.command(name="오늘대화요약", description="오늘 이 채널에서 오간 대화를 요약해줘요")
+    async def today_summary(self, interaction: Interaction):
+        await interaction.response.defer()
+        conversation_key = f"discord:{interaction.channel_id}"
+        result = await katalk_stats.summarize_today(conversation_key)
         await interaction.followup.send(result)
 
 

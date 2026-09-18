@@ -111,3 +111,45 @@ def prune_older_than(days: int) -> int:
             return cur.rowcount
         finally:
             conn.close()
+
+
+def get_message_counts_by_user(conversation_key: str, since_iso: str | None = None) -> list[tuple[str, int]]:
+    """
+    [신규] /카톡순위, /월간카톡용 - 같은 방 안에서 유저(direction='in')별 메시지 건수를
+    많은 순으로 반환한다. since_iso를 주면 그 시각 이후만 집계한다.
+    """
+    with _lock:
+        conn = _connect()
+        try:
+            if since_iso:
+                rows = conn.execute(
+                    "SELECT display_name, COUNT(*) FROM messages "
+                    "WHERE conversation_key = ? AND direction = 'in' AND display_name IS NOT NULL "
+                    "AND ts >= ? GROUP BY display_name ORDER BY COUNT(*) DESC",
+                    (conversation_key, since_iso),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT display_name, COUNT(*) FROM messages "
+                    "WHERE conversation_key = ? AND direction = 'in' AND display_name IS NOT NULL "
+                    "GROUP BY display_name ORDER BY COUNT(*) DESC",
+                    (conversation_key,),
+                ).fetchall()
+        finally:
+            conn.close()
+    return rows
+
+
+def get_messages_since(conversation_key: str, since_iso: str, direction: str = "in") -> list[tuple[str | None, str]]:
+    """[신규] /오늘대화요약용 - 지정 시각 이후의 (display_name, text)를 오래된 순서로 반환."""
+    with _lock:
+        conn = _connect()
+        try:
+            rows = conn.execute(
+                "SELECT display_name, text FROM messages "
+                "WHERE conversation_key = ? AND direction = ? AND ts >= ? ORDER BY id ASC",
+                (conversation_key, direction, since_iso),
+            ).fetchall()
+        finally:
+            conn.close()
+    return rows

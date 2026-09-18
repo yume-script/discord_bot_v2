@@ -19,7 +19,7 @@ from ai.image_engine import generate_image
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
-from core import ant_voice, autonomous_reply, fortune, game_engine, mbti, satellite
+from core import ant_voice, autonomous_reply, fortune, game_engine, katalk_stats, mbti, satellite
 from core.admin_auth import is_admin
 from core.concurrency import image_gen_pool
 from core.conversation_store import log_message
@@ -169,6 +169,33 @@ class Chat(commands.Cog):
                 return
             async with message.channel.typing():
                 result = await mbti.analyze_mbti(conversation_key, target_name)
+            await self._send_game_result(message, user, result)
+            return
+
+        # 1-4-1. "/월간카톡", "/카톡순위", "/오늘대화요약" - core/katalk_stats.py 새로 작성
+        # (원본 소스를 못 구해서 SQLite 대화 로그로 새로 구현). 대화 기록이 있는 채널에서만 의미가 있다.
+        if content.startswith("/월간카톡"):
+            if not should_log:
+                await self._send_game_result(message, user, "❌ 이 채널은 대화 기록이 없어서 통계를 낼 수 없어요.")
+                return
+            result = katalk_stats.get_monthly_stats(conversation_key)
+            await self._send_game_result(message, user, result)
+            return
+        if content.startswith("/카톡순위"):
+            if not should_log:
+                await self._send_game_result(message, user, "❌ 이 채널은 대화 기록이 없어서 순위를 낼 수 없어요.")
+                return
+            arg = content[len("/카톡순위"):].strip()
+            period = "month" if arg in ("이번달", "이번 달", "월") else "today"
+            result = katalk_stats.get_ranking(conversation_key, period)
+            await self._send_game_result(message, user, result)
+            return
+        if content.startswith("/오늘대화요약"):
+            if not should_log:
+                await self._send_game_result(message, user, "❌ 이 채널은 대화 기록이 없어서 요약할 수 없어요.")
+                return
+            async with message.channel.typing():
+                result = await katalk_stats.summarize_today(conversation_key)
             await self._send_game_result(message, user, result)
             return
 
