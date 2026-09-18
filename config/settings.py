@@ -53,11 +53,6 @@ IMAGE_GEN_MAX_CONCURRENCY = int(os.environ.get("IMAGE_GEN_MAX_CONCURRENCY", "2")
 HORDE_API_KEY = os.environ.get("HORDE_API_KEY", "")
 HORDE_DEFAULT_MODEL = os.environ.get("HORDE_DEFAULT_MODEL", "Nova Anime XL")
 
-# --- Poring Food file contract ---
-PORING_FOOD_STATUS_JSON_PATH = Path(
-    os.environ.get("PORING_FOOD_STATUS_JSON_PATH", "./storage/aesun_current_status.json")
-)
-
 # --- Storage paths (초기화 결정: 빈 상태로 시작) ---
 CONVERSATION_DB_PATH = BASE_DIR / "storage" / "conversations.db"  # 대화 로그 (SQLite - 최근 맥락 조회용)
 CONVERSATION_CONTEXT_LIMIT = int(os.environ.get("CONVERSATION_CONTEXT_LIMIT", "12"))

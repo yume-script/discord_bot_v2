@@ -275,7 +275,9 @@ python app.py
 - [x] `config/mcp_servers.yaml`에 BookOasis MCP 서버 접속정보 확정 (`root@192.168.0.31`, 컨테이너 `bookoasis`, `/app/tools/mcp_server.py`)
 - [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
-- [x] ~~포링푸드 쪽 파서를 새 저장 방식(SQLite)에 맞춰 업데이트~~ → **정정: 포링푸드는 애초에 카톡 로그를 안 읽는다** (전체 소스 확인 완료, `loader.py`가 자기 저장소의 조직도/이슈/페르소나 JSON만 읽음). 유일한 실제 연결은 카톡 브릿지 서버 공유(코드 공유 아님)와, 포링푸드가 `/mnt/discord_bot/aesun_current_status.json`(옛날 봇 경로, 아무도 안 읽음)에 상태를 쓰는 것뿐. `integrations/poring_food_bridge.py`를 올바른 방향(읽기, `read_current_status()`)으로 정정함 - 실제로 쓰려면 포링푸드 쪽 경로 수정 + 이 봇에서 호출 배선이 필요 (지금은 미사용)
+- [x] ~~포링푸드 쪽 파서를 새 저장 방식(SQLite)에 맞춰 업데이트~~ → **정정: 포링푸드는 애초에 카톡 로그를 안 읽는다** (전체 소스 확인 완료, `loader.py`가 자기 저장소의 조직도/이슈/페르소나 JSON만 읽음). 유일한 실제 연결은 카톡 브릿지 서버 공유(코드 공유 아님)와, 포링푸드가 `aesun_current_status.json`에 상태를 쓰는 것뿐.
+- [x] **애순이 상태 조회를 파일 공유 방식에서 MCP 서버 방식으로 전환** — 포링푸드가 discord_bot_v2 폴더에 파일을 쓰는 방식(`aesun_current_status.json` 공유)은 "포링푸드가 독립된 개체"라는 원칙과 안 맞아서 폐기했다. 대신 BookOasis와 같은 패턴으로 포링푸드 쪽에 `mcp_server.py`(stdio MCP 서버, `get_current_status` 도구)를 추가하고, `config/mcp_servers.yaml`에 `poring_food` 항목으로 등록했다 — 같은 서버라 SSH 없이 바로 `python3`로 실행한다. `ai/local_tools.py`의 `get_poring_food_status()`와 `integrations/poring_food_bridge.py`(직접 파일 읽기 방식)는 제거했고, `PORING_FOOD_STATUS_JSON_PATH` 설정도 뺐다.
+- [ ] **포링푸드 쪽 적용 필요** — `/mnt/user-data/outputs/poring_food_mcp_server.py`를 포링푸드 저장소에 `mcp_server.py`로 추가, `pip install mcp`, `config.py`의 `STATUS_OUT_PATH`를 포링푸드 자기 폴더 안(`os.path.join(BASE_DIR, "aesun_current_status.json")`)으로 변경 필요. 이제 discord_bot_v2 폴더에는 아무것도 안 씀.
 - [x] **페르소나 분리**: 이 봇을 "아메하나"로, 포링푸드는 "애순이"로 유지하기로 결정 - 호출어(`core/autonomous_reply.py`의 `CALL_TRIGGER_WORDS`), 자율응답 기본 키워드(`AUTO_REPLY_TRIGGER_KEYWORDS`), 시스템 프롬프트(`ai/prompts.py`), MBTI 분석 프롬프트(`core/mbti.py`) 전부 "아메하나"로 교체 완료. 포링푸드 쪽 코드/설정은 건드리지 않음 (별도 프로젝트, 매시 3분 공장일지 발송은 그대로 유지)
 - [x] 디스코드→카톡 전송 엔드포인트 확인/구현 완료 (`core/katalk_bridge.py`, 원본 `katalk_webhook.py` 그대로 이식)
 - [ ] `KATALK_LINKED_CHANNEL_IDS`에 브릿지의 실제 스레드 ID 목록(방별 매핑 + 기본 스레드) 채워넣기

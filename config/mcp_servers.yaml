@@ -17,6 +17,15 @@ bookoasis:
     - "python3"
     - "/app/tools/mcp_server.py"
 
+# 포링푸드(애순이) - 같은 서버(etc)에서 도는 별도 프로젝트라 SSH 없이 바로 실행한다.
+# porning_food 쪽에 mcp_server.py를 새로 추가해야 함 (아래 안내 참고).
+# TODO: porning_food가 venv를 쓰면 "python3"를 "/mnt/poring_food/venv/bin/python3"로 바꿀 것.
+poring_food:
+  transport: stdio
+  command: python3
+  args:
+    - "/mnt/poring_food/mcp_server.py"
+
 # 예시(다른 MCP 서버 추가 시 참고):
 # romel_wiki:
 #   transport: sse
