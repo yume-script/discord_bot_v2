@@ -383,7 +383,7 @@ class Chat(commands.Cog):
         await self._send_game_result(message, user, result)
 
     async def _send_game_result(self, message: Message, user: UserRef, result: str) -> None:
-        await message.reply(result)
+        await self._send_chunked(message, result)
         if user.channel.value == "kakao":
             await send_message(user.raw_id.split("//", 1)[0], result)
 
@@ -456,11 +456,29 @@ class Chat(commands.Cog):
         conversation_key: str,
         should_log: bool,
     ) -> None:
-        await message.reply(reply)
+        await self._send_chunked(message, reply)
         if should_log:
             log_message(conversation_key, "아메하나", reply, direction="out")
         if is_kakao:
             await send_message(user.raw_id.split("//", 1)[0], reply)
+
+    async def _send_chunked(self, message: Message, text: str) -> None:
+        """
+        [신규] 디스코드는 메시지 하나에 2000자 제한이 있다(계정/서버에 따라 더 관대한
+        경우도 있지만 최소 기준이 2000). Plex 검색 결과처럼 도구 결과가 길게 나올 때
+        LLM이 그걸 그대로 답변에 옮겨 담으면 전송 자체가 discord.errors.HTTPException
+        (Invalid Form Body: 4000자 초과 등)으로 실패해서 "대답을 못 만들었어요" 폴백으로
+        빠지는 문제가 있었다 - 길면 2000자 단위로 잘라서 여러 메시지로 나눠 보낸다.
+        """
+        limit = 2000
+        if len(text) <= limit:
+            await message.reply(text)
+            return
+
+        chunks = [text[i:i + limit] for i in range(0, len(text), limit)]
+        await message.reply(chunks[0])
+        for chunk in chunks[1:]:
+            await message.channel.send(chunk)
 
     async def _should_skip(self, message: Message, key: str) -> bool:
         """이미 응답 생성 중이거나 직전 메시지가 봇 메시지면 건너뜀 (기존 _should_skip 이식)."""
