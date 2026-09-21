@@ -68,7 +68,7 @@ def get_ranking(conversation_key: str, period: str = "today") -> str:
     return "\n".join(lines)
 
 
-async def summarize_today(conversation_key: str) -> str:
+async def summarize_today(conversation_key: str, is_kakao: bool = False) -> str:
     """오늘 이 방에서 오간 대화를 LLM으로 짧게 요약한다."""
     since = _today_start_iso()
     messages = get_messages_since(conversation_key, since, direction="in")
@@ -86,10 +86,11 @@ async def summarize_today(conversation_key: str) -> str:
         f"[오늘의 대화 로그]\n{chat_log}"
     )
 
+    identity = "너는 카카오톡 봇 애순이야." if is_kakao else "너는 디스코드 봇 아메하나야."
     model = build_chat_model()
     resp = await model.ainvoke(
         [
-            SystemMessage(content="너는 디스코드 봇 아메하나야. 카톡방 대화를 요약해주는 중이야."),
+            SystemMessage(content=f"{identity} 카톡방 대화를 요약해주는 중이야."),
             HumanMessage(content=prompt),
         ]
     )

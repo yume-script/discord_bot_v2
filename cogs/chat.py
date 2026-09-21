@@ -168,7 +168,7 @@ class Chat(commands.Cog):
                 await self._send_game_result(message, user, "❌ 분석할 대상 이름을 알 수 없어요.")
                 return
             async with message.channel.typing():
-                result = await mbti.analyze_mbti(conversation_key, target_name)
+                result = await mbti.analyze_mbti(conversation_key, target_name, is_kakao)
             await self._send_game_result(message, user, result)
             return
 
@@ -195,7 +195,7 @@ class Chat(commands.Cog):
                 await self._send_game_result(message, user, "❌ 이 채널은 대화 기록이 없어서 요약할 수 없어요.")
                 return
             async with message.channel.typing():
-                result = await katalk_stats.summarize_today(conversation_key)
+                result = await katalk_stats.summarize_today(conversation_key, is_kakao)
             await self._send_game_result(message, user, result)
             return
 
@@ -307,13 +307,13 @@ class Chat(commands.Cog):
                 await send_message(room_id, notice)
             money_system.transaction(room_id=room_id, user_id=member_no, amount=10, transaction_type="chat")
 
-        # 호출어("아메하나야"/"아메하나") - 감지되면 확률/쿨다운 없이 무조건 응답
-        call_word = autonomous_reply.detect_call_word(content)
+        # 호출어(디스코드="하나야", 카톡="애순아"/"애순이") - 감지되면 확률/쿨다운 없이 무조건 응답
+        call_word = autonomous_reply.detect_call_word(content, is_kakao)
         if call_word:
-            prompt = autonomous_reply.strip_call_word(content)
+            prompt = autonomous_reply.strip_call_word(content, is_kakao)
             autonomous_reply.mark_active(key)
             try:
-                reply = GREETING_REPLY if not prompt else await self._generate(conversation_key, message, prompt)
+                reply = GREETING_REPLY if not prompt else await self._generate(conversation_key, message, prompt, is_kakao)
                 await self._reply(message, user, is_kakao, reply, conversation_key, should_log)
             except Exception:
                 # LLM/LiteLLM 인증 실패, 타임아웃 등 - 조용히 실패하지 않고 최소한 사용자에게 알린다.
@@ -336,7 +336,7 @@ class Chat(commands.Cog):
 
         autonomous_reply.mark_active(key)
         try:
-            reply = await self._generate(conversation_key, message, content)
+            reply = await self._generate(conversation_key, message, content, is_kakao)
             await self._reply(message, user, is_kakao, reply, conversation_key, should_log)
         except Exception:
             # 자율 응답은 원래 확률적으로 참견하는 거라, 실패했다고 채널에 에러 메시지까지
@@ -443,9 +443,9 @@ class Chat(commands.Cog):
             except Exception:
                 log.exception("카톡 실패 메시지 전송 실패 (user=%s)", user.key)
 
-    async def _generate(self, conversation_key: str, message: Message, prompt: str) -> str:
+    async def _generate(self, conversation_key: str, message: Message, prompt: str, is_kakao: bool) -> str:
         async with message.channel.typing():
-            return await a_query(conversation_key, prompt)
+            return await a_query(conversation_key, prompt, is_kakao=is_kakao)
 
     async def _reply(
         self,
@@ -458,7 +458,7 @@ class Chat(commands.Cog):
     ) -> None:
         await self._send_chunked(message, reply)
         if should_log:
-            log_message(conversation_key, "아메하나", reply, direction="out")
+            log_message(conversation_key, "애순이" if is_kakao else "아메하나", reply, direction="out")
         if is_kakao:
             await send_message(user.raw_id.split("//", 1)[0], reply)
 

@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from ai.llm_client import build_chat_model
 from ai.local_tools import LOCAL_TOOLS
 from ai.mcp_manager import get_tools
-from ai.prompts import RESPONSE_SYSTEM_PROMPT
+from ai.prompts import build_system_prompt
 from core.conversation_store import get_recent_context
 
 MAX_TOOL_TURNS = 4
@@ -30,14 +30,18 @@ def _build_history_messages(conversation_key: str) -> list:
     return messages
 
 
-async def a_query(conversation_key: str, message: str) -> str:
+async def a_query(conversation_key: str, message: str, is_kakao: bool = False) -> str:
+    """
+    is_kakao: 채널별 페르소나(디스코드=아메하나 / 카톡=애순이) 프롬프트를 고르는 데 쓴다.
+    기본값 False라 기존 호출부(인자 안 넘기던 곳)는 그대로 아메하나로 동작한다.
+    """
     tools = [*LOCAL_TOOLS, *get_tools()]
     tools_by_name = {t.name: t for t in tools}
 
     model = build_chat_model()
     bound_model = model.bind_tools(tools) if tools else model
 
-    messages = [SystemMessage(content=RESPONSE_SYSTEM_PROMPT)]
+    messages = [SystemMessage(content=build_system_prompt(is_kakao))]
     messages.extend(_build_history_messages(conversation_key))
     messages.append(HumanMessage(content=message))
 

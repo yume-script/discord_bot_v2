@@ -19,19 +19,25 @@ from config import settings
 # "하나만"/"하나 주세요" 같은 무관한 대화까지 반응하는 오탐이 있어서, "하나야" 하나로만 좁혔다.
 CALL_TRIGGER_WORDS = ["하나야"]
 
+# [신규] 카톡 쪽만 원래 페르소나(애순이)를 유지하기로 하면서, 카톡에서는 이 호출어를 쓴다.
+# "하나야"처럼 오탐 걱정이 적은 명확한 호칭만 골랐다("애순"만 단독으로는 안 넣음).
+KAKAO_CALL_TRIGGER_WORDS = ["애순아", "애순이"]
+
 _last_active_time: float = 0.0
 _active_keys: set[str] = set()
 
 
-def detect_call_word(text: str) -> str | None:
-    """호출어가 포함되어 있으면 그 단어를, 없으면 None을 반환."""
-    return next((w for w in CALL_TRIGGER_WORDS if w in text), None)
+def detect_call_word(text: str, is_kakao: bool = False) -> str | None:
+    """호출어가 포함되어 있으면 그 단어를, 없으면 None을 반환. 채널별로 다른 호출어를 본다."""
+    words = KAKAO_CALL_TRIGGER_WORDS if is_kakao else CALL_TRIGGER_WORDS
+    return next((w for w in words if w in text), None)
 
 
-def strip_call_word(text: str) -> str:
+def strip_call_word(text: str, is_kakao: bool = False) -> str:
     """호출어를 제거하고 앞뒤 문장부호/공백을 정리 (app_chat_handler.py와 동일)."""
     prompt = text
-    for w in CALL_TRIGGER_WORDS:
+    words = KAKAO_CALL_TRIGGER_WORDS if is_kakao else CALL_TRIGGER_WORDS
+    for w in words:
         prompt = prompt.replace(w, "")
     return prompt.strip().lstrip(". ").rstrip(". ")
 
