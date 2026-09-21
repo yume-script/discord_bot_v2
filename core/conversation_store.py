@@ -19,6 +19,12 @@ from datetime import datetime, timedelta, timezone
 
 from config import settings
 
+# [변경] 원래 datetime.now(timezone.utc)로 UTC 시각을 저장했는데, 서버 시스템 시각이
+# UTC라 실제 카톡/디스코드에서 보낸 시각과 9시간 차이가 나는 버그가 있었다 (예: 11:46에
+# 보낸 메시지가 DB엔 02:46으로 찍힘). 한국 서비스라 KST(UTC+9)로 고정해서 저장한다 -
+# 한국은 서머타임이 없어서 이 고정 오프셋으로 충분하다.
+KST = timezone(timedelta(hours=9))
+
 _lock = threading.Lock()
 
 
@@ -51,7 +57,7 @@ def log_message(conversation_key: str, display_name: str | None, text: str, *, d
             conn.execute(
                 "INSERT INTO messages (conversation_key, display_name, direction, text, ts) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (conversation_key, display_name, direction, text, datetime.now(timezone.utc).isoformat()),
+                (conversation_key, display_name, direction, text, datetime.now(KST).isoformat()),
             )
             conn.commit()
         finally:
@@ -102,7 +108,7 @@ def prune_older_than(days: int) -> int:
     오래된 대화 기록을 정리하고 싶어지면 쓸 수 있는 함수 (지금은 자동으로 호출되지 않음 -
     필요해지면 스케줄러/cron에 연결). 삭제된 행 수를 반환한다.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(KST) - timedelta(days=days)).isoformat()
     with _lock:
         conn = _connect()
         try:

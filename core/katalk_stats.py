@@ -13,18 +13,19 @@ from datetime import datetime, timedelta, timezone
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from ai.llm_client import build_chat_model
-from core.conversation_store import get_message_counts_by_user, get_messages_since
+from core.conversation_store import KST, get_message_counts_by_user, get_messages_since
 
 MIN_SUMMARY_MESSAGES = 5
 
 
 def _month_start_iso() -> str:
-    now = datetime.now(timezone.utc)
+    # [변경] UTC 기준이면 "오늘"/"이번 달" 경계가 실제 한국 자정과 9시간 어긋난다 - KST로 계산.
+    now = datetime.now(KST)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 
 def _today_start_iso() -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(KST)
     return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 
