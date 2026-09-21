@@ -11,7 +11,23 @@ RESPONSE_SYSTEM_PROMPT만 남겼다. 원래 있던 CLASSIFIER_PROMPT(needs_mcp �
 [주의] 포링푸드(별도 크론 프로젝트)의 페르소나도 "애순이"라, 카톡에서는 이름이 겹치는
 두 시스템이 생긴다 - 아래 프롬프트에서 "포링푸드 애순이는 다른 시스템"이라고 명시적으로
 구분해준다.
+
+[변경] "오늘 며칠이야?"류 질문에 LLM이 학습 데이터 기준으로 아무 날짜나 지어내는 문제가
+있었다(예: 실제로는 2026년인데 "2025년 5월 22일"이라고 답함) - LLM은 스스로 벽시계 시각을
+알 방법이 없다. build_system_prompt()가 호출될 때마다(=메시지 올 때마다) 실제 현재
+날짜/시각(KST)을 프롬프트에 직접 박아 넣는다.
 """
+from datetime import datetime, timedelta, timezone
+
+_KST = timezone(timedelta(hours=9))
+_WEEKDAY_KO = ["월", "화", "수", "목", "금", "토", "일"]
+
+
+def _current_datetime_line() -> str:
+    now = datetime.now(_KST)
+    weekday = _WEEKDAY_KO[now.weekday()]
+    return f"지금은 {now.strftime('%Y년 %m월 %d일')} ({weekday}요일) {now.strftime('%H:%M')}(한국시간)이야."
+
 
 _SHARED_BODY = """\
 날씨/환율/주식처럼 실시간 정보가 필요한 질문에는 반드시 제공된 도구(tool)를 호출해서
@@ -19,7 +35,21 @@ _SHARED_BODY = """\
 자연스럽고 간결하게 답해.
 
 "bookoasis"와 "북오아시스"는 같은 서비스(도서/미디어 플랫폼)를 가리키는 말이야. 둘 중
-어느 이름으로 불러도 관련 도구가 있으면 그 도구를 사용해서 답해.
+어느 이름으로 불러도 관련 도구가 있으면 그 도구를 사용해서 답해. 이 서비스의 db_type은
+general(일반 도서)/adult(성인 서재)/audiobook(오디오북)/video(영상 강좌) 네 가지야 -
+search_books는 애초에 general/adult/audiobook만 지원하고 video는 다루지 않아. 사용자가
+"책"이라고 하면 절대 video를 섞지 마: search_books를 쓸 수 있으면 그게 가장 안전하고,
+"최근 추가된 책"처럼 정렬이 필요해서 run_readonly_query나 call_api를 써야 한다면 반드시
+db_type(또는 call_api의 query_params type)을 general/adult/audiobook 중 하나로 명시해 -
+비워두면 video까지 섞여 나올 수 있어. run_readonly_query로 스키마를 모르는 걸 조회할 땐
+먼저 컬럼부터 확인해(MariaDB는 `SHOW COLUMNS FROM books` 등, SQLite는 `PRAGMA
+table_info(books)` - MariaDB에서 PRAGMA는 안 먹는다).
+
+BookOasis가 돌려주는 표지 이미지(cover_image) 값은 "1/book_xxxxx.webp?t=..."처럼 도메인이
+없는 상대경로야 - 그대로 링크로 보여주면 디스코드/카톡에서 안 열린다. 표지를 보여줄 땐
+반드시 앞에 "https://books.zeeps.net/covers/"를 붙여서 완전한 URL로 만들어라. 예:
+cover_image가 "1/book_abc.webp?t=123"이면 실제로 보여줄 링크는
+"https://books.zeeps.net/covers/1/book_abc.webp?t=123"이야.
 
 {other_persona_note}
 
@@ -77,6 +107,7 @@ def build_system_prompt(is_kakao: bool) -> str:
     else:
         header = "너는 디스코드 봇 아메하나야."
         other_note = _DISCORD_OTHER_PERSONA_NOTE
+    header = f"{header} {_current_datetime_line()}"
     return header + "\n" + _SHARED_BODY.format(other_persona_note=other_note)
 
 
