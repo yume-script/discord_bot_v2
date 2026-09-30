@@ -14,8 +14,15 @@ from ai.local_tools import LOCAL_TOOLS
 from ai.mcp_manager import get_tools
 from ai.prompts import build_system_prompt
 from core.conversation_store import get_recent_context
+from core.tool_policy import is_server_affecting
 
 MAX_TOOL_TURNS = 4
+
+# [신규] 서버에 영향을 주는(쓰기/파괴적) 도구는 관리자만 실행할 수 있다 - 카톡은 관리자
+# 판별이 안 되므로 항상 비관리자로 취급된다(cogs/chat.py의 _generate 참고). 도구 자체를
+# 목록에서 빼지 않고 호출 시점에 막는 이유: LLM이 그 도구가 있다는 건 알아도 되고(다른
+# 안전한 방법을 스스로 찾아볼 수 있으므로), 실제 실행만 막아야 하기 때문이다.
+ADMIN_ONLY_TOOL_REPLY = "이건 관리자만 할 수 있는 작업이에요. 다른 걸 도와드릴까요?"
 
 
 def _build_history_messages(conversation_key: str) -> list:
@@ -30,10 +37,16 @@ def _build_history_messages(conversation_key: str) -> list:
     return messages
 
 
-async def a_query(conversation_key: str, message: str, is_kakao: bool = False) -> str:
+async def a_query(
+    conversation_key: str, message: str, is_kakao: bool = False, caller_is_admin: bool = False
+) -> str:
     """
     is_kakao: 채널별 페르소나(디스코드=아메하나 / 카톡=애순이) 프롬프트를 고르는 데 쓴다.
     기본값 False라 기존 호출부(인자 안 넘기던 곳)는 그대로 아메하나로 동작한다.
+
+    caller_is_admin: 서버에 영향을 주는 도구(core/tool_policy.is_server_affecting)를
+    실제로 실행해도 되는지. 기본값 False라 인자를 안 넘기는 기존 호출부는 안전하게
+    "관리자 아님"으로 동작한다(새 위험 기능이 실수로 열리는 방향이 아니라 닫히는 방향).
     """
     tools = [*LOCAL_TOOLS, *get_tools()]
     tools_by_name = {t.name: t for t in tools}
@@ -57,6 +70,8 @@ async def a_query(conversation_key: str, message: str, is_kakao: bool = False) -
             tool_fn = tools_by_name.get(call["name"])
             if tool_fn is None:
                 result_text = f"알 수 없는 도구 호출: {call['name']}"
+            elif is_server_affecting(call["name"]) and not caller_is_admin:
+                result_text = ADMIN_ONLY_TOOL_REPLY
             else:
                 try:
                     result_text = await tool_fn.ainvoke(call["args"])

@@ -444,8 +444,12 @@ class Chat(commands.Cog):
                 log.exception("카톡 실패 메시지 전송 실패 (user=%s)", user.key)
 
     async def _generate(self, conversation_key: str, message: Message, prompt: str, is_kakao: bool) -> str:
+        # [신규] 서버에 영향을 주는 도구(core/tool_policy.py)는 관리자만 실제로 실행할 수
+        # 있다. 카톡은 브릿지 계정이 author라서 진짜 관리자인지 판별 불가능하므로(머니
+        # 시스템 관리자 명령과 동일한 이유) 항상 비관리자로 취급한다.
+        caller_is_admin = (not is_kakao) and is_admin(message.author.id)
         async with message.channel.typing():
-            return await a_query(conversation_key, prompt, is_kakao=is_kakao)
+            return await a_query(conversation_key, prompt, is_kakao=is_kakao, caller_is_admin=caller_is_admin)
 
     async def _reply(
         self,

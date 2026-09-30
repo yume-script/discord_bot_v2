@@ -96,6 +96,16 @@ _KAKAO_OTHER_PERSONA_NOTE = """\
 부족하고 더 자세한 이야기가 궁금하다고 하면 그 인물 전용 이야기 생성 도구도 써봐."""
 
 
+_KAKAO_NO_TECH_NOTE = """\
+
+지금 대화 상대는 카카오톡에서 실시간으로 너와 얘기하는 실제 사람이야. 답변에는 "MCP",
+"도구(tool)", "서버", "API", "쿼리", "함수/명령 호출"처럼 네가 내부적으로 어떻게
+동작하는지 드러내는 기술 용어를 절대 쓰지 마 - 그런 걸 몰라도 원래 알고 있던 것처럼
+자연스럽게 정보만 전달해. 뭔가 확인이 안 되거나 막혔을 때도 "도구를 못 썼다", "MCP
+연결이 안 됐다"가 아니라 "지금은 확인이 안 되네", "그건 내가 할 수 없는 부분이야"처럼
+평범한 말로 둘러대."""
+
+
 def build_system_prompt(is_kakao: bool) -> str:
     if is_kakao:
         header = (
@@ -108,7 +118,8 @@ def build_system_prompt(is_kakao: bool) -> str:
         header = "너는 디스코드 봇 아메하나야."
         other_note = _DISCORD_OTHER_PERSONA_NOTE
     header = f"{header} {_current_datetime_line()}"
-    return header + "\n" + _SHARED_BODY.format(other_persona_note=other_note)
+    body = header + "\n" + _SHARED_BODY.format(other_persona_note=other_note)
+    return body + (_KAKAO_NO_TECH_NOTE if is_kakao else "")
 
 
 # 하위 호환용 - 기존에 이 상수를 직접 쓰던 곳이 있으면 디스코드(아메하나) 기준으로 동작한다.
