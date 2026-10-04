@@ -23,18 +23,29 @@ _RISKY_SUBSTRINGS = (
     "insert", "exec", "send_command", "start", "stop", "restart", "kill",
     "prune", "upload", "mkdir", "rmdir", "move_", "edit_", "add_", "bulk",
     "propose", "patch", "replace", "truncate", "push", "run_", "pull",
+    "send", "post", "command", "shell", "reset", "clear", "purge", "save",
+    "rename", "reboot", "shutdown", "deploy", "grant", "revoke", "transfer",
 )
 
 # 이름만으로는 안전을 보장할 수 없는 범용 패스스루 - 어떤 API를 부를지 인자로 결정되므로
 # 이름에 위험한 동사가 없어도 강제로 관리자 전용 처리한다.
 _FORCE_ADMIN_ONLY = frozenset({
     "call_api",
+    # 대화 로그 SQLite 조회 - 읽기 전용이긴 하지만 모든 카톡방/디스코드 채널의 대화가 한
+    # 테이블에 있어서, 누구나 쓸 수 있으면 아무 방에서나 다른 방 대화를 통째로 볼 수 있다.
+    "read_query",
 })
 
 # 위험한 동사가 이름에 우연히 들어 있지만 실제로는 조회 전용인 오탐 예외.
+# run_readonly_query는 BookOasis MCP 서버가 서버 쪽에서 읽기 전용을 강제한다는 전제다 -
+# 그 전제가 깨지면(쓰기 SQL이 통과하면) 여기서 빼야 한다.
 _SAFE_OVERRIDE = frozenset({
     "run_readonly_query",
-    "read_query",
+    # 지식그래프 메모리에 "기억해줘"를 쌓는 추가 전용 도구 - 프롬프트가 누구에게나 이 기능을
+    # 안내하므로 일반 유저도 쓸 수 있게 연다. 지우는 쪽(delete_*)은 계속 관리자 전용.
+    "create_entities",
+    "create_relations",
+    "add_observations",
 })
 
 

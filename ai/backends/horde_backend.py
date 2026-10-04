@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 
 import httpx
 
 from ai.backends.base import GeneratedImage, ImageBackend, ImageGenError
 from config import settings
+
+log = logging.getLogger("horde")
 
 HORDE_BASE_URL = "https://aihorde.net/api/v2"
 POLL_INTERVAL_SEC = 4
@@ -42,10 +45,22 @@ class HordeBackend(ImageBackend):
         model = style or settings.HORDE_DEFAULT_MODEL
         full_prompt = prompt if not negative_prompt else f"{prompt} ### {negative_prompt}"
 
-        async with httpx.AsyncClient(timeout=15) as client:
+        # Horde는 모든 요청에 Client-Agent 헤더를 요구하므로 클라이언트 기본 헤더로 붙인다.
+        async with httpx.AsyncClient(timeout=15, headers=self._headers) as client:
             job_id = await self._submit(client, full_prompt, model)
-            await self._wait_until_done(client, job_id)
+            try:
+                await self._wait_until_done(client, job_id)
+            except BaseException:
+                # 타임아웃/실패/취소 시 Horde 쪽 작업도 취소해서 kudos와 워커 자원을 돌려준다.
+                await self._cancel(client, job_id)
+                raise
             return await self._fetch_result(client, job_id, model)
+
+    async def _cancel(self, client: httpx.AsyncClient, job_id: str) -> None:
+        try:
+            await client.delete(f"{HORDE_BASE_URL}/generate/status/{job_id}")
+        except Exception:  # noqa: BLE001 - 취소는 최선 노력, 실패해도 원래 예외를 올린다
+            log.warning("horde 작업 취소 실패 (job_id=%s)", job_id, exc_info=True)
 
     async def _submit(self, client: httpx.AsyncClient, prompt: str, model: str) -> str:
         body = {
@@ -62,9 +77,7 @@ class HordeBackend(ImageBackend):
             "nsfw": False,
             "r2": False,  # base64로 직접 받기
         }
-        resp = await client.post(
-            f"{HORDE_BASE_URL}/generate/async", headers=self._headers, json=body
-        )
+        resp = await client.post(f"{HORDE_BASE_URL}/generate/async", json=body)
         if resp.status_code >= 300:
             raise ImageGenError(f"horde 제출 실패 ({resp.status_code}): {resp.text[:200]}")
         data = resp.json()
@@ -103,7 +116,11 @@ class HordeBackend(ImageBackend):
         img_field = gen["img"]
 
         if img_field.startswith("http"):
-            img_resp = await client.get(img_field)
+            # 외부 저장소(R2 등) URL이라 apikey가 담긴 Horde 헤더를 보내지 않도록 별도 클라이언트로 받는다.
+            async with httpx.AsyncClient(timeout=30) as plain_client:
+                img_resp = await plain_client.get(img_field)
+            if img_resp.status_code >= 300:
+                raise ImageGenError(f"horde 이미지 다운로드 실패 ({img_resp.status_code}): job_id={job_id}")
             image_bytes = img_resp.content
         else:
             image_bytes = base64.b64decode(img_field)

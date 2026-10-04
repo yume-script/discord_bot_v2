@@ -8,11 +8,11 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ai.llm_client import build_chat_model
+from ai.llm_client import build_chat_model, message_text
 from core.conversation_store import KST, get_message_counts_by_user, get_messages_since
 
 MIN_SUMMARY_MESSAGES = 5
@@ -37,7 +37,7 @@ def get_monthly_stats(conversation_key: str) -> str:
         return "이번 달엔 아직 기록된 대화가 없어요."
 
     total = sum(c for _, c in counts)
-    month_label = datetime.now(timezone.utc).strftime("%Y년 %m월")
+    month_label = datetime.now(KST).strftime("%Y년 %m월")  # 집계 경계(KST)와 라벨 기준을 맞춤
     lines = [f"📅 {month_label} 카톡 통계 - 총 {total:,}건", ""]
     for i, (name, count) in enumerate(counts[:15], start=1):
         lines.append(f"{i}. {name or '(이름 없음)'} - {count:,}건")
@@ -95,4 +95,4 @@ async def summarize_today(conversation_key: str, is_kakao: bool = False) -> str:
             HumanMessage(content=prompt),
         ]
     )
-    return f"📝 **오늘의 대화 요약** (총 {len(messages)}개 메시지 기준)\n\n{resp.content}"
+    return f"📝 **오늘의 대화 요약** (총 {len(messages)}개 메시지 기준)\n\n{message_text(resp)}"

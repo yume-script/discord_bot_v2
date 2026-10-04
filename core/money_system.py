@@ -13,6 +13,7 @@ import os
 from datetime import datetime
 
 from config import settings
+from core.fs_utils import safe_path_component
 
 
 class MoneySystem:
@@ -22,8 +23,8 @@ class MoneySystem:
 
     def _get_file_path(self, room_id, user_id):
         """방 ID와 유저 ID를 기반으로 파일 경로 생성 (특수문자 치환)"""
-        safe_room_id = str(room_id).strip().replace("/", "_").replace("\\", "_")
-        safe_user_id = str(user_id).strip()
+        safe_room_id = safe_path_component(room_id)
+        safe_user_id = safe_path_component(user_id)
         return os.path.join(self.base_dir, f"{safe_room_id}_{safe_user_id}.jsonl")
 
     def get_user_data(self, room_id, user_id):

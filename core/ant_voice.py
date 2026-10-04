@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import io
 
 import httpx
@@ -40,7 +41,11 @@ async def generate_ant_voice(text: str) -> bytes | None:
         return None
     if not await _ensure_asset(FONT_PATH, FONT_URL):
         return None
+    # PIL 합성/인코딩은 CPU를 쓰는 동기 작업이라 이벤트 루프를 막지 않게 스레드에서 돌린다.
+    return await asyncio.to_thread(_render, text)
 
+
+def _render(text: str) -> bytes:
     img = Image.open(SOURCE_IMAGE_PATH).convert("RGB")
     draw = ImageDraw.Draw(img)
     font = ImageFont.truetype(str(FONT_PATH), 40)

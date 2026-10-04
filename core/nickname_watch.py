@@ -11,12 +11,13 @@ from datetime import datetime
 from typing import Any
 
 from config import settings
+from core.fs_utils import safe_path_component
 
 settings.NICKNAME_DETECT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def check_and_update_nickname(sender_name: str, sender_id: str, room_id: str) -> str:
-    filepath = settings.NICKNAME_DETECT_DIR / f"{room_id}_{sender_id}.jsonl"
+    filepath = settings.NICKNAME_DETECT_DIR / f"{safe_path_component(room_id)}_{safe_path_component(sender_id)}.jsonl"
 
     # 1. 기존 기록 읽기 및 변경 이력 추적
     history: list[dict[str, Any]] = []

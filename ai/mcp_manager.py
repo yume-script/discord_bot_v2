@@ -6,6 +6,7 @@ mcp_servers.yaml을 읽어 MultiServerMCPClient로 연결하고,
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import yaml
@@ -14,6 +15,10 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from config import settings
 
 log = logging.getLogger("mcp_manager")
+
+# 서버 하나가 응답 없이 멈추면(ssh 대상 다운, docker exec 행 등) setup_hook 전체가 막혀서
+# 봇이 로그인조차 못 한다 - 서버별로 이 시간 안에 도구 목록을 못 받으면 그 서버만 건너뛴다.
+MCP_CONNECT_TIMEOUT_SEC = 30
 
 _client: list[MultiServerMCPClient] | None = None
 _tools: list = []
@@ -59,7 +64,10 @@ async def init_mcp() -> list:
     for server_name, cfg in server_config.items():
         try:
             client = MultiServerMCPClient({server_name: cfg})
-            server_tools = await client.get_tools()
+            server_tools = await asyncio.wait_for(client.get_tools(), timeout=MCP_CONNECT_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            log.error(f"MCP 서버 '{server_name}' 연결 타임아웃({MCP_CONNECT_TIMEOUT_SEC}s) - 이 서버만 건너뛴다.")
+            continue
         except Exception:
             log.exception(f"MCP 서버 '{server_name}' 연결 실패 - 이 서버만 건너뛴다.")
             continue

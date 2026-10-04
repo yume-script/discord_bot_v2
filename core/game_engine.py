@@ -10,6 +10,15 @@ game_dragontiger.py, game_dice_poker.py, game_blackjack.py, game_baccarat_202606
 
 베팅 검증 → 일일 횟수 제한 → 잔액 체크 → 판정 → money_system.transaction() 정산 순서는
 7개 게임 모두 원본과 동일한 흐름이다.
+
+[변경] 배당 재조정 - 원본 값 그대로면 기대 회수율(건 돈 대비 평균적으로 돌려받는 비율)이
+주사위 142%, 슬롯머신 370%(고정 심볼로 바꾸면서 공식이 분포와 안 맞게 됨), 바카라 '짝' 고정
+105%로 100%를 넘어서, 계속 걸기만 해도 머니가 기하급수적으로 불어났다. 전 게임이 100% 미만이
+되도록 아래 게임들의 배율만 조정했다 (판정 규칙/일일 제한은 그대로):
+  - 주사위: 더블 3→2.5배, 8 이상 2→1.4배, 7은 보너스(1.5배) 대신 절반 회수(0.5배) → 약 97%
+  - 슬롯머신: 2개 일치 1.5→1.2배, 3개 일치는 SLOT_TRIPLE_FACTOR / 적중확률 → 약 92%
+  - 바카라: 홀(47.3%) 2배, 짝(52.7%) 1.8배 → 둘 다 약 95%
+  - 가위바위보 100%(무승부 본전), 용호 92%(무승부 69%), 블랙잭 91%, 다이스포커 89%는 원본 유지
 """
 from __future__ import annotations
 
@@ -108,15 +117,15 @@ def play_dice(room_id: str, user_id: str, bet: int) -> str:
     d1, d2 = random.randint(1, 6), random.randint(1, 6)
     s = d1 + d2
     if d1 == d2:
-        mult, txt = 3.0, f"✨ 더블! ({d1}-{d2})"
+        mult, txt = 2.5, f"✨ 더블! ({d1}-{d2}, 2.5배)"
     elif s >= 8:
-        mult, txt = 2.0, f"WIN! 합계 {s} (8 이상)"
+        mult, txt = 1.4, f"WIN! 합계 {s} (8 이상, 1.4배)"
     elif s == 7:
-        mult, txt = 1.5, "SAFE! 합계 7 (보너스)"
+        mult, txt = 0.5, "SAFE! 합계 7 (절반 회수)"
     else:
         mult, txt = 0.0, f"LOSE... 합계 {s} (꽝)"
 
-    change = int(bet * mult) - bet if mult > 0 else -bet
+    change = int(bet * mult) - bet
     err = _settle(room_id, user_id, change, "game_dice", f"주사위({s})")
     if err:
         return err
@@ -127,9 +136,14 @@ def play_dice(room_id: str, user_id: str, bet: int) -> str:
 
 # ---------------------------------------------------------------- 슬롯머신
 # 원본은 라그나로크M 카드 RAG 데이터(외부 jsonl)에 의존했는데 여기선 없어서 고정 심볼로 대체.
-# 희귀할수록(가중치가 낮을수록) 3연속 적중 시 배당이 커지는 규칙은 원본 공식을 그대로 썼다.
+# 희귀할수록(가중치가 낮을수록) 3연속 적중 시 배당이 커지는 규칙은 유지했다.
 SLOT_SYMBOLS = ["🍒", "🍋", "🔔", "⭐", "7️⃣"]
 SLOT_WEIGHTS = [30, 25, 20, 15, 10]
+# 3개 일치 배율 = SLOT_TRIPLE_FACTOR / (그 심볼 3개가 나올 확률). 심볼마다 기대값 기여가
+# FACTOR로 같아져서 3개 일치 전체 기여 = 5 * FACTOR. 2개 일치(확률 51%) 1.2배와 합쳐
+# 총 회수율 약 92%가 되도록 잡은 값이다 (🍒 2.3배 ~ 7️⃣ 63배).
+SLOT_PAIR_MULT = 1.2
+SLOT_TRIPLE_FACTOR = 0.063
 
 
 def play_slot(room_id: str, user_id: str, bet: int) -> str:
@@ -146,11 +160,11 @@ def play_slot(room_id: str, user_id: str, bet: int) -> str:
     if max_count == 3:
         idx = SLOT_SYMBOLS.index(win_symbol)
         p_triple = (SLOT_WEIGHTS[idx] / total_weight) ** 3
-        mult = round(max(5.0, min(100.0, 0.85 / p_triple)), 1)
+        mult = round(SLOT_TRIPLE_FACTOR / p_triple, 1)
         outcome = f"🎰 JACKPOT! {win_symbol}{win_symbol}{win_symbol} ({mult}배)"
     elif max_count == 2:
-        mult = 1.5
-        outcome = "🎰 DOUBLE! (2개 일치, 1.5배)"
+        mult = SLOT_PAIR_MULT
+        outcome = f"🎰 DOUBLE! (2개 일치, {SLOT_PAIR_MULT}배)"
     else:
         mult = 0.0
         outcome = "🎰 꽝 (LOSE)"
@@ -294,6 +308,9 @@ def play_blackjack(room_id: str, user_id: str, bet: int) -> str:
 # ---------------------------------------------------------------- 바카라
 _BAC_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 _BAC_VALUES = {**{str(n): n for n in range(2, 10)}, "10": 0, "J": 0, "Q": 0, "K": 0, "A": 1}
+# 두 장 합의 끝자리가 홀수일 확률은 80/169(47.3%)로 짝보다 낮다 - 양쪽 다 1:1(2배)로 주면
+# '짝'만 고르는 쪽이 회수율 105%로 이득이라, 확률에 맞춰 배율을 따로 둔다 (둘 다 약 95%).
+_BAC_PAYOUT = {"홀": 2.0, "짝": 1.8}
 
 
 def play_baccarat(room_id: str, user_id: str, choice: str, bet: int) -> str:
@@ -308,8 +325,9 @@ def play_baccarat(room_id: str, user_id: str, choice: str, bet: int) -> str:
     answer = "홀" if score % 2 else "짝"
 
     if choice == answer:
-        change = bet
-        outcome = f"🎉 WIN! {answer} 적중!"
+        mult = _BAC_PAYOUT[answer]
+        change = int(bet * mult) - bet
+        outcome = f"🎉 WIN! {answer} 적중! ({mult}배)"
     else:
         change = -bet
         outcome = f"😢 LOSE. 결과는 {answer}"

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 
 import discord
 from discord import Message
@@ -21,7 +22,7 @@ from ai.rag_engine import a_query
 from config import settings
 from core import ant_voice, autonomous_reply, fortune, game_engine, katalk_stats, mbti, satellite
 from core.admin_auth import is_admin
-from core.concurrency import image_gen_pool
+from core.concurrency import QueueLimitError, image_gen_pool
 from core.conversation_store import log_message
 from core.kakao_feed import build_feed_reply, is_feed_message as _is_feed_message
 from core.kakao_relay import parse_kakao_author
@@ -42,6 +43,13 @@ FAILURE_REPLY = "어라, 지금 대답을 못 만들었어요. 잠시 후 다시
 TEXT_IMAGE_PREFIX = "/그림 "
 TEXT_IMAGE_STYLE_PREFIX = "/그림스타일 "
 
+_MENTION_PATTERN = re.compile(r"<@!?\d+>")
+
+
+def _kakao_room(user: UserRef) -> str:
+    """카톡 UserRef(raw_id="{방ID}//{회원번호}")에서 방ID만 뽑는다."""
+    return user.raw_id.split("//", 1)[0]
+
 
 class Chat(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -57,6 +65,11 @@ class Chat(commands.Cog):
         content = message.content
         is_linked_channel = str(message.channel.id) in settings.KATALK_LINKED_CHANNEL_IDS
 
+        # 카톡 연동 채널 밖에서는 다른 봇/웹훅 메시지를 무시한다 - 안 그러면 다른 봇의 "안녕"
+        # 같은 인사에도 (쿨다운 없이) LLM 응답을 만들고, 호출어를 말하는 봇과는 무한 핑퐁이 된다.
+        if message.author.bot and not is_linked_channel:
+            return
+
         kakao_user = parse_kakao_author(message.author.name) if is_linked_channel else None
         is_kakao = kakao_user is not None
         user = kakao_user or UserRef.from_discord(message.author.id, message.author.display_name)
@@ -70,7 +83,7 @@ class Chat(commands.Cog):
         # 카톡은 방(room_id) 단위로, 순수 디스코드는 채널 단위로 맥락을 분리한다.
         is_discord_log_channel = str(message.channel.id) in settings.DISCORD_LOG_CHANNEL_IDS
         should_log = (is_linked_channel and is_kakao) or is_discord_log_channel
-        conversation_key = (user.raw_id.split("//", 1)[0] if is_kakao else key)
+        conversation_key = (_kakao_room(user) if is_kakao else key)
 
         # 1. 입장/퇴장 피드 메시지 - 원본과 동일하게 여기서 바로 응답하고 끝낸다
         # (호출어/자율응답 로직으로 안 내려가고, 로그에도 원문 JSON을 안 남긴다).
@@ -78,7 +91,7 @@ class Chat(commands.Cog):
             feed_reply = build_feed_reply(content)
             if feed_reply is not None:
                 await message.channel.send(feed_reply)
-                await send_message(user.raw_id.split("//", 1)[0], feed_reply)
+                await self._send_kakao(user, feed_reply)
             return
 
         # 1-1. "/그림 프롬프트" / "/그림스타일 프롬프트 | 스타일" 텍스트 명령 - 슬래시 명령어
@@ -156,8 +169,7 @@ class Chat(commands.Cog):
             query = content[len("/운세"):].strip()
             result = await fortune.get_fortune(query)
             await message.reply(result)
-            if user.channel.value == "kakao":
-                await send_message(user.raw_id.split("//", 1)[0], fortune.to_kakao_text(result))
+            await self._send_kakao(user, fortune.to_kakao_text(result))
             return
         if content.startswith("/mbti"):
             if not should_log:
@@ -240,10 +252,15 @@ class Chat(commands.Cog):
                 await message.reply("🚫 관리자만 사용할 수 있는 명령이에요.")
                 return
             rest = content[len("/머니설정"):].strip()
-            target = message.mentions[0] if message.mentions else message.author
-            amount_str = rest
-            for m in message.mentions:
-                amount_str = amount_str.replace(m.mention, "").strip()
+            # message.mentions에는 "답장 대상"도 섞여 들어오므로(답장하며 명령을 치면 그 사람이
+            # 대상이 돼버림), 본문에 실제로 쓴 멘션(raw_mentions)만 대상으로 인정한다.
+            content_mention_ids = message.raw_mentions
+            target = next((m for m in message.mentions if m.id in content_mention_ids), None) if content_mention_ids else None
+            if content_mention_ids and target is None:
+                await message.reply("멘션한 대상을 찾을 수 없어요.")
+                return
+            target = target or message.author
+            amount_str = _MENTION_PATTERN.sub("", rest).strip()
             try:
                 amount = int(amount_str)
             except ValueError:
@@ -270,11 +287,7 @@ class Chat(commands.Cog):
                 return
             file = discord.File(io.BytesIO(image_bytes), filename="ant_voice.webp")
             await message.reply(content=f"🐜 **개미의 외침:** {text}", file=file)
-            if is_kakao:
-                try:
-                    await send_image(user.raw_id.split("//", 1)[0], image_bytes, filename="ant_voice.webp")
-                except Exception:
-                    log.exception("카톡 이미지 전송 실패 (user=%s)", user.key)
+            await self._send_kakao_image(user, image_bytes, filename="ant_voice.webp")
             return
 
         if content.startswith("/위성사진"):
@@ -285,11 +298,7 @@ class Chat(commands.Cog):
             image_bytes, obs_time = result
             file = discord.File(io.BytesIO(image_bytes), filename="satellite_latest.png")
             await message.reply(content=f"📡 천리안 2A호 최신 위성 영상 (관측 시간: {obs_time})", file=file)
-            if is_kakao:
-                try:
-                    await send_image(user.raw_id.split("//", 1)[0], image_bytes, filename="satellite_latest.png")
-                except Exception:
-                    log.exception("카톡 이미지 전송 실패 (user=%s)", user.key)
+            await self._send_kakao_image(user, image_bytes, filename="satellite_latest.png")
             return
 
         # 대화 로그는 스킵 판단과 무관하게 항상 먼저 남긴다 (기존 봇이 이 순서를 [1-1]로 옮긴 이유와 동일 -
@@ -304,7 +313,7 @@ class Chat(commands.Cog):
             notice = check_and_update_nickname(user.display_name or "", member_no, room_id)
             if notice:
                 await message.reply(notice)
-                await send_message(room_id, notice)
+                await self._send_kakao(user, notice)
             money_system.transaction(room_id=room_id, user_id=member_no, amount=10, transaction_type="chat")
 
         # 호출어(디스코드="하나야", 카톡="애순아"/"애순이") - 감지되면 확률/쿨다운 없이 무조건 응답
@@ -323,15 +332,17 @@ class Chat(commands.Cog):
                 autonomous_reply.clear_active(key)
             return
 
-        # 명령어(/)가 아닌 일반 대화일 때만 스킵/자율응답 판단
-        if not is_command:
-            if await self._should_skip(message, key):
-                return
-
         if is_command:
             return  # 새 봇은 discord.py의 진짜 슬래시 명령(app_commands)이 별도로 처리
 
+        # 명령어(/)가 아닌 일반 대화일 때만 자율응답 판단. 확률/쿨다운 판정(메모리 연산)을
+        # 먼저 하고, 디스코드 API(채널 history)를 부르는 _should_skip은 통과한 메시지에만 한다 -
+        # 반대 순서면 일반 메시지마다 API 호출이 나간다.
+        if autonomous_reply.is_active(key):
+            return
         if not autonomous_reply.should_auto_reply(content):
+            return
+        if await self._should_skip(message, key):
             return
 
         autonomous_reply.mark_active(key)
@@ -384,8 +395,30 @@ class Chat(commands.Cog):
 
     async def _send_game_result(self, message: Message, user: UserRef, result: str) -> None:
         await self._send_chunked(message, result)
-        if user.channel.value == "kakao":
-            await send_message(user.raw_id.split("//", 1)[0], result)
+        await self._send_kakao(user, result)
+
+    async def _send_kakao(self, user: UserRef, text: str) -> None:
+        """
+        카톡 유저면 브릿지로 텍스트를 보낸다 (디스코드 유저면 아무것도 안 함).
+        브릿지 장애(연결 실패, 4xx/5xx, URL 미설정)는 로그만 남기고 삼킨다 - 디스코드 쪽 처리는
+        이미 끝났거나 계속 진행돼야 하므로, 카톡 전송 실패가 on_message 흐름을 끊으면 안 된다
+        (예: 닉네임 알림 전송 실패로 채팅 보상/호출어 응답이 통째로 누락되던 문제).
+        """
+        if user.channel.value != "kakao":
+            return
+        try:
+            await send_message(_kakao_room(user), text)
+        except Exception:
+            log.exception("카톡 메시지 전송 실패 (user=%s)", user.key)
+
+    async def _send_kakao_image(self, user: UserRef, image_bytes: bytes, filename: str) -> None:
+        """_send_kakao의 이미지 버전 - 실패해도 로그만 남긴다."""
+        if user.channel.value != "kakao":
+            return
+        try:
+            await send_image(_kakao_room(user), image_bytes, filename=filename)
+        except Exception:
+            log.exception("카톡 이미지 전송 실패 (user=%s)", user.key)
 
     async def _handle_lookup(self, message: Message, user: UserRef, tool_fn, args: dict) -> None:
         try:
@@ -415,6 +448,9 @@ class Chat(commands.Cog):
         try:
             async with message.channel.typing():
                 result = await image_gen_pool.submit(user, job)
+        except QueueLimitError as exc:
+            await self._send_game_result(message, user, f"⏳ {exc}")
+            return
         except ImageGenError as exc:
             await self._send_game_result(message, user, f"이미지 생성 실패: {exc}")
             return
@@ -426,22 +462,14 @@ class Chat(commands.Cog):
         file = discord.File(io.BytesIO(result.image_bytes), filename="generated.png")
         caption = f"`{prompt}` ({result.backend}/{result.model})"
         await message.reply(content=caption, file=file)
-        if user.channel.value == "kakao":
-            try:
-                await send_image(user.raw_id.split("//", 1)[0], result.image_bytes, filename="generated.png")
-            except Exception:
-                log.exception("카톡 이미지 전송 실패 (user=%s)", user.key)
+        await self._send_kakao_image(user, result.image_bytes, filename="generated.png")
 
     async def _safe_reply(self, message: Message, user: UserRef, text: str) -> None:
         try:
             await message.reply(text)
         except discord.HTTPException:
             log.exception("실패 메시지 전송조차 실패 (channel=%s)", message.channel.id)
-        if user.channel.value == "kakao":
-            try:
-                await send_message(user.raw_id.split("//", 1)[0], text)
-            except Exception:
-                log.exception("카톡 실패 메시지 전송 실패 (user=%s)", user.key)
+        await self._send_kakao(user, text)
 
     async def _generate(self, conversation_key: str, message: Message, prompt: str, is_kakao: bool) -> str:
         # [신규] 서버에 영향을 주는 도구(core/tool_policy.py)는 관리자만 실제로 실행할 수
@@ -463,8 +491,7 @@ class Chat(commands.Cog):
         await self._send_chunked(message, reply)
         if should_log:
             log_message(conversation_key, "애순이" if is_kakao else "아메하나", reply, direction="out")
-        if is_kakao:
-            await send_message(user.raw_id.split("//", 1)[0], reply)
+        await self._send_kakao(user, reply)
 
     async def _send_chunked(self, message: Message, text: str) -> None:
         """
@@ -475,6 +502,9 @@ class Chat(commands.Cog):
         빠지는 문제가 있었다 - 길면 2000자 단위로 잘라서 여러 메시지로 나눠 보낸다.
         """
         limit = 2000
+        if not text or not text.strip():
+            # 빈 메시지는 디스코드가 400(Cannot send an empty message)으로 거절한다.
+            text = "(빈 응답)"
         if len(text) <= limit:
             await message.reply(text)
             return
