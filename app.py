@@ -20,6 +20,7 @@ INITIAL_COGS = [
     "cogs.admin",
     "cogs.fun",
     "cogs.chat",
+    "cogs.redroid_watch",
 ]
 
 
