@@ -79,3 +79,4 @@ def should_auto_reply(text: str) -> bool:
 
     _last_active_time = now
     return True
+

@@ -13,6 +13,8 @@ ai/rag_engine.py의 도구 실행 루프가 이 판단으로 관리자가 아니
 """
 from __future__ import annotations
 
+from ai.mcp_manager import is_admin_only_tool
+
 # 이름에 이 중 하나라도 들어 있으면 기본적으로 관리자 전용.
 # (예시: write_file/write_query, create_table/create_container, delete_entities,
 #  remove_container, update_book_metadata, set_balance, bulk_set_favorite,
@@ -34,6 +36,9 @@ _FORCE_ADMIN_ONLY = frozenset({
     # 대화 로그 SQLite 조회 - 읽기 전용이긴 하지만 모든 카톡방/디스코드 채널의 대화가 한
     # 테이블에 있어서, 누구나 쓸 수 있으면 아무 방에서나 다른 방 대화를 통째로 볼 수 있다.
     "read_query",
+    # ai/discord_reader.py - 토큰/자격정보 메모 채널까지 읽을 수 있는 범용 채널 리더.
+    # (지금은 rag_engine에 연결돼 있지 않지만, 연결하는 순간 바로 막히도록 미리 등록)
+    "read_discord_channel",
 })
 
 # 위험한 동사가 이름에 우연히 들어 있지만 실제로는 조회 전용인 오탐 예외.
@@ -51,6 +56,10 @@ _SAFE_OVERRIDE = frozenset({
 
 def is_server_affecting(tool_name: str) -> bool:
     """이 도구가 서버 상태를 바꿀 수 있는지(=관리자만 써야 하는지)."""
+    # 서버 단위 지정이 이름 규칙보다 우선한다 - 예: filesystem 서버의 read_file은 이름만
+    # 보면 안전한 조회지만 /mnt 아래 .env까지 읽을 수 있으므로 서버째로 관리자 전용이다.
+    if is_admin_only_tool(tool_name):
+        return True
     name = (tool_name or "").lower()
     if name in _SAFE_OVERRIDE:
         return False

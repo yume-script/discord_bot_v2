@@ -32,6 +32,14 @@ deploy/     systemd 유닛 파일
    - `.env`가 실수로 커밋되지 않도록 이중으로 체크한다 (`.gitignore`가 1차 방어, 스크립트가 2차 확인).
    - `git init` → `git add .` → 초기 커밋 → `origin` 등록 → `git push -u origin main` 순서로 진행.
 
+## MCP 서버 설정 (`config/mcp_servers.yaml`)
+- 이 파일은 git에 커밋되므로 **API 키/토큰을 직접 적지 않는다.** `PLEX_TOKEN: "${PLEX_TOKEN}"`처럼
+  자리표시자로 쓰고 실제 값은 `.env`에 둔다 (`ai/mcp_manager.py`의 `prepare_server_config`가 치환,
+  `.env`에 없으면 그 서버만 건너뛴다).
+- `admin_only: true`를 붙인 서버(`filesystem`, `docker_local`, `docker_bookoasis`, `sqlite`)의 도구는
+  이름과 상관없이 관리자만 실행할 수 있다 - `/mnt` 아래 `.env`, 컨테이너 환경변수, 전체 대화 로그처럼
+  "조회"만으로도 민감한 정보에 닿기 때문이다.
+
 ## 서버 배포 (systemd)
 1. 서버에 저장소를 clone하고 `.env`를 채운다.
 2. `deploy/discord-bot-v2.service`를 서버 환경(`User`, `WorkingDirectory`, `ExecStart` 경로)에 맞게 수정한 뒤:
