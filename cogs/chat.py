@@ -20,7 +20,7 @@ from ai.image_engine import generate_image
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
-from core import ant_voice, autonomous_reply, fortune, game_engine, katalk_stats, mbti, satellite
+from core import ant_voice, autonomous_reply, fortune, game_engine, katalk_stats, mbti, pending_actions, satellite
 from core.admin_auth import is_admin
 from core.concurrency import QueueLimitError, image_gen_pool
 from core.conversation_store import log_message
@@ -93,6 +93,19 @@ class Chat(commands.Cog):
                 await message.channel.send(feed_reply)
                 await self._send_kakao(user, feed_reply)
             return
+
+        # 1-0. 관리자 확인을 기다리는 위험 작업(core/pending_actions)에 대한 "확인"/"취소" 답장.
+        # 같은 채널의 같은 관리자가 보낸 것만 인정한다. 카톡은 관리자 판별이 안 되므로 제외.
+        if not is_kakao and is_admin(message.author.id):
+            scope = pending_actions.make_scope(message.channel.id, message.author.id)
+            if pending_actions.peek(scope):
+                if pending_actions.is_confirm(content):
+                    await self._run_pending(message, scope)
+                    return
+                if pending_actions.is_cancel(content):
+                    pending_actions.pop(scope)
+                    await message.reply("취소했어요. 아무것도 실행하지 않았어요.")
+                    return
 
         # 1-1. "/그림 프롬프트" / "/그림스타일 프롬프트 | 스타일" 텍스트 명령 - 슬래시 명령어
         # 자동완성 UI를 거치지 않고 빠르게 타이핑해서 보내도 바로 처리된다.
@@ -316,10 +329,20 @@ class Chat(commands.Cog):
                 await self._send_kakao(user, notice)
             money_system.transaction(room_id=room_id, user_id=member_no, amount=10, transaction_type="chat")
 
-        # 호출어(디스코드="하나야", 카톡="애순아"/"애순이") - 감지되면 확률/쿨다운 없이 무조건 응답
+        # 호출어(디스코드="하나야", 카톡="애순아"/"애순이") - 감지되면 확률/쿨다운 없이 무조건 응답.
+        # 호출어로 부른 사람은 그 뒤 CALL_FOLLOWUP_SEC(기본 5분) 동안 호출어 없이 말해도 응답한다
+        # (같은 채널의 같은 사람만 - 다른 사람 대화에 끼어들지 않게). 말할 때마다 창이 연장된다.
         call_word = autonomous_reply.detect_call_word(content, is_kakao)
-        if call_word:
-            prompt = autonomous_reply.strip_call_word(content, is_kakao)
+        followup_key = autonomous_reply.followup_key(message.channel.id, user.key)
+        is_followup = (
+            not call_word
+            and not is_command
+            and bool(content.strip())
+            and autonomous_reply.in_followup(followup_key)
+        )
+        if call_word or is_followup:
+            prompt = autonomous_reply.strip_call_word(content, is_kakao) if call_word else content.strip()
+            autonomous_reply.open_followup(followup_key)
             autonomous_reply.mark_active(key)
             try:
                 reply = GREETING_REPLY if not prompt else await self._generate(conversation_key, message, prompt, is_kakao)
@@ -476,8 +499,17 @@ class Chat(commands.Cog):
         # 있다. 카톡은 브릿지 계정이 author라서 진짜 관리자인지 판별 불가능하므로(머니
         # 시스템 관리자 명령과 동일한 이유) 항상 비관리자로 취급한다.
         caller_is_admin = (not is_kakao) and is_admin(message.author.id)
+        # 관리자라도 위험한 도구는 바로 실행하지 않고 이 scope로 확인 대기열에 담긴다
+        # (ai/rag_engine.py → core/pending_actions.py). 실행은 _run_pending에서.
+        confirm_scope = pending_actions.make_scope(message.channel.id, message.author.id) if caller_is_admin else None
         async with message.channel.typing():
-            return await a_query(conversation_key, prompt, is_kakao=is_kakao, caller_is_admin=caller_is_admin)
+            return await a_query(
+                conversation_key,
+                prompt,
+                is_kakao=is_kakao,
+                caller_is_admin=caller_is_admin,
+                confirm_scope=confirm_scope,
+            )
 
     async def _reply(
         self,
@@ -492,6 +524,40 @@ class Chat(commands.Cog):
         if should_log:
             log_message(conversation_key, "애순이" if is_kakao else "아메하나", reply, direction="out")
         await self._send_kakao(user, reply)
+        if not is_kakao:
+            await self._notify_pending(message)
+
+    async def _notify_pending(self, message: Message) -> None:
+        """이번 답변 중에 확인 대기열에 담긴 위험 작업이 있으면, 무엇을 실행할지 보여주고 확인을 요청한다."""
+        scope = pending_actions.make_scope(message.channel.id, message.author.id)
+        calls = pending_actions.peek(scope)
+        if not calls:
+            return
+        lines = ["⚠️ **관리자 확인 필요** - 아래 작업은 아직 실행되지 않았어요."]
+        lines.extend(f"{i}. {c.describe()}" for i, c in enumerate(calls, start=1))
+        minutes = pending_actions.CONFIRM_TTL_SEC // 60
+        lines.append(f"실행하려면 {minutes}분 안에 `확인`, 그만두려면 `취소`라고 답해주세요.")
+        await self._send_chunked(message, "\n".join(lines))
+
+    async def _run_pending(self, message: Message, scope: str) -> None:
+        """관리자가 "확인"한 위험 작업을 실제로 실행하고 결과를 알린다."""
+        calls = pending_actions.pop(scope)
+        if not calls:
+            await message.reply("확인할 작업이 없어요 (시간이 지나 취소됐을 수 있어요).")
+            return
+        results = []
+        async with message.channel.typing():
+            for call in calls:
+                log.warning("관리자 확인으로 위험 작업 실행 (user=%s, %s)", message.author.id, call.describe())
+                try:
+                    result = str(await call.tool.ainvoke(call.args))
+                except Exception as exc:  # noqa: BLE001 - 실패도 결과로 알린다
+                    log.exception("확인된 작업 실행 실패 (%s)", call.describe())
+                    result = f"실패: {exc}"
+                if len(result) > 800:
+                    result = result[:800] + "…"
+                results.append(f"• {call.describe()}\n{result}")
+        await self._send_chunked(message, "✅ 실행했어요.\n" + "\n\n".join(results))
 
     async def _send_chunked(self, message: Message, text: str) -> None:
         """

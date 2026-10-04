@@ -11,15 +11,13 @@ stdin이 서버 콘솔로 전달된다. 그래서 Docker Engine API의 attach(st
 컨테이너 권한을 늘리거나(SYS_PTRACE 등) 재시작할 필요가 없다.
 
 [안전장치]
-- 실행 가능한 명령은 기본적으로 조회용 몇 개만 허용한다(BDS_ALLOWED_COMMANDS).
-  "명령어 접두어"를 쉼표로 나열하고, "*" 하나만 넣으면 전부 허용한다(op/stop 포함 - 주의).
-- 줄바꿈/제어문자가 들어간 명령은 거부한다(한 번에 여러 명령을 밀어 넣는 것 방지).
+- 임의 명령 전송 도구(bds_send_command)는 제거했다 - 조회 도구(상태/접속자/최근 로그)만
+  노출한다. 서버 콘솔에 보내는 명령은 내부에서 쓰는 고정 명령("list")뿐이다.
 - 컨테이너는 BDS_CONTAINER 하나에만 붙는다. 외부 라이브러리 없이 표준 라이브러리로
   Docker 소켓과 직접 통신한다(의존성 충돌 없음).
 
 [환경변수]
   BDS_CONTAINER         기본 mc-be-server
-  BDS_ALLOWED_COMMANDS  기본 "list,version,help,allowlist list,whitelist list"
   DOCKER_SOCK           기본 /var/run/docker.sock
 """
 import http.client
@@ -37,13 +35,6 @@ mcp = FastMCP("Minecraft BDS")
 
 CONTAINER = os.getenv("BDS_CONTAINER", "mc-be-server")
 DOCKER_SOCK = os.getenv("DOCKER_SOCK", "/var/run/docker.sock")
-_DEFAULT_ALLOWED = "list,version,help,allowlist list,whitelist list"
-_ALLOWED_RAW = os.getenv("BDS_ALLOWED_COMMANDS", _DEFAULT_ALLOWED)
-ALLOW_ALL = _ALLOWED_RAW.strip() == "*"
-ALLOWED = [] if ALLOW_ALL else [c.strip().lower() for c in _ALLOWED_RAW.split(",") if c.strip()]
-
-MAX_COMMAND_LEN = 200
-
 if not re.fullmatch(r"[A-Za-z0-9_.-]+", CONTAINER):
     raise SystemExit(f"BDS_CONTAINER 값이 올바르지 않습니다: {CONTAINER!r}")
 
@@ -165,25 +156,6 @@ def _attach_send(data: bytes) -> None:
 # --------------------------------------------------------------------------
 # 명령 검증 / 실행
 # --------------------------------------------------------------------------
-def _check_command(command: str) -> str:
-    cmd = (command or "").strip()
-    if not cmd:
-        raise ValueError("명령어가 비어 있어요.")
-    if len(cmd) > MAX_COMMAND_LEN:
-        raise ValueError(f"명령어가 너무 길어요(최대 {MAX_COMMAND_LEN}자).")
-    if any((not ch.isprintable()) for ch in cmd):
-        raise ValueError("줄바꿈이나 제어문자가 들어 있는 명령은 보낼 수 없어요.")
-    cmd = re.sub(r"\s+", " ", cmd)
-    if ALLOW_ALL:
-        return cmd
-    low = cmd.lower()
-    if any(low == p or low.startswith(p + " ") for p in ALLOWED):
-        return cmd
-    raise ValueError(
-        f"허용되지 않은 명령이에요: '{cmd.split(' ')[0]}'. 허용 목록: {', '.join(ALLOWED) or '(없음)'}"
-    )
-
-
 def _run(cmd: str) -> list[str]:
     """정책 검사 없이 명령을 보내고, 그 이후 로그에서 응답을 모아 돌려준다."""
     tty = bool(_inspect().get("Config", {}).get("Tty"))
@@ -228,16 +200,6 @@ def bds_players() -> dict:
     idx = next(i for i, ln in enumerate(lines) if "players online" in ln)
     names_raw = [ln for ln in lines[idx + 1:] if ln.strip()]
     return {"online": int(m.group(1)), "max": int(m.group(2)), "names_raw": names_raw}
-
-
-@mcp.tool()
-def bds_send_command(command: str) -> str:
-    """마인크래프트(Bedrock) 서버 콘솔에 명령어를 보내고 서버의 응답 로그를 돌려줍니다.
-    슬래시(/) 없이 명령어만 넣으세요(예: list, version). 허용된 명령만 실행되며, 허용되지 않은
-    명령은 거부됩니다. 접속자 확인은 bds_players를 쓰는 게 더 편합니다."""
-    cmd = _check_command(command)
-    lines = _run(cmd)
-    return "\n".join(lines) if lines else "(응답 로그 없음 - 명령은 전달됐어요)"
 
 
 @mcp.tool()

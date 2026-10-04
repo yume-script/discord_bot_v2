@@ -137,7 +137,9 @@ async def send_discord_message(text: str) -> None:
     url = f"https://discord.com/api/v10/channels/{NOTIFY_CHANNEL_ID}/messages"
     headers = {"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(url, headers=headers, json={"content": text})
+        # 제목은 외부(Plex/BookOasis) 데이터라 @everyone/@here/역할 멘션이 섞여도 알림이 터지지 않게 막는다.
+        payload = {"content": text, "allowed_mentions": {"parse": []}}
+        resp = await client.post(url, headers=headers, json=payload)
         resp.raise_for_status()
 
 
@@ -155,9 +157,8 @@ async def main():
     except Exception as e:
         print(f"[경고] BookOasis 확인 실패: {e}")
 
-    save_state(state)  # 일부만 성공했어도 그만큼은 반영해서 다음 실행 때 중복 알림 방지
-
     if not new_lines:
+        save_state(state)
         print("새 콘텐츠 없음")
         return
 
@@ -167,6 +168,10 @@ async def main():
         text += f"\n... 외 {len(new_lines) - MAX_NOTIFY_LINES}건 더"
 
     await send_discord_message(text)
+    # 전송에 성공한 뒤에만 "여기까지 알렸음"을 저장한다 - 먼저 저장하면 전송이 실패했을 때
+    # 그 항목들이 이미 알린 것으로 처리돼 영영 알림이 안 간다. 실패하면 예외로 끝나고,
+    # 다음 크론 실행 때 같은 항목을 다시 보낸다.
+    save_state(state)
     print(f"알림 전송 완료: {len(new_lines)}건")
 
 
