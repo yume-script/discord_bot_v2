@@ -4,6 +4,7 @@ import logging
 import discord
 from discord.ext import commands
 
+from ai.discord_reader import set_bot_client
 from ai.mcp_manager import init_mcp
 from config import settings
 from core.concurrency import image_gen_pool
@@ -29,9 +30,17 @@ class AesunBot(commands.Bot):
         # SERVER MEMBERS INTENT는 코드에서 실제로 쓰는 곳이 없어서(멤버 목록 캐싱, on_member_join
         # 등을 안 씀) 뺐다 - MESSAGE_CONTENT INTENT만 있으면 된다. message.author.display_name은
         # 멤버 인텐트 없이도 메시지 이벤트에 기본 포함된다.
-        super().__init__(command_prefix="!", intents=intents)
+        # LLM 답변, /개미소리 입력, 카톡 닉네임처럼 외부에서 들어온 텍스트를 그대로 되돌려 보내는
+        # 곳이 많아서, 그 안에 섞인 @everyone/@here/역할 멘션이 실제 전체 알림으로 터지지 않게
+        # 봇 전역에서 막는다 (유저 멘션은 /그림 폴백 등에서 쓰므로 허용).
+        allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=True)
+        super().__init__(command_prefix="!", intents=intents, allowed_mentions=allowed_mentions)
 
     async def setup_hook(self) -> None:
+        # 이 봇 인스턴스를 등록해둔다 - ai/discord_reader.py의 도구가 특정 채널을 온디맨드로
+        # 읽을 때 이 인스턴스를 그대로 재사용한다(새 로그인 없이).
+        set_bot_client(self)
+
         # MCP 서버는 부팅 시 1회만 연결 (mcp_servers.yaml 기반)
         tools = await init_mcp()
         log.info("MCP tools loaded: %s", [t.name for t in tools])

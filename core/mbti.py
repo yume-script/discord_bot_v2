@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ai.llm_client import build_chat_model
+from ai.llm_client import build_chat_model, message_text
 from core.conversation_store import get_messages_by_display_name
 
 MIN_MESSAGES = 5
@@ -56,5 +56,5 @@ async def analyze_mbti(conversation_key: str, target_display_name: str, is_kakao
     return (
         f"🌸 **{persona_name}의 데이터 기반 MBTI 연산**\n"
         f"분석 대상: {target_display_name}님 (최근 {len(messages)}개 메시지 기반)\n\n"
-        f"{resp.content}"
+        f"{message_text(resp)}"
     )

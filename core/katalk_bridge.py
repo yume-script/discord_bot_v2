@@ -23,20 +23,25 @@ from config import settings
 _REPLY_PATH = "/reply"
 
 
-async def send_message(room_id: str, text: str) -> None:
-    """텍스트 메시지 전송. 원본 send_katalk_webhook과 동일한 payload."""
+async def _post(payload: dict) -> None:
+    """
+    브릿지로 POST. 연결 실패뿐 아니라 4xx/5xx 응답도 예외로 올린다 - 상태코드를 안 보면
+    브릿지가 거절해도 "보낸 줄 알고" 조용히 넘어가서 원인 추적이 안 된다.
+    호출부(cogs/chat.py의 _send_kakao 등)가 이 예외를 잡아 로그만 남기고 다른 처리를 계속한다.
+    """
     if not settings.KATALK_BRIDGE_URL:
         raise RuntimeError("KATALK_BRIDGE_URL이 설정되지 않았습니다.")
-    payload = {"type": "text", "room": str(room_id), "data": text}
     async with httpx.AsyncClient(timeout=60) as client:
-        await client.post(f"{settings.KATALK_BRIDGE_URL}{_REPLY_PATH}", json=payload)
+        resp = await client.post(f"{settings.KATALK_BRIDGE_URL}{_REPLY_PATH}", json=payload)
+        resp.raise_for_status()
+
+
+async def send_message(room_id: str, text: str) -> None:
+    """텍스트 메시지 전송. 원본 send_katalk_webhook과 동일한 payload."""
+    await _post({"type": "text", "room": str(room_id), "data": text})
 
 
 async def send_image(room_id: str, image_bytes: bytes, filename: str = "image.webp") -> None:
     """이미지 전송. 원본 send_katalk_image_webhook과 동일한 payload(base64 문자열)."""
-    if not settings.KATALK_BRIDGE_URL:
-        raise RuntimeError("KATALK_BRIDGE_URL이 설정되지 않았습니다.")
     base64_data = base64.b64encode(image_bytes).decode("utf-8")
-    payload = {"type": "image", "room": str(room_id), "data": base64_data}
-    async with httpx.AsyncClient(timeout=60) as client:
-        await client.post(f"{settings.KATALK_BRIDGE_URL}{_REPLY_PATH}", json=payload)
+    await _post({"type": "image", "room": str(room_id), "data": base64_data})

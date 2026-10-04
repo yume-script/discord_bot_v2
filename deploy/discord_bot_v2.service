@@ -1,9 +1,9 @@
-# 설치: sudo cp deploy/discord-bot-v2.service /etc/systemd/system/
+# 설치: sudo cp deploy/discord_bot_v2.service /etc/systemd/system/
 #      sudo systemctl daemon-reload
-#      sudo systemctl enable --now discord-bot-v2.service
+#      sudo systemctl enable --now discord_bot_v2.service
 #
 # User/WorkingDirectory/ExecStart 경로는 실제 서버 배포 경로에 맞게 수정할 것.
-# (scripts/git_pull_deploy.sh가 이 서비스명(discord-bot-v2.service)을 재시작 대상으로 사용함)
+# (scripts/git_pull_deploy.sh가 이 서비스명(discord_bot_v2.service)을 재시작 대상으로 사용함)
 
 [Unit]
 Description=Aesun Discord Bot v2 (discord_bot_v2)

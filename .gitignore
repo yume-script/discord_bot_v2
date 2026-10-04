@@ -1,0 +1,20 @@
+# 시크릿 - 토큰/API 키가 들어 있으므로 절대 커밋하지 않는다
+.env
+*.key
+*.pem
+
+# 런타임 데이터 (대화 로그, 머니, 닉네임 이력, MCP 메모리, 다운로드한 에셋, 알림 상태 등)
+storage/
+tmp/
+*.sqlite3
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+# OS / 에디터
+.DS_Store
+.vscode/

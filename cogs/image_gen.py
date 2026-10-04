@@ -17,7 +17,7 @@ from discord.ext import commands
 
 from ai.backends.base import ImageGenError
 from ai.image_engine import generate_image
-from core.concurrency import image_gen_pool
+from core.concurrency import QueueLimitError, image_gen_pool
 from core.user_ref import UserRef
 
 log = logging.getLogger("image_gen")
@@ -55,6 +55,9 @@ class ImageGen(commands.Cog):
     async def _run_and_reply(self, interaction: Interaction, user: UserRef, job, prompt: str):
         try:
             result = await image_gen_pool.submit(user, job)
+        except QueueLimitError as exc:
+            await self._safe_followup(interaction, f"⏳ {exc}")
+            return
         except ImageGenError as exc:
             await self._safe_followup(interaction, f"이미지 생성 실패: {exc}")
             return

@@ -11,7 +11,7 @@
   (자세한 관계는 아래 TODO의 "포링푸드" 항목 참고).
 - 카톡 로그 / 벡터DB / 회원상태: **초기화** (이관하지 않음, `storage/`는 빈 상태로 시작)
 - 카카오톡 연동: **유지** (디스코드 채널 릴레이 방식 - 아래 "카톡 연동" 참고)
-- 포링푸드(porning_food) 연동: **유지** (`integrations/poring_food_bridge.py` 참고)
+- 포링푸드(porning_food) 연동: **유지** (MCP 서버 방식 - `config/mcp_servers.yaml`의 `poring_food` 항목 참고)
 - BookOasis 대화방 플러그인: **폐기** (Firebase 브릿지 관련 코드 없음)
 - 이미지 생성 백엔드: AI Horde만 사용 (구글 코랩 연동은 불편해서 제외)
 
@@ -21,7 +21,6 @@ config/     설정 단일 진입점 (.env, mcp_servers.yaml)
 core/       UserRef, 자율 응답 로직, 카톡 닉네임 파싱, 카톡 답장 전송, 동시성 워커풀
 ai/         LLM 클라이언트, MCP 매니저, RAG 엔진, 프롬프트, 이미지 생성 엔진
 cogs/       디스코드 이벤트/명령어 (1기능 1파일)
-integrations/  포링푸드 등 외부 프로젝트와의 파일 계약
 storage/    런타임 데이터 (git에 커밋되지 않음 - .gitignore 확인)
 scripts/    배포/저장소 초기화 스크립트
 deploy/     systemd 유닛 파일
@@ -33,16 +32,24 @@ deploy/     systemd 유닛 파일
    - `.env`가 실수로 커밋되지 않도록 이중으로 체크한다 (`.gitignore`가 1차 방어, 스크립트가 2차 확인).
    - `git init` → `git add .` → 초기 커밋 → `origin` 등록 → `git push -u origin main` 순서로 진행.
 
+## MCP 서버 설정 (`config/mcp_servers.yaml`)
+- 이 파일은 git에 커밋되므로 **API 키/토큰을 직접 적지 않는다.** `PLEX_TOKEN: "${PLEX_TOKEN}"`처럼
+  자리표시자로 쓰고 실제 값은 `.env`에 둔다 (`ai/mcp_manager.py`의 `prepare_server_config`가 치환,
+  `.env`에 없으면 그 서버만 건너뛴다).
+- `admin_only: true`를 붙인 서버(`filesystem`, `docker_local`, `docker_bookoasis`, `sqlite`)의 도구는
+  이름과 상관없이 관리자만 실행할 수 있다 - `/mnt` 아래 `.env`, 컨테이너 환경변수, 전체 대화 로그처럼
+  "조회"만으로도 민감한 정보에 닿기 때문이다.
+
 ## 서버 배포 (systemd)
 1. 서버에 저장소를 clone하고 `.env`를 채운다.
-2. `deploy/discord-bot-v2.service`를 서버 환경(`User`, `WorkingDirectory`, `ExecStart` 경로)에 맞게 수정한 뒤:
+2. `deploy/discord_bot_v2.service`를 서버 환경(`User`, `WorkingDirectory`, `ExecStart` 경로)에 맞게 수정한 뒤:
    ```bash
    sudo mkdir -p /var/log/discord-bot-v2 && sudo chown discordbot:discordbot /var/log/discord-bot-v2
-   sudo cp deploy/discord-bot-v2.service /etc/systemd/system/
+   sudo cp deploy/discord_bot_v2.service /etc/systemd/system/
    sudo systemctl daemon-reload
-   sudo systemctl enable --now discord-bot-v2.service
+   sudo systemctl enable --now discord_bot_v2.service
    ```
-3. 이후 업데이트 배포는 `scripts/git_pull_deploy.sh`가 `git pull` → 의존성 설치 → `systemctl restart discord-bot-v2.service`까지 처리한다 (서비스명이 위 유닛 파일과 일치해야 함).
+3. 이후 업데이트 배포는 `scripts/git_pull_deploy.sh`가 `git pull` → 의존성 설치 → `systemctl restart discord_bot_v2.service`까지 처리한다 (서비스명이 위 유닛 파일과 일치해야 함).
 
 ## 시작하기
 ```bash
@@ -150,12 +157,16 @@ python app.py
 - 원본 게임 파일(`game_rps.py`, `game_dice.py`, `game_slot_machine.py`, `game_dragontiger.py`,
   `game_dice_poker.py`, `game_blackjack.py`, `game_baccarat_20260609.py`)을 확인해서
   **베팅 검증 → 일일 횟수 제한 → 잔액 체크 → 판정 → `money_system.transaction()` 정산** 흐름과
-  배당 배율, 일일 제한 횟수를 전부 원본 값 그대로 이식했다 (`core/game_engine.py`).
+  일일 제한 횟수를 원본 값 그대로 이식했다 (`core/game_engine.py`).
+- **배당 재조정**: 원본 배율 그대로면 기대 회수율이 주사위 142%, 슬롯머신 370%, 바카라('짝' 고정)
+  105%로 100%를 넘어서 걸기만 해도 머니가 무한히 불어났다. 주사위(더블 2.5배 / 8 이상 1.4배 /
+  7은 절반 회수), 슬롯머신(2개 일치 1.2배, 3개 일치는 희귀도 비례 약 2~63배), 바카라(홀 2배 /
+  짝 1.8배)만 조정해서 모든 게임의 회수율이 100% 이하(약 89~97%, 가위바위보만 100%)가 되게 했다.
 - **딱 하나 다른 점**: 원본은 PIL로 카드/주사위/슬롯 이미지를 그려서 보여줬는데, 그 이미지
   에셋(`game_asset_manager.py`가 참조하는 카드·주사위 그림 파일들)을 이 프로젝트로 가져오지
   못해서 **결과를 텍스트로 단순화**했다. 슬롯머신은 원본이 라그나로크M 카드 RAG 데이터(외부
-  jsonl)에 의존했는데 그것도 없어서 고정 이모지 심볼(🍒🍋🔔⭐7️⃣)로 대체했다 — 배당 공식(희귀
-  심볼일수록 3연속 적중 시 배당 ↑)은 원본 그대로.
+  jsonl)에 의존했는데 그것도 없어서 고정 이모지 심볼(🍒🍋🔔⭐7️⃣)로 대체했다 — 희귀
+  심볼일수록 3연속 적중 시 배당이 커지는 규칙은 유지(배율 값은 위 재조정 참고).
 - 명령어: `/가위`, `/바위`, `/보`(각 일일 5회), `/주사위`(일일 10회), `/용호`(용/호랑이/무승부,
   일일 5회), `/다이스포커`(일일 5회), `/블랙잭`(일일 5회), `/바카라`(홀/짝, 일일 5회),
   `/슬롯머신`(일일 5회).
@@ -276,7 +287,7 @@ python app.py
 - [x] `core/discord_channel_log.py` 역할 → `core/conversation_store.py`(SQLite)로 흡수 완료
 - [x] `ai/rag_engine.py`의 tool_calls 실행 루프 완성 (날씨/환율/주식 도구 연동과 함께)
 - [x] `config/mcp_servers.yaml`에 BookOasis MCP 서버 접속정보 확정 (`root@192.168.0.31`, 컨테이너 `bookoasis`, `/app/tools/mcp_server.py`)
-- [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
+- [x] systemd 서비스 파일 (`deploy/discord_bot_v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
 - [x] ~~포링푸드 쪽 파서를 새 저장 방식(SQLite)에 맞춰 업데이트~~ → **정정: 포링푸드는 애초에 카톡 로그를 안 읽는다** (전체 소스 확인 완료, `loader.py`가 자기 저장소의 조직도/이슈/페르소나 JSON만 읽음). 유일한 실제 연결은 카톡 브릿지 서버 공유(코드 공유 아님)와, 포링푸드가 `aesun_current_status.json`에 상태를 쓰는 것뿐.
 - [x] **애순이 상태 조회를 파일 공유 방식에서 MCP 서버 방식으로 전환** — 포링푸드가 discord_bot_v2 폴더에 파일을 쓰는 방식(`aesun_current_status.json` 공유)은 "포링푸드가 독립된 개체"라는 원칙과 안 맞아서 폐기했다. 대신 BookOasis와 같은 패턴으로 포링푸드 쪽에 `mcp_server.py`(stdio MCP 서버, `get_current_status` 도구)를 추가하고, `config/mcp_servers.yaml`에 `poring_food` 항목으로 등록했다 — 같은 서버라 SSH 없이 바로 `python3`로 실행한다. `ai/local_tools.py`의 `get_poring_food_status()`와 `integrations/poring_food_bridge.py`(직접 파일 읽기 방식)는 제거했고, `PORING_FOOD_STATUS_JSON_PATH` 설정도 뺐다.

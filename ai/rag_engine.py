@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from ai.llm_client import build_chat_model
+from ai.llm_client import build_chat_model, message_text
 from ai.local_tools import LOCAL_TOOLS
 from ai.mcp_manager import get_tools
 from ai.prompts import build_system_prompt
@@ -23,6 +23,15 @@ MAX_TOOL_TURNS = 4
 # 목록에서 빼지 않고 호출 시점에 막는 이유: LLM이 그 도구가 있다는 건 알아도 되고(다른
 # 안전한 방법을 스스로 찾아볼 수 있으므로), 실제 실행만 막아야 하기 때문이다.
 ADMIN_ONLY_TOOL_REPLY = "이건 관리자만 할 수 있는 작업이에요. 다른 걸 도와드릴까요?"
+
+NO_ANSWER_REPLY = "죄송해요, 지금은 답을 만들지 못했어요."
+
+# 도구 왕복 횟수를 다 쓰면 마지막 메시지는 ToolMessage(도구 원문)다 - 그걸 그대로 답장으로
+# 내보내면 DB 조회 JSON 같은 게 채팅에 찍히므로, 이 지시를 붙여 한 번 더 정리된 답을 받는다.
+FINALIZE_INSTRUCTION = (
+    "도구는 더 이상 호출하지 말고, 지금까지 얻은 도구 결과만 바탕으로 사용자 질문에 "
+    "자연스럽고 간결하게 최종 답변해."
+)
 
 
 def _build_history_messages(conversation_key: str) -> list:
@@ -64,7 +73,7 @@ async def a_query(
 
         tool_calls = getattr(ai_msg, "tool_calls", None)
         if not tool_calls:
-            return ai_msg.content
+            return message_text(ai_msg) or NO_ANSWER_REPLY
 
         for call in tool_calls:
             tool_fn = tools_by_name.get(call["name"])
@@ -79,5 +88,10 @@ async def a_query(
                     result_text = f"도구 실행 실패: {exc}"
             messages.append(ToolMessage(content=str(result_text), tool_call_id=call["id"]))
 
-    # MAX_TOOL_TURNS를 넘어가면 마지막 메시지라도 반환 (도구 결과만 있고 최종 요약이 없을 수 있음)
-    return messages[-1].content or "죄송해요, 지금은 답을 만들지 못했어요."
+    # MAX_TOOL_TURNS를 다 썼다 - 도구 결과 원문 대신 최종 요약을 한 번 더 요청한다.
+    messages.append(HumanMessage(content=FINALIZE_INSTRUCTION))
+    final_msg = await bound_model.ainvoke(messages)
+    if getattr(final_msg, "tool_calls", None):
+        # 지시를 무시하고 또 도구를 부르면 더 돌지 않고 끝낸다 (원문 노출보다 안전한 폴백).
+        return NO_ANSWER_REPLY
+    return message_text(final_msg) or NO_ANSWER_REPLY

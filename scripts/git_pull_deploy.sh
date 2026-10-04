@@ -15,5 +15,8 @@ fi
 
 pip install -r requirements.txt
 
-sudo systemctl restart discord-bot-v2.service
+# 실제 서버에 등록된 유닛 이름(discord_bot_v2.service)과 맞춘다. 다르면 SERVICE_NAME으로 덮어쓴다.
+SERVICE_NAME="${SERVICE_NAME:-discord_bot_v2.service}"
+sudo systemctl restart "$SERVICE_NAME"
+sudo systemctl --no-pager --lines=0 status "$SERVICE_NAME" || true
 echo "deployed."
