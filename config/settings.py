@@ -39,8 +39,9 @@ NICKNAME_DELIMITER = os.environ.get("NICKNAME_DELIMITER", "//")
 # 카톡/디스코드 구분 없이 전역으로 공유된다 (기존 봇도 last_aesun_active_time이 전역 단일값이었음).
 AUTO_REPLY_TRIGGER_KEYWORDS = _csv_ids(os.environ.get("AUTO_REPLY_TRIGGER_KEYWORDS", "아메하나,애순이,똑똑,안녕"))
 
-# [신규] 이 이름의 웹훅이 올리는 메시지는 실시간으로 아메하나 말투로 바꿔서 다시 올린다
-# (예: GAS 자동화 스크립트의 "작업 완료" 기계적 보고). 쉼표로 여러 개 등록 가능.
+# 자동화 알림으로 보고 봇이 아무 반응도 하지 않을 발신자 이름 (쉼표로 여러 개).
+# 이름이 ".GAS"로 끝나는 발신자와 카톡 릴레이가 아닌 웹훅은 여기 없어도 자동으로 무시된다
+# (cogs/chat.py의 _is_automation_message) - 봇 계정처럼 웹훅이 아닌 자동화를 추가할 때 쓴다.
 GAS_WEBHOOK_NAMES = set(
     n.strip() for n in os.environ.get("GAS_WEBHOOK_NAMES", "4KHD_SNDER.GAS").split(",") if n.strip()
 )

@@ -46,6 +46,27 @@ TEXT_IMAGE_STYLE_PREFIX = "/그림스타일 "
 _MENTION_PATTERN = re.compile(r"<@!?\d+>")
 
 
+def _is_automation_message(message: Message, is_kakao: bool) -> bool:
+    """
+    사람이 아니라 자동화가 올린 알림 메시지인지. 이런 메시지에는 봇이 아무 반응도 하지 않는다
+    (호출어/자율응답/명령 처리/대화 로그 기록 전부 건너뜀).
+
+    - 이름이 ".GAS"로 끝나는 발신자: 구글 앱스 스크립트가 처리 결과를 올리는 웹훅
+      (예: "알림완료 메일 정리.GAS", "4KHD_SNDER.GAS", "루리웹핫딜.GAS")
+    - GAS_WEBHOOK_NAMES에 등록된 이름 (".GAS"가 안 붙은 자동화도 여기에 추가 가능)
+    - 카톡 릴레이가 아닌 모든 웹훅 메시지: "Plex 알리미", "라그M_카페_알림" 같은 알림 웹훅.
+      카톡 릴레이 웹훅은 "{이름}//{방ID}//{유저ID}" 형식이라 is_kakao로 구분된다.
+    """
+    if is_kakao:
+        return False
+    name = (message.author.name or "").strip()
+    display = (getattr(message.author, "display_name", "") or "").strip()
+    for n in (name, display):
+        if n.upper().endswith(".GAS") or n in settings.GAS_WEBHOOK_NAMES:
+            return True
+    return message.webhook_id is not None
+
+
 def _kakao_room(user: UserRef) -> str:
     """카톡 UserRef(raw_id="{방ID}//{회원번호}")에서 방ID만 뽑는다."""
     return user.raw_id.split("//", 1)[0]
@@ -73,6 +94,11 @@ class Chat(commands.Cog):
         kakao_user = parse_kakao_author(message.author.name) if is_linked_channel else None
         is_kakao = kakao_user is not None
         user = kakao_user or UserRef.from_discord(message.author.id, message.author.display_name)
+
+        # 구글 앱스 스크립트(.GAS) 등 자동화 웹훅이 올린 알림에는 반응하지 않는다.
+        # (카톡 연동 채널은 위의 author.bot 필터를 통과하므로 여기서 한 번 더 거른다)
+        if _is_automation_message(message, is_kakao):
+            return
 
         key = f"discord:{message.channel.id}"
 
