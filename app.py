@@ -4,6 +4,7 @@ import logging
 import discord
 from discord.ext import commands
 
+from ai.discord_reader import set_bot_client
 from ai.mcp_manager import init_mcp
 from config import settings
 from core.concurrency import image_gen_pool
@@ -32,6 +33,10 @@ class AesunBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self) -> None:
+        # 이 봇 인스턴스를 등록해둔다 - ai/discord_reader.py의 도구가 특정 채널을 온디맨드로
+        # 읽을 때 이 인스턴스를 그대로 재사용한다(새 로그인 없이).
+        set_bot_client(self)
+
         # MCP 서버는 부팅 시 1회만 연결 (mcp_servers.yaml 기반)
         tools = await init_mcp()
         log.info("MCP tools loaded: %s", [t.name for t in tools])

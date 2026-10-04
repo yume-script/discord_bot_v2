@@ -1,5 +1,65 @@
-# MultiServerMCPClient가 부팅 시 1회 읽어 연결한다.
-# 서버를 추가/제거할 때 코드 수정 없이 이 파일만 바꾸면 된다.
+youtube:
+  transport: stdio
+  command: /root/.local/bin/uvx
+  args:
+    - "--from"
+    - "yt-mcp-server"
+    - "youtube-mcp-server"
+
+minecraft_bds:
+  transport: stdio
+  command: /mnt/discord_bot_v2/venv/bin/python3
+  args:
+    - "/mnt/discord_bot_v2/scripts/bds_mcp.py"
+  env:
+    BDS_CONTAINER: "mc-be-server"
+    BDS_ALLOWED_COMMANDS: "list,version,help,allowlist list,whitelist list"
+
+filesystem:
+  transport: stdio
+  command: /root/.nvm/versions/node/v24.18.0/bin/npx
+  args:
+    - "-y"
+    - "@modelcontextprotocol/server-filesystem"
+    - "/mnt"
+  env:
+    HOME: "/root"
+    PATH: "/root/.nvm/versions/node/v24.18.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+docker_local:
+  transport: stdio
+  command: /root/.local/bin/uvx
+  args:
+    - "--with"
+    - "mcp<2"
+    - "mcp-server-docker"
+
+docker_bookoasis:
+  transport: stdio
+  command: /root/.local/bin/uvx
+  args:
+    - "--with"
+    - "mcp<2"
+    - "mcp-server-docker"
+  env:
+    DOCKER_HOST: "ssh://192.168.0.31"
+
+tautulli:
+  transport: stdio
+  command: /root/.local/bin/uvx
+  args:
+    - "--with"
+    - "mcp<2"
+    - "mcp-tautulli"
+  env:
+    TAUTULLI_URL: "http://192.168.0.31:8181"
+    TAUTULLI_API_KEY: "${TAUTULLI_API_KEY}"
+
+server_status:
+  transport: stdio
+  command: /mnt/poring_food/venv/bin/python3
+  args:
+    - "/mnt/discord_bot_v2/scripts/server_status_mcp.py"
 
 bookoasis:
   transport: stdio
@@ -12,21 +72,57 @@ bookoasis:
     - "root@192.168.0.31"
     - "docker"
     - "exec"
-    - "-i"                                            # -t(TTY) 없이 -i(stdin 유지)만 - MCP는 raw stdio 프로토콜
+    - "-i"
     - "bookoasis"
     - "python3"
     - "/app/tools/mcp_server.py"
 
-# 포링푸드(애순이) - 같은 서버(etc)에서 도는 별도 프로젝트라 SSH 없이 바로 실행한다.
-# porning_food 쪽에 mcp_server.py를 새로 추가해야 함 (아래 안내 참고).
-# TODO: porning_food가 venv를 쓰면 "python3"를 "/mnt/poring_food/venv/bin/python3"로 바꿀 것.
 poring_food:
   transport: stdio
-  command: python3
+  command: /mnt/poring_food/venv/bin/python3
   args:
     - "/mnt/poring_food/mcp_server.py"
 
-# 예시(다른 MCP 서버 추가 시 참고):
-# romel_wiki:
-#   transport: sse
-#   url: "http://localhost:PORT/sse"
+plex:
+  transport: stdio
+  command: /root/.nvm/versions/node/v24.18.0/bin/node
+  args:
+    - "/mnt/plex-mcp-server/build/plex-mcp-server.js"
+  env:
+    PLEX_URL: "http://192.168.0.31:32400"
+    PLEX_TOKEN: "${PLEX_TOKEN}"
+
+korea_weather:
+  transport: stdio
+  command: /root/.local/bin/uvx
+  args:
+    - "--with"
+    - "httpx"
+    - "--with"
+    - "mcp<2"
+    - "korea-weather-mcp@latest"
+  env:
+    PUBLIC_DATA_API_SECRET: "${PUBLIC_DATA_API_SECRET}"
+
+sqlite:
+  transport: stdio
+  command: /root/.nvm/versions/node/v24.18.0/bin/npx
+  args:
+    - "-y"
+    - "mcp-server-sqlite-npx"
+    - "/mnt/discord_bot_v2/storage/conversations.db"
+  env:
+    HOME: "/root"
+    PATH: "/root/.nvm/versions/node/v24.18.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+memory:
+  transport: stdio
+  command: /root/.nvm/versions/node/v24.18.0/bin/npx
+  args:
+    - "-y"
+    - "@modelcontextprotocol/server-memory"
+  env:
+    MEMORY_FILE_PATH: "/mnt/discord_bot_v2/storage/mcp_memory.json"
+    HOME: "/root"
+    PATH: "/root/.nvm/versions/node/v24.18.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
