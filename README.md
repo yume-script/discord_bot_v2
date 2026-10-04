@@ -42,14 +42,14 @@ deploy/     systemd 유닛 파일
 
 ## 서버 배포 (systemd)
 1. 서버에 저장소를 clone하고 `.env`를 채운다.
-2. `deploy/discord-bot-v2.service`를 서버 환경(`User`, `WorkingDirectory`, `ExecStart` 경로)에 맞게 수정한 뒤:
+2. `deploy/discord_bot_v2.service`를 서버 환경(`User`, `WorkingDirectory`, `ExecStart` 경로)에 맞게 수정한 뒤:
    ```bash
    sudo mkdir -p /var/log/discord-bot-v2 && sudo chown discordbot:discordbot /var/log/discord-bot-v2
-   sudo cp deploy/discord-bot-v2.service /etc/systemd/system/
+   sudo cp deploy/discord_bot_v2.service /etc/systemd/system/
    sudo systemctl daemon-reload
-   sudo systemctl enable --now discord-bot-v2.service
+   sudo systemctl enable --now discord_bot_v2.service
    ```
-3. 이후 업데이트 배포는 `scripts/git_pull_deploy.sh`가 `git pull` → 의존성 설치 → `systemctl restart discord-bot-v2.service`까지 처리한다 (서비스명이 위 유닛 파일과 일치해야 함).
+3. 이후 업데이트 배포는 `scripts/git_pull_deploy.sh`가 `git pull` → 의존성 설치 → `systemctl restart discord_bot_v2.service`까지 처리한다 (서비스명이 위 유닛 파일과 일치해야 함).
 
 ## 시작하기
 ```bash
@@ -287,7 +287,7 @@ python app.py
 - [x] `core/discord_channel_log.py` 역할 → `core/conversation_store.py`(SQLite)로 흡수 완료
 - [x] `ai/rag_engine.py`의 tool_calls 실행 루프 완성 (날씨/환율/주식 도구 연동과 함께)
 - [x] `config/mcp_servers.yaml`에 BookOasis MCP 서버 접속정보 확정 (`root@192.168.0.31`, 컨테이너 `bookoasis`, `/app/tools/mcp_server.py`)
-- [x] systemd 서비스 파일 (`deploy/discord-bot-v2.service`)
+- [x] systemd 서비스 파일 (`deploy/discord_bot_v2.service`)
 - [x] 새 GitHub 저장소 초기 커밋 스크립트 (`scripts/init_new_repo.sh`)
 - [x] ~~포링푸드 쪽 파서를 새 저장 방식(SQLite)에 맞춰 업데이트~~ → **정정: 포링푸드는 애초에 카톡 로그를 안 읽는다** (전체 소스 확인 완료, `loader.py`가 자기 저장소의 조직도/이슈/페르소나 JSON만 읽음). 유일한 실제 연결은 카톡 브릿지 서버 공유(코드 공유 아님)와, 포링푸드가 `aesun_current_status.json`에 상태를 쓰는 것뿐.
 - [x] **애순이 상태 조회를 파일 공유 방식에서 MCP 서버 방식으로 전환** — 포링푸드가 discord_bot_v2 폴더에 파일을 쓰는 방식(`aesun_current_status.json` 공유)은 "포링푸드가 독립된 개체"라는 원칙과 안 맞아서 폐기했다. 대신 BookOasis와 같은 패턴으로 포링푸드 쪽에 `mcp_server.py`(stdio MCP 서버, `get_current_status` 도구)를 추가하고, `config/mcp_servers.yaml`에 `poring_food` 항목으로 등록했다 — 같은 서버라 SSH 없이 바로 `python3`로 실행한다. `ai/local_tools.py`의 `get_poring_food_status()`와 `integrations/poring_food_bridge.py`(직접 파일 읽기 방식)는 제거했고, `PORING_FOOD_STATUS_JSON_PATH` 설정도 뺐다.
