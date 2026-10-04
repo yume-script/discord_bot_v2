@@ -25,6 +25,7 @@ KAKAO_CALL_TRIGGER_WORDS = ["애순아", "애순이"]
 
 _last_active_time: float = 0.0
 _active_keys: set[str] = set()
+_followup_until: dict[str, float] = {}  # followup 키 -> 이 시각까지는 호출어 없이도 응답
 
 
 def detect_call_word(text: str, is_kakao: bool = False) -> str | None:
@@ -80,3 +81,25 @@ def should_auto_reply(text: str) -> bool:
     _last_active_time = now
     return True
 
+
+def followup_key(channel_id: int | str, user_key: str) -> str:
+    """이어지는 대화 창의 단위 - 같은 채널의 같은 사람(카톡이면 같은 방의 같은 회원)."""
+    return f"{channel_id}:{user_key}"
+
+
+def open_followup(key: str) -> None:
+    """
+    호출어로 불렸거나 이어지는 대화에 답할 때마다 호출 - 그 시점부터 CALL_FOLLOWUP_SEC(기본 5분)
+    동안은 같은 사람이 호출어 없이 말해도 응답한다. 말할 때마다 창이 다시 5분으로 늘어난다.
+    """
+    _followup_until[key] = time.time() + settings.CALL_FOLLOWUP_SEC
+
+
+def in_followup(key: str) -> bool:
+    until = _followup_until.get(key)
+    if until is None:
+        return False
+    if until < time.time():
+        _followup_until.pop(key, None)
+        return False
+    return True

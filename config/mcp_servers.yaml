@@ -21,7 +21,6 @@ minecraft_bds:
     - "/mnt/discord_bot_v2/scripts/bds_mcp.py"
   env:
     BDS_CONTAINER: "mc-be-server"
-    BDS_ALLOWED_COMMANDS: "list,version,help,allowlist list,whitelist list"
 
 # /mnt 전체(각 프로젝트의 .env, 백업 포함)를 읽을 수 있어서 관리자 전용
 filesystem:
@@ -69,9 +68,11 @@ tautulli:
     TAUTULLI_URL: "http://192.168.0.31:8181"
     TAUTULLI_API_KEY: "${TAUTULLI_API_KEY}"
 
+# scripts/server_status_mcp.py 주석대로 mcp 1.30이 확인된 이 봇의 venv로 실행한다
+# (poring_food venv에서는 도구 로드가 확인되지 않았음).
 server_status:
   transport: stdio
-  command: /mnt/poring_food/venv/bin/python3
+  command: /mnt/discord_bot_v2/venv/bin/python3
   args:
     - "/mnt/discord_bot_v2/scripts/server_status_mcp.py"
 

@@ -46,6 +46,9 @@ GAS_WEBHOOK_NAMES = set(
 )
 AUTO_REPLY_COOLDOWN_SEC = int(os.environ.get("AUTO_REPLY_COOLDOWN_SEC", "60"))
 AUTO_REPLY_PROBABILITY = float(os.environ.get("AUTO_REPLY_PROBABILITY", "0.03"))
+# 호출어("하나야"/"애순아")로 부른 뒤 이 시간(초) 동안은 같은 사람이 호출어 없이 말해도 응답한다.
+# 0이면 끈다(매번 호출어 필요).
+CALL_FOLLOWUP_SEC = int(os.environ.get("CALL_FOLLOWUP_SEC", "300"))
 
 # --- LLM (LiteLLM proxy) ---
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "")
