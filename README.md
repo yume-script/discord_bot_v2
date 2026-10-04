@@ -134,6 +134,20 @@ python app.py
 - **직전 메시지가 봇이면 스킵**: `channel.history()`로 확인 (`cogs/chat.py`의 `_should_skip`).
   카톡 메시지도 결국 같은 디스코드 채널의 메시지라서 별도 처리가 필요 없다.
 
+## Redroid 패키지 감시 알림
+- **감시/자동 삭제는 cron**이 한다: `scripts/redroid_check_packages.sh`가 15분마다 Redroid(192.168.0.50)의
+  서드파티 앱 목록을 확인하고 허용 목록(카카오톡, Uptodown)에 없는 앱을 지운다. 봇이 재시작되거나
+  죽어도 감시는 멈추지 않고, 봇에는 redroid 접속 권한이 없다.
+  ```
+  */15 * * * * /bin/bash /mnt/discord_bot_v2/scripts/redroid_check_packages.sh
+  ```
+- 스크립트는 **변동이 있을 때만** 결과를 `/mnt/redroid_watch/events.jsonl`에 JSON 한 줄로 추가한다
+  (같은 이유로 계속 실패하는 삭제는 처음 한 번만 기록).
+- **봇이 알린다**: `cogs/redroid_watch.py`가 1분마다 새 줄을 읽어서 LLM이 쓴 아메하나 말투 메시지로
+  `REDROID_NOTIFY_CHANNEL_ID` 채널에 올린다. 보안 알림이라 LLM 문장에 패키지 이름이 빠지면 정해진
+  문장 틀로 대신 보내고, 메시지 끝에는 실제 결과를 작은 글씨로 항상 붙인다. 봇이 꺼져 있던 동안의
+  결과는 켜진 뒤 순서대로 올린다.
+
 ## 이미지 생성
 - `ai/image_engine.py`가 단일 진입점 — 명령어(`cogs/image_gen.py`)와 자율대화가 이 함수 하나만 호출한다.
 - 백엔드는 AI Horde 하나만 사용.

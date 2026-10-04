@@ -70,3 +70,11 @@ VECTOR_DB_DIR = BASE_DIR / "storage" / "vector_db"
 NICKNAME_DETECT_DIR = BASE_DIR / "storage" / "nickname_detect"  # 기존 check_and_update_nickname.py와 동일 용도
 MONEY_DIR = BASE_DIR / "storage" / "money"
 MCP_SERVERS_CONFIG_PATH = BASE_DIR / "config" / "mcp_servers.yaml"
+
+# --- Redroid 패키지 감시 결과 알림 (cogs/redroid_watch.py) ---
+# 실제 감시/삭제는 cron의 scripts/redroid_check_packages.sh가 하고, 변동이 있을 때 이 파일에
+# 결과를 한 줄(JSON)씩 추가한다. 봇은 새 줄을 읽어서 아메하나 말투로 아래 채널에 알린다.
+# REDROID_NOTIFY_CHANNEL_ID를 빈 값으로 두면 이 기능을 끈다.
+REDROID_EVENTS_PATH = Path(os.environ.get("REDROID_EVENTS_PATH", "/mnt/redroid_watch/events.jsonl"))
+REDROID_NOTIFY_CHANNEL_ID = int(os.environ.get("REDROID_NOTIFY_CHANNEL_ID", "591180628842774554") or 0)
+REDROID_WATCH_STATE_PATH = BASE_DIR / "storage" / "redroid_watch_state.json"
