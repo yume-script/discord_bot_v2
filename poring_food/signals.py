@@ -203,6 +203,25 @@ def collect(include_factory: bool = True) -> dict:
     return signals
 
 
+# 포링푸드 내부 사정 - 포링푸드 직원이 아니면 알 수 없는 신호 (예: 카페 사장 소라는 공장 설비/생산 현황을 모른다)
+HOME_COMPANY = "포링푸드 (Poring Food)"
+INTERNAL_KEYS = ("factory", "facility", "production", "bookoasis", "security")
+
+
+def for_company(signals: dict, company: str) -> dict:
+    """그 회사 사람이 알 수 있는 신호만 남긴다. 회사/동네 사건도 그 회사 것과 동네 것만."""
+    out = dict(signals)
+    if company != HOME_COMPANY:
+        for k in INTERNAL_KEYS:
+            out.pop(k, None)
+    happened = world.today_lines(company)
+    if happened:
+        out["world"] = " / ".join(happened[-5:])
+    else:
+        out.pop("world", None)
+    return out
+
+
 def format_block(signals: dict) -> str:
     """프롬프트에 넣을 "바깥 세상 변화" 블록."""
     labels = {

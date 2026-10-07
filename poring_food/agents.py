@@ -166,7 +166,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
     parts += [
         "[최근 내 행동]\n" + ("\n".join(recent) or "- 없음"),
         f"[연락할 수 있는 사람(스스로 사는 사람들)] {others_line}",
-        signals.format_block(signals.collect(include_factory=False)),
+        signals.format_block(signals.for_company(signals.collect(include_factory=False), agent.get("company", ""))),
     ]
     return "\n\n".join(p for p in parts if p)
 
@@ -240,8 +240,13 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
     roster_ids = {c["name"]: c["id"] for c in characters.load_roster()}
     rel = rels.get(characters._rel_key(roster_ids.get(name, name), roster_ids.get(other["name"], other["name"])), {})
     lines = "\n".join(f"{t['speaker']}: {t['line']}" for t in transcript)
+    now = now_kst()
+    me = current(name) or {}
+    now_line = (f"[지금 나] 오늘은 {now.month}월 {now.day}일 {'월화수목금토일'[now.weekday()]}요일 {now.strftime('%H:%M')}. "
+                + (f"나는 지금 {me['location']}에서 {me['activity']} 중이다." if me else ""))
     user = (
         "\n\n".join(b for b in (
+            now_line,
             life.prompt_block(name),
             memory.prompt_block(name, [other["name"]], k=4),
             f"[{other['name']}와의 관계] 친밀도 {rel.get('affinity', 0)} / 최근: "
@@ -250,6 +255,8 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
         f"지금 {other['name']}와 {'메신저로' if how == '메신저' else place + '에서 직접'} 대화 중이다.\n"
         f"[지금까지 대화]\n{lines}\n\n"
         f"{name}로서 다음 한마디를 해라. 상대 속마음은 모른다 - 말과 분위기로만 짐작해라. "
+        "지금 하고 있는 일은 '지금' 일로 말하고, 기억 속 일은 날짜를 오늘과 비교해 오늘/어제/며칠 전을 정확히 말해라. "
+        "자기가 직접 겪거나 들은 적 없는 남의 회사 내부 사정은 아는 척하지 마라. "
         + ("이번이 마지막 말이니 자연스럽게 마무리해라. " if last_turn else "대화가 자연스럽게 끝날 때가 됐으면 end를 true로. ")
         + "\n반드시 JSON으로만 응답:\n"
         '{"say": "할 말(1~3문장)", "end": true/false, "affinity": -3~3 정수(이 대화로 상대에게 생긴 호감 변화), '
