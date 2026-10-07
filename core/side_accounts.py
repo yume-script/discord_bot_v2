@@ -7,7 +7,9 @@
 
 - 애순이(AESUN_BOT_TOKEN): 카톡 연동 채널의 애순이 답장, 포링푸드 일지/연재 드라마 장면 (cogs/chat.py,
   cogs/poring_food.py)
-- 소라(SORA_BOT_TOKEN): 지금은 맡은 일 없이 로그인만 해 둔다 (SORA_BOT_ACTIVITY로 상태 메시지만)
+- 소라(SORA_BOT_TOKEN): 포링푸드 두 번째 LLM 에이전트 - 에이전트끼리의 대화를 포링푸드 채널에 올린다
+- 그 밖의 계정: .env의 SIDE_BOT_KEYS에 키를 추가하면({KEY}_BOT_TOKEN, {KEY}_BOT_ACTIVITY) 같은 방식으로
+  늘어난다 (포링푸드 에이전트 최대 5명 - poring_food/data/agents.json의 "account"가 이 키)
 
 토큰이 없거나 로그인/전송에 실패하면 send()가 False를 돌려주고, 호출한 쪽은 아메하나 계정으로 보낸다.
 """
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 import discord
 
@@ -96,9 +99,30 @@ class SideAccount:
         return sent > 0
 
 
-aesun = SideAccount("애순이", settings.AESUN_BOT_TOKEN)
-sora = SideAccount("소라", settings.SORA_BOT_TOKEN, activity=settings.SORA_BOT_ACTIVITY)
-ALL = (aesun, sora)
+_DISPLAY_NAMES = {"aesun": "애순이", "sora": "소라"}
+
+
+def _build_accounts() -> dict[str, SideAccount]:
+    keys = [k.strip().lower() for k in settings.SIDE_BOT_KEYS.split(",") if k.strip()]
+    for must in ("aesun", "sora"):
+        if must not in keys:
+            keys.append(must)
+    accounts = {}
+    for key in keys:
+        token = os.environ.get(f"{key.upper()}_BOT_TOKEN", "")
+        activity = os.environ.get(f"{key.upper()}_BOT_ACTIVITY", "")
+        accounts[key] = SideAccount(_DISPLAY_NAMES.get(key, key), token, activity=activity)
+    return accounts
+
+
+ACCOUNTS = _build_accounts()
+aesun = ACCOUNTS["aesun"]
+sora = ACCOUNTS["sora"]
+ALL = tuple(ACCOUNTS.values())
+
+
+def get(key: str) -> SideAccount | None:
+    return ACCOUNTS.get((key or "").lower())
 
 
 async def start_all() -> None:
