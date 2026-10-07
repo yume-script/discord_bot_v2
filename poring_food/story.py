@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 import requests
 
 from .clock import now_kst
-from . import characters, signals
+from . import characters, life, memory, signals
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import API_URL, LITELLM_MASTER_KEY, LLM_MODEL, STATE_DIR
 
@@ -214,6 +214,32 @@ def _update_relationships(cast: list[dict], changes: list, summary: str, now: da
     characters.save_relationships(rels)
 
 
+def _apply_inner_changes(cast: list[dict], cast_keys: list[str], out: dict, summary: str) -> None:
+    """[신규] 장면이 각자의 상태(감정/체력)와 기억에 남긴 흔적을 반영한다. 출연진이 아닌 이름은 무시."""
+    by_key = {k: c for k, c in zip(cast_keys, cast)} | {c["name"]: c for c in cast}
+    names = [c["name"] for c in cast]
+    for ch in out.get("state_changes") or []:
+        c = by_key.get(str(ch.get("name", "")).strip()) if isinstance(ch, dict) else None
+        if not c:
+            continue
+        deltas = {k: v for k, v in ch.items() if k in life.LEVELS}
+        reason = str(ch.get("reason") or summary)
+        applied = life.apply_changes(c["name"], deltas, reason=reason, rank=c.get("rank", ""))
+        if applied:
+            print(f"[상태] {c['name']}: {reason} -> {applied}")
+    remembered = set()
+    for m in out.get("memories") or []:
+        c = by_key.get(str(m.get("name", "")).strip()) if isinstance(m, dict) else None
+        if not c or not m.get("text"):
+            continue
+        memory.remember(c["name"], m["text"], m.get("importance", 5), [n for n in names if n != c["name"]], "장면")
+        remembered.add(c["name"])
+    # LLM이 기억을 안 줬어도 출연진은 이 장면을 가볍게(중요도 3) 기억한다
+    for c in cast:
+        if c["name"] not in remembered:
+            memory.remember(c["name"], summary, 3, [n for n in names if n != c["name"]], "장면")
+
+
 def _format_scene(scene: dict, arc_title: str | None, kakao: bool) -> str:
     names = " × ".join(scene["participants"])
     header = f"🎬 [{scene['location']} · {scene['hour']:02d}:00] {names}"
@@ -251,6 +277,13 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
         for c in cast
     ]
     recent = [f"- {s.get('ts', '')[5:16].replace('T', ' ')} {s.get('summary', '')}" for s in _recent_scenes(5)]
+    # [신규] 출연진 각자의 지금 상태와, 함께 있는 사람/장소와 관련된 각자의 기억
+    inner = []
+    for c, k in zip(cast, cast_keys):
+        others = [x["name"] for x in cast if x is not c]
+        terms = others + [str(states.get(c["id"], {}).get("location", ""))] + ([arc.get("title", "")] if arc else [])
+        inner += [life.prompt_block(c["name"]), memory.prompt_block(c["name"], terms, k=3)]
+    inner_block = "\n\n".join(b for b in inner if b)
     arc_block = (
         f"[이번 장면이 이어갈 줄거리: {arc['title']}]\n전제: {arc.get('premise', '')}\n"
         f"지금까지: {arc.get('summary_so_far', '')}\n"
@@ -268,6 +301,7 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
         "등장인물 (이 사람들만 말할 수 있다):\n" + "\n".join(_cast_line(k, c) for k, c in zip(cast_keys, cast)) + "\n\n"
         "지금 위치/하는 일:\n" + "\n".join(whereabouts) + "\n\n"
         "이 사람들 사이의 지난 일:\n" + ("\n".join(_pair_memories(cast)) or "- 없음") + "\n\n"
+        + (f"{inner_block}\n\n" if inner_block else "") +
         f"[지난 이야기 요약]\n{data.get('previously') or '아직 없음'}\n\n"
         f"{arc_block}\n"
         "최근 다른 장면들:\n" + ("\n".join(recent) or "- 없음") + "\n\n"
@@ -278,12 +312,17 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
         "- 바깥 세상 변화 중 어울리는 게 있으면 인물들이 그걸 화제로 삼거나 그 영향을 받게 해라(전부 쓸 필요는 없다).\n"
         "- 지난 일을 기억하고 있는 티를 내라. 같은 대화를 반복하지 말고 관계가 조금씩 변하게 해라.\n"
         "- 'inner'(속마음)는 꼭 필요한 대사 1~2개에만 짧게.\n"
+        "- 각자의 지금 상태(피곤함, 돈 걱정, 설렘 등)가 대사와 반응에 묻어나게 하고, 각자의 기억을 아는 티를 내라.\n"
+        "- state_changes에는 이 장면으로 마음이 바뀐 사람만(-0.2~0.2), memories에는 각자가 오래 기억할 만한 일만 적어라.\n"
         "- 실존 인물/정치/혐오 소재는 쓰지 마라.\n"
         "반드시 JSON으로만 응답:\n"
         '{"location": "장소", "lines": [{"speaker": "등장인물 이름 그대로", "line": "대사", "inner": "속마음(선택)"}], '
         '"narration": "장면을 마무리하는 한 문장", "summary": "누가 무엇을 했는지 한 줄 요약", '
         '"arc_beat": "이 장면으로 줄거리가 어떻게 진전됐는지 한 줄(줄거리 장면이 아니면 빈 문자열)", '
-        '"relationship": [{"a": "이름", "b": "이름", "delta": -10~10 정수, "memory": "둘 사이에 남은 기억 한 줄"}]}'
+        '"relationship": [{"a": "이름", "b": "이름", "delta": -10~10 정수, "memory": "둘 사이에 남은 기억 한 줄"}], '
+        '"state_changes": [{"name": "이름", "reason": "왜 마음이 바뀌었는지 한 줄", '
+        '"happiness|stress|loneliness|anger|romance|confidence|energy|job_satisfaction": -0.2~0.2(바뀐 것만)}], '
+        '"memories": [{"name": "이름", "text": "그 사람 입장에서 오래 기억할 경험 한 줄", "importance": 1~10}]}'
     )
     out = _llm_json(system, user, temperature=0.9, timeout=SCENE_TIMEOUT_SEC)
     if not out:
@@ -331,6 +370,7 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
         _save_json(ARCS_PATH, data)
 
     _update_relationships(cast, out.get("relationship") or [], summary, now)
+    _apply_inner_changes(cast, cast_keys, out, summary)
     for c, k in zip(cast, cast_keys):
         others = ", ".join(x for x in cast_keys if x != k)
         characters.append_character_history(c["name"], {

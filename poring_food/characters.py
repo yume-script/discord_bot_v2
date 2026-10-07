@@ -21,6 +21,7 @@ import os
 import random
 import requests
 
+from . import life
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import (
@@ -46,6 +47,7 @@ GENERIC_PERSONAL_ACTIVITIES = [
     ("소개팅 장소", "소개팅/데이트", 1),
     ("쇼핑몰", "쇼핑", 1),
     ("친구 집", "친구 모임", 1),
+    ("포장마차", "퇴근 후 술 한잔", 1),
 ]
 
 
@@ -64,8 +66,8 @@ def _weighted_choice(rnd: random.Random, candidates):
 # ============================================================= 로스터 로딩
 def _make_id(company: str, name: str) -> str:
     """
-    조직도에 이름이 겹치는 인물이 있을 수 있어서(실제로 "미믹"이 포링푸드/에린 로지스틱스
-    양쪽에 다 있음) 내부 키는 회사+이름 조합으로 만든다 - 이름만 쓰면 한쪽이 조용히
+    조직도에 이름이 겹치는 인물이 있을 수 있어서(예전엔 "미믹"이 포링푸드/에린 로지스틱스
+    양쪽에 다 있었음) 내부 키는 회사+이름 조합으로 만든다 - 이름만 쓰면 한쪽이 조용히
     덮어써져서 사라지는 버그가 생긴다. 사람이 보는 텍스트(이야기/알림)에는 그대로 이름만 쓴다.
     """
     return f"{company}|{name}"
@@ -104,7 +106,7 @@ def roster_by_id(roster: list[dict]) -> dict[str, dict]:
 
 
 # ============================================================= 개별 스케줄 (LLM 없이, 가벼움)
-def get_generic_schedule(character: dict, rnd: random.Random) -> tuple[str, str, str]:
+def get_generic_schedule(character: dict, rnd: random.Random, life_state: dict | None = None) -> tuple[str, str, str]:
     """
     애순이를 제외한 인물들의 스케줄. (location, activity, state)를 반환.
     업무 시간엔 그 인물의 key_behavior(조직도에 있는, 콤마로 구분된 2~3개 행동) 중
@@ -126,7 +128,11 @@ def get_generic_schedule(character: dict, rnd: random.Random) -> tuple[str, str,
         workplace = f"{character.get('company', '회사')} 사무실"
         return workplace, act, "일하는 중"
 
-    loc, act = _weighted_choice(rnd, GENERIC_PERSONAL_ACTIVITIES)
+    # [변경] 개인 시간 활동은 그 사람의 지금 상태(life.py)로 가중치를 조정한다 (스트레스↑ → 술자리 등)
+    candidates = GENERIC_PERSONAL_ACTIVITIES
+    if life_state:
+        candidates = [(loc, act, life.bias_weight(life_state, f"{loc} {act}", w)) for loc, act, w in candidates]
+    loc, act = _weighted_choice(rnd, candidates)
     return loc, act, "개인시간"
 
 
@@ -156,6 +162,7 @@ def update_all_states(roster: list[dict], rnd: random.Random, aesun_state: dict 
     """
     states = {}
     now_iso = now_kst().isoformat()
+    life_states = life.load_all()
 
     for character in roster:
         cid = character["id"]
@@ -165,7 +172,7 @@ def update_all_states(roster: list[dict], rnd: random.Random, aesun_state: dict 
                 "company": character["company"], "dept": character["dept"],
             }
             continue
-        loc, act, state = get_generic_schedule(character, rnd)
+        loc, act, state = get_generic_schedule(character, rnd, life_states.get(character["name"]))
         states[cid] = {
             "name": character["name"],
             "location": loc,

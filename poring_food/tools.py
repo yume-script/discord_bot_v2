@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 
 from langchain_core.tools import StructuredTool
 
+from . import life
 from .clock import now_kst
 from .config import STATUS_OUT_PATH, HISTORY_LOG_PATH, CHARACTERS_STATE_PATH, ORGANIZATION_GLOB, BOOKOASIS_STATE_PATH
 from .bookoasis import DB_TYPE_LABELS
@@ -49,7 +50,7 @@ def _load_characters_state() -> dict:
 
 
 def _find_state_by_name(name: str) -> list[tuple[str, dict]]:
-    """이름으로 상태를 찾는다. 이름이 겹치는 인물(예: 미믹)이 있으면 여러 개가 나올 수 있다."""
+    """이름으로 상태를 찾는다. 이름이 겹치는 인물(회사가 다른 동명이인)이 있으면 여러 개가 나올 수 있다."""
     states = _load_characters_state()
     return [(cid, info) for cid, info in states.items() if info.get("name") == name]
 
@@ -86,6 +87,7 @@ def get_current_status(character: str = "애순이") -> str:
             parts.append(f"(상태: {data['state']})")
         if data.get("mood"):
             parts.append(f"오늘 기분: {data['mood']}.")
+        parts.append(f"(지금 컨디션: {life.describe('애순이')})")
         narrative = data.get("narrative") or data.get("full_report")
         if narrative:
             parts.append(str(narrative))
@@ -109,6 +111,7 @@ def get_current_status(character: str = "애순이") -> str:
         parts.append(f"{info['activity']} 중이에요.")
     if info.get("state"):
         parts.append(f"(상태: {info['state']})")
+    parts.append(f"(지금 컨디션: {life.describe(character)})")
     narrative = info.get("narrative")
     if narrative:
         parts.append(str(narrative))
@@ -238,7 +241,7 @@ def get_all_characters_status() -> str:
 def get_character_story(character: str) -> str:
     """
     [신규] 스포트라이트(매시 1명 방송) 순서가 안 돌아온 인물이 지금 뭘 하고 있는지, 그 사람
-    시점의 짧은 이야기를 그 자리에서 즉석으로 만들어 알려준다. "오크히어로 오늘 뭐해?"처럼
+    시점의 짧은 이야기를 그 자리에서 즉석으로 만들어 알려준다. "오상식 부장 오늘 뭐해?"처럼
     누군가의 근황이 궁금할 때 쓴다. 애순이는 get_current_status("애순이")가 이미 상세하게
     답하니 이 도구는 애순이 외의 인물에 쓴다. 같은 시간대 안에서는 캐시된 결과를 재사용해서
     똑같은 사람을 여러 번 물어봐도 LLM을 다시 호출하지 않는다.
@@ -326,7 +329,7 @@ def get_bookoasis_report() -> str:
 def get_poring_story(character: str = "") -> str:
     """
     포링푸드 연재 드라마의 줄거리를 알려준다 - 지난 이야기 요약, 진행 중인 사건들(등장인물/지금까지/
-    다음 전개), 최근 하루 요약, 최근 대화 장면. "포링푸드 요즘 무슨 일 있어?", "에드가랑 애순이
+    다음 전개), 최근 하루 요약, 최근 대화 장면. "포링푸드 요즘 무슨 일 있어?", "김동식이랑 애순이
     무슨 사이야?", "어제 회사에서 무슨 일 있었어?" 같은 질문에 쓴다. character를 주면 그 인물이
     나온 장면 위주로 보여준다.
     """
