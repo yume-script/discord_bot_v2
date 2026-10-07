@@ -27,6 +27,7 @@ from langchain_core.tools import StructuredTool
 from .config import STATUS_OUT_PATH, HISTORY_LOG_PATH, CHARACTERS_STATE_PATH, ORGANIZATION_GLOB, BOOKOASIS_STATE_PATH
 from .bookoasis import DB_TYPE_LABELS
 from . import characters
+from . import story
 from . import processor
 from . import generator
 
@@ -315,6 +316,16 @@ def get_bookoasis_report() -> str:
     return "\n".join(lines)
 
 
+def get_poring_story(character: str = "") -> str:
+    """
+    포링푸드 연재 드라마의 줄거리를 알려준다 - 지난 이야기 요약, 진행 중인 사건들(등장인물/지금까지/
+    다음 전개), 최근 하루 요약, 최근 대화 장면. "포링푸드 요즘 무슨 일 있어?", "에드가랑 애순이
+    무슨 사이야?", "어제 회사에서 무슨 일 있었어?" 같은 질문에 쓴다. character를 주면 그 인물이
+    나온 장면 위주로 보여준다.
+    """
+    return story.story_so_far(character)
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -334,5 +345,6 @@ PORING_FOOD_TOOLS = [
         get_all_characters_status,
         get_character_story,
         get_bookoasis_report,
+        get_poring_story,
     )
 ]
