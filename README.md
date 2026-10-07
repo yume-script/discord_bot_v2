@@ -109,6 +109,9 @@ python app.py
 - 토큰이 없거나 로그인/전송이 실패하면(채널 미초대 등 403) 예전처럼 아메하나 계정으로 보낸다.
 - 애순이 봇 초대 권한: View Channel / Send Messages / Send Messages in Threads / Read Message History
   (카톡 연동 채널이 스레드면 그 스레드에도 접근할 수 있어야 한다).
+- 비공개 채널 권한: `venv/bin/python scripts/grant_channel_access.py` - 봇마다 서버/채널 접근을 진단하고, 서버에 없는 봇은
+  초대 링크를 출력(초대 승인은 서버 관리자가 직접), 서버엔 있는데 채널이 안 보이는 봇은 권한 관리가 있는 봇이 채널 권한에
+  추가(보기/보내기/기록 보기). `--check`는 진단만.
 - 소라(`SORA_BOT_TOKEN`)는 지금 맡은 일 없이 로그인만 해 둔다(온라인 표시, `SORA_BOT_ACTIVITY`로 상태 메시지).
   나중에 일을 맡길 땐 `side_accounts.sora.send(...)`를 쓰면 된다.
 
