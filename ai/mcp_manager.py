@@ -20,13 +20,16 @@ log = logging.getLogger("mcp_manager")
 
 # 서버 하나가 응답 없이 멈추면(ssh 대상 다운, docker exec 행 등) setup_hook 전체가 막혀서
 # 봇이 로그인조차 못 한다 - 서버별로 이 시간 안에 도구 목록을 못 받으면 그 서버만 건너뛴다.
-MCP_CONNECT_TIMEOUT_SEC = 30
+# SSH로 붙는 서버(bookoasis 등)는 부팅 직후 느릴 수 있어서 .env로 늘릴 수 있게 한다
+MCP_CONNECT_TIMEOUT_SEC = int(os.environ.get("MCP_CONNECT_TIMEOUT_SEC", "30"))
 
 _client: list[MultiServerMCPClient] | None = None
 _tools: list = []
 _admin_only_tools: set[str] = set()  # admin_only: true 서버에서 온 도구 이름 (개명 후 이름)
 _tools_by_server: dict[str, list] = {}  # 서버 이름 -> 그 서버의 도구들 (poring_food/bookoasis.py가 사용)
 _clients_by_server: dict[str, MultiServerMCPClient] = {}  # 서버 이름 -> 연결 설정이 들어 있는 클라이언트
+# 부팅 때 도구 목록을 못 받은 서버도 설정은 남겨 둔다 - server_session()이 필요할 때 다시 붙는다
+_configs_by_server: dict[str, dict] = {}
 
 _ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -80,7 +83,7 @@ async def init_mcp() -> list:
     "{서버이름}_{도구이름}"으로 자동 개명해서 충돌을 피한다. 서버 하나가 실패해도
     그 서버만 건너뛰고 나머지는 정상 연결된다.
     """
-    global _client, _tools, _admin_only_tools, _tools_by_server, _clients_by_server
+    global _client, _tools, _admin_only_tools, _tools_by_server, _clients_by_server, _configs_by_server
 
     if not settings.MCP_SERVERS_CONFIG_PATH.exists():
         _tools = []
@@ -106,6 +109,7 @@ async def init_mcp() -> list:
     admin_only_tools: set[str] = set()
     tools_by_server: dict[str, list] = {}
     clients_by_server: dict[str, MultiServerMCPClient] = {}
+    configs_by_server: dict[str, dict] = {}
 
     for server_name, raw_cfg in server_config.items():
         try:
@@ -113,6 +117,7 @@ async def init_mcp() -> list:
         except MissingEnvError as exc:
             log.error(f"MCP 서버 '{server_name}' 설정의 환경변수 {exc}가 .env에 없음 - 이 서버만 건너뛴다.")
             continue
+        configs_by_server[server_name] = cfg
         try:
             client = MultiServerMCPClient({server_name: cfg})
             server_tools = await asyncio.wait_for(client.get_tools(), timeout=MCP_CONNECT_TIMEOUT_SEC)
@@ -153,6 +158,7 @@ async def init_mcp() -> list:
     _admin_only_tools = admin_only_tools
     _tools_by_server = tools_by_server
     _clients_by_server = clients_by_server
+    _configs_by_server = configs_by_server
     if admin_only_tools:
         log.info("관리자 전용 MCP 도구: %s", sorted(admin_only_tools))
     return _tools
@@ -174,10 +180,17 @@ def server_session(server_name: str):
     get_tools()로 받은 LangChain 도구는 호출할 때마다 서버를 새로 띄운다(stdio면 매번 프로세스
     실행 - bookoasis는 매번 SSH + docker exec). 한 번에 여러 개를 부를 땐 이 세션을 쓰는 게
     훨씬 빠르다. 도구 이름은 서버가 정한 원래 이름(개명 전)이다.
+
+    [변경] 부팅 때 연결이 실패/타임아웃된 서버(예: SSH가 늦게 붙은 bookoasis)는 예전엔 봇을 재시작할
+    때까지 계속 "연결되어 있지 않음"이었다. 세션은 열 때마다 새로 붙으므로, 설정만 있으면 여기서 다시
+    시도한다 (대화용 도구 목록에는 재시작 전까지 안 들어가지만 포링푸드 같은 세션 사용처는 살아난다).
     """
     client = _clients_by_server.get(server_name)
     if client is None:
-        raise RuntimeError(f"MCP 서버 '{server_name}'가 연결되어 있지 않음")
+        cfg = _configs_by_server.get(server_name)
+        if cfg is None:
+            raise RuntimeError(f"MCP 서버 '{server_name}'가 연결되어 있지 않음 (설정 없음 또는 .env 누락)")
+        client = MultiServerMCPClient({server_name: cfg})
     return client.session(server_name)
 
 

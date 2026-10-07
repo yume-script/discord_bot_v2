@@ -3,8 +3,8 @@
 
 | 이야기 지표          | 실제 데이터                                   | 가져오는 곳                          |
 |---------------------|----------------------------------------------|-------------------------------------|
-| 생산량(신규 입고)     | 오늘 Plex 신규 등록 + 북오아시스 신간(시리즈)    | plex get_recently_added,            |
-|                     |                                              | bookoasis search_books(date_desc)   |
+| 생산량(신규 입고)     | 오늘 Plex 신규 등록 + 북오아시스 신규 권 수      | plex get_recently_added,            |
+|                     | (서재별 전체 권 수 - 어제 마지막 전체 권 수)     | bookoasis get_library_stats         |
 | 판매량(출하)         | 오늘 Plex 재생 수, 지금 시청 중인 수(매장 손님)  | tautulli plays_by_date / activity   |
 | 주문·고객 문의        | 오늘 사람이 봇에게 보낸 메시지 수               | 대화 로그 DB (예전 "생산량")         |
 
@@ -38,7 +38,6 @@ METRICS_PATH = os.path.join(STATE_DIR, "metrics.json")
 PLEX_SERVER = os.getenv("PORING_PLEX_MCP_SERVER", "plex")
 TAUTULLI_SERVER = os.getenv("PORING_TAUTULLI_MCP_SERVER", "tautulli")
 PLEX_FETCH_LIMIT = int(os.getenv("PORING_PLEX_FETCH_LIMIT", "50"))
-BOOK_FETCH_LIMIT = int(os.getenv("PORING_BOOK_FETCH_LIMIT", "30"))
 # 최근 7일 기록이 아직 없을 때 쓰는 하루 생산 목표
 DEFAULT_PRODUCTION_TARGET = float(os.getenv("PORING_PRODUCTION_DEFAULT_TARGET", "5"))
 AVG_DAYS = 7
@@ -70,6 +69,8 @@ def _past_days(today: str) -> list[str]:
 
 
 # ---------------------------------------------------------------- 생산 (Plex + 북오아시스)
+# Plex는 최근 등록 목록을 날짜별로 센다. 북오아시스는 서재별 전체 권 수(get_library_stats)를
+# 매시 기록해 두고 "지금 - 어제 마지막 값"으로 센다 (시리즈 수가 아니라 권 수).
 
 def daily_counts(dates: list[str], fetched_full: bool) -> tuple[dict, str]:
     """
@@ -106,24 +107,35 @@ async def _plex_async() -> tuple[dict, str]:
     return daily_counts(dates, fetched_full=len(items) >= PLEX_FETCH_LIMIT)
 
 
-async def _books_async() -> tuple[dict, str]:
+async def _books_async() -> dict:
+    """서재별 전체 도서(권) 수 {db_type: total_book_count}. 시리즈 수가 아니라 권 수다."""
     from ai.mcp_manager import server_session
-    total: dict[str, int] = {}
-    complete_from = "0000-00-00"
+    totals: dict[str, int] = {}
     async with server_session(BOOKOASIS_MCP_SERVER) as session:
         for db_type in BOOKOASIS_STORY_DB_TYPES:
-            res = await session.call_tool(
-                "search_books", {"db_type": db_type, "sort": "date_desc", "limit": BOOK_FETCH_LIMIT}
-            )
+            res = await session.call_tool("get_library_stats", {"db_type": db_type})
             if getattr(res, "isError", False):
                 continue
-            series = _parse_tool_result(res).get("series", []) or []
-            dates = [str(s.get("latest_added", ""))[:10] for s in series if s.get("latest_added")]
-            counts, frm = daily_counts(dates, fetched_full=len(series) >= BOOK_FETCH_LIMIT)
-            for d, n in counts.items():
-                total[d] = total.get(d, 0) + n
-            complete_from = max(complete_from, frm)
-    return total, complete_from
+            total = _parse_tool_result(res).get("total_book_count")
+            if isinstance(total, int):
+                totals[db_type] = total
+    if not totals:
+        raise RuntimeError("get_library_stats에서 total_book_count를 못 받음")
+    return totals
+
+
+def _books_today(totals: dict, book_totals: dict, today: str) -> int:
+    """
+    오늘 입고된 권 수 = 지금 전체 권 수 - 기준값. 기준값은 어제(이전 기록일)의 마지막 전체 권 수이고,
+    기록이 없는 첫날엔 오늘 처음 잰 값이다 (그날은 처음 잰 뒤로 들어온 것만 센다).
+    삭제로 줄어든 서재는 0으로 본다.
+    """
+    prev_days = sorted(d for d in book_totals if not d.startswith("_") and d < today)
+    if prev_days:
+        base = book_totals[prev_days[-1]]
+    else:
+        base = book_totals.get("_first_" + today) or totals
+    return sum(max(0, n - base.get(db, n)) for db, n in totals.items())
 
 
 # ---------------------------------------------------------------- 판매 (Tautulli)
@@ -226,9 +238,21 @@ def refresh() -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[경고] 생산 지표 조회 실패: {_root_cause(e)!r}")
 
+    # 북오아시스: 서재별 전체 권 수 기록 {날짜: {db_type: 그날 마지막 전체 권 수}}
+    past = _past_days(today)
+    book_totals = {d: v for d, v in prev.get("book_totals", {}).items()
+                   if d.removeprefix("_first_") >= past[-1]}
+    if "books" in fetched:
+        totals = fetched["books"]
+        book_totals.setdefault("_first_" + today, totals)
+        count = _books_today(totals, book_totals, today)
+        book_totals[today] = totals
+        # 아래 공통 처리에 맞춰 {날짜: 개수} 형태로 - 지난 날짜 값은 history에 쌓아 둔 걸 쓴다
+        fetched["books"] = ({today: count}, today)
+    data["book_totals"] = book_totals
+
     # 생산: Plex + 북오아시스. 못 받은 쪽은 오늘 직전 값 유지.
     parts = {}
-    past = _past_days(today)
     for key in ("plex", "books"):
         if key in fetched:
             counts, complete_from = fetched[key]
@@ -279,7 +303,7 @@ def _today() -> dict:
     return data if data.get("date") == datetime.now(KST).strftime("%Y-%m-%d") else {}
 
 
-_PART_LABELS = {"plex": "영상", "books": "자료실 신간"}
+_PART_LABELS = {"plex": "영상", "books": "자료실 신간(권)"}
 
 
 def production() -> tuple[int, float]:
