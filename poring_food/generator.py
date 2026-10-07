@@ -4,6 +4,7 @@ import random
 import requests
 from datetime import datetime
 
+from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import API_URL, LITELLM_MASTER_KEY, LLM_MODEL
 from . import processor
 

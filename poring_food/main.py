@@ -2,6 +2,7 @@ import os
 import random
 from datetime import datetime
 
+from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from . import bookoasis
 from . import loader
 from . import processor

@@ -5,6 +5,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import (
     API_URL, LITELLM_MASTER_KEY, LLM_MODEL, SEARCH_MODEL, DISCORD_BOT_V2_DB_PATH, ISSUE_LOG_PATH, RIVALS_PATH,
 )
