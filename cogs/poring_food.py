@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from urllib.parse import parse_qs, urlparse
 from datetime import time as dtime, timedelta, timezone
 
 import discord
@@ -39,6 +40,8 @@ class PoringFood(commands.Cog):
         self._lock = asyncio.Lock()
         self._webhook: discord.Webhook | None = None
         self._webhook_retry_at = 0.0
+        # 에이전트 채널이 스레드면 웹훅은 부모 채널 것이고, 보낼 때마다 이 스레드를 지정해야 한다
+        self._webhook_thread: discord.Object | None = None
 
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
@@ -83,8 +86,9 @@ class PoringFood(commands.Cog):
         hook = await self._agent_webhook()
         if hook is not None:
             try:
+                kwargs = {"thread": self._webhook_thread} if self._webhook_thread else {}
                 await hook.send(text[:DISCORD_LIMIT], username=name[:80], avatar_url=avatar_url or None,
-                                allowed_mentions=discord.AllowedMentions.none())
+                                allowed_mentions=discord.AllowedMentions.none(), **kwargs)
                 return
             except discord.HTTPException as exc:
                 log.warning("에이전트 웹훅 전송 실패 (%s) - 아메하나가 대신 올림: %s", name, exc)
@@ -96,11 +100,21 @@ class PoringFood(commands.Cog):
         """
         봇 토큰 없는 에이전트용 채널 웹훅. .env의 PORING_AGENT_WEBHOOK_URL이 있으면 그걸, 없으면 카제 봇 ->
         아메하나 순으로 채널의 기존 웹훅을 찾거나 만든다("웹후크 관리" 권한 필요). 실패하면 1시간 뒤 다시 시도.
+
+        [수정] 에이전트 채널이 스레드일 때: 웹훅은 스레드가 아니라 부모 채널에 속해서, 보낼 때 thread를
+        지정하지 않으면 부모 채널로 간다(애순이는 봇 계정이라 스레드에, 웹훅 인물은 부모 채널에 올라가던 문제).
+        URL 끝의 ?thread_id=는 discord.py가 버리므로 직접 읽고, 없으면 에이전트 채널이 스레드인지 확인한다.
         """
         if self._webhook is not None:
             return self._webhook
         if settings.PORING_AGENT_WEBHOOK_URL:
-            self._webhook = discord.Webhook.from_url(settings.PORING_AGENT_WEBHOOK_URL, client=self.bot)
+            url = settings.PORING_AGENT_WEBHOOK_URL
+            thread_id = parse_qs(urlparse(url).query).get("thread_id", [""])[0]
+            self._webhook = discord.Webhook.from_url(url.split("?", 1)[0], client=self.bot)
+            if thread_id.isdigit():
+                self._webhook_thread = discord.Object(id=int(thread_id))
+            else:
+                await self._detect_agent_thread()
             return self._webhook
         if time.monotonic() < self._webhook_retry_at:
             return None
@@ -111,6 +125,9 @@ class PoringFood(commands.Cog):
             try:
                 ch_id = settings.PORING_AGENT_CHANNEL_ID
                 channel = client.get_channel(ch_id) or await client.fetch_channel(ch_id)
+                if isinstance(channel, discord.Thread):  # 스레드엔 웹훅을 못 만든다 - 부모 채널 웹훅 + 스레드 지정
+                    self._webhook_thread = discord.Object(id=channel.id)
+                    channel = channel.parent or await client.fetch_channel(channel.parent_id)
                 hooks = await channel.webhooks()
                 hook = next((h for h in hooks if h.name == AGENT_WEBHOOK_NAME and h.token), None)
                 if hook is None:
@@ -124,6 +141,16 @@ class PoringFood(commands.Cog):
         log.warning("에이전트 웹훅을 못 만들었다 - 카제/아메하나에 채널 '웹후크 관리' 권한을 주거나 "
                     "PORING_AGENT_WEBHOOK_URL을 넣어라. 그때까지는 아메하나가 이름을 붙여 대신 올린다.")
         return None
+
+    async def _detect_agent_thread(self) -> None:
+        """에이전트 채널이 스레드면 웹훅을 보낼 때 지정할 스레드로 기억한다."""
+        try:
+            ch_id = settings.PORING_AGENT_CHANNEL_ID
+            channel = self.bot.get_channel(ch_id) or await self.bot.fetch_channel(ch_id)
+        except discord.HTTPException:
+            return
+        if isinstance(channel, discord.Thread):
+            self._webhook_thread = discord.Object(id=channel.id)
 
     async def _run_once(self) -> bool:
         """한 회차 실행. 이미 도는 중이면 False."""

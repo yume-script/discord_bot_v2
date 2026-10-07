@@ -229,10 +229,18 @@ def get_aesun_detailed_schedule():
         is_saturday = (weekday == 5)
         fatigue_label = " (토요일 특근으로 분노 상승)" if is_saturday else ""
 
-        if 6 <= hour < 8:
-            return "출근 버스 안", f"지옥의 출근길{fatigue_label}", "졸면서 단톡방 확인, 저녁 버스 파티 미리 구걸", "이동 중", False
+        # [변경] 출퇴근이 6~8시/19~21시 두 시간씩 걸쳐 있어서 매시 일지가 두 번 연속 "출근 버스",
+        # "퇴근길"로 나왔다. 실제 시각을 정해 출퇴근은 한 시간대에만 나오게 한다:
+        # 06:30 기상 → 07:30 출근 버스 → 08:20 도착, 08:30 업무 시작 → 12~13시 점심 →
+        # 18:30 퇴근 버스 → 19:20 귀가
+        if hour == 6:
+            return "집", "06:30 기상 - 씻고 출근 준비", "알람 다섯 번 끄고 겨우 일어남, 눈이 안 떠짐", "휴식 중", False
+        elif hour == 7:
+            return ("출근 버스 안", f"07:30 출근 버스 탑승 (08:20 회사 도착 예정){fatigue_label}",
+                    "졸면서 단톡방 확인, 저녁 버스 파티 미리 구걸", "이동 중", False)
         elif 8 <= hour < 12:
-            return "회사(사무실/현장)", "오전 업무 수행 중", "상사 눈 피해 스마트폰 뒤집어놓고 몰래 자사 확인", "일하는 중", False
+            act = "08:30 업무 시작 - 오전 업무" if hour == 8 else "오전 업무 수행 중"
+            return "회사(사무실/현장)", act, "상사 눈 피해 스마트폰 뒤집어놓고 몰래 자사 확인", "일하는 중", False
         elif 12 <= hour < 13:
             loc, act, focus, state = _weighted_choice(rnd, [
                 ("회사 식당", "점심 빨리 먹고 구석에서 레이드", "밥 먹으면서도 채팅창에서 숙제 파티 탐색", "게임 중", 3),
@@ -241,10 +249,13 @@ def get_aesun_detailed_schedule():
                 ("회사 옥상", "잠깐 혼자만의 낮잠", "5분만 자려다 15분 자버림", "휴식 중", 1),
             ])
             return loc, act, focus, state, False
-        elif 13 <= hour < 19:
+        elif 13 <= hour < 18:
             return "회사(생산 현장)", f"오후 업무 진행 중{fatigue_label}", "체력 방전, 그냥 퇴근하고 싶음", "일하는 중", False
-        elif 19 <= hour < 21:
-            return "퇴근길 버스 안", "기력을 짜낸 길드 채팅", "집 도착 시각 계산하며 버스 예약", "이동 중", False
+        elif hour == 18:
+            return ("퇴근 버스 안", "18:30 업무 마무리하고 퇴근 버스 탑승 (19:20 집 도착 예정)",
+                    "기력을 짜낸 길드 채팅, 집 도착 시각 계산", "이동 중", False)
+        elif hour == 19:
+            return "집", "19:20 귀가 - 저녁 먹고 씻기", "현관 들어서자마자 소파에 녹아내림", "휴식 중", False
         else:
             loc, act, focus, state = _weighted_choice(rnd, [
                 ("집(침대/컴퓨터 앞)", "본격적인 버스 탑승 및 채팅", "고수님들 뒤졸졸 따라다니며 숙제 완료", "게임 중", 4),
@@ -444,8 +455,8 @@ def get_time_tag():
         return "[토요일/지옥특근]"
     if 2 <= hour < 6:
         return "[심야/취침중]"
-    elif 6 <= hour < 9:
+    elif hour in (6, 7):
         return "[오전/출근길]"
-    elif 19 <= hour < 21:
+    elif hour in (18, 19):
         return "[저녁/퇴근길]"
     return "[평일/업무/게임]"
