@@ -82,7 +82,7 @@ def daily_counts(dates: list[str], fetched_full: bool) -> tuple[dict, str]:
         counts[d] = counts.get(d, 0) + 1
     if not dates:
         return counts, "0000-00-00"
-    oldest = min(dates)
+    oldest = min(dates)  # 전부 오늘 것으로 꽉 찼으면 complete_from이 내일이 된다 (=지난 날짜는 하나도 모름)
     if fetched_full:
         # oldest 날짜는 잘렸을 수 있다 -> 그 다음 날부터 완전
         nxt = (datetime.strptime(oldest, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -212,7 +212,11 @@ def refresh() -> None:
     prev = _load()
     same_day = prev.get("date") == today
     data = {"date": today, "at": datetime.now(KST).isoformat()}
+    # 부문별 날짜별 생산 기록 {"plex": {날짜: 개수}, "books": {...}} - 받아온 목록만으로 지난 7일을
+    # 다 못 덮는 날(신간이 한꺼번에 들어와 한도가 오늘 것으로 꽉 찬 날)의 평균을 여기서 낸다.
     history = prev.get("production_history", {})
+    if not all(isinstance(v, dict) for v in history.values()):
+        history = {}  # 예전 형식({날짜: 합계})은 부문을 몰라 버린다
 
     fetched = {}
     if runtime.is_bound():
@@ -224,25 +228,31 @@ def refresh() -> None:
 
     # 생산: Plex + 북오아시스. 못 받은 쪽은 오늘 직전 값 유지.
     parts = {}
+    past = _past_days(today)
     for key in ("plex", "books"):
         if key in fetched:
             counts, complete_from = fetched[key]
-            parts[key] = {"today": counts.get(today, 0), "avg": _avg(counts, today, complete_from)}
+            # 받아온 게 전부 오늘 것이면 한도에 걸린 것 - 오늘 실제 개수는 이보다 많을 수 있다
+            saturated = complete_from > today
+            part_hist = history.setdefault(key, {})
+            for d in past:  # 받아온 목록이 완전하게 덮는 지난 날짜는 기록을 실측값으로 맞춘다
+                if d >= complete_from:
+                    part_hist[d] = counts.get(d, 0)
+            part_hist[today] = counts.get(today, 0)
+            avg = _avg(counts, today, complete_from)
+            if avg is None:
+                recorded = [part_hist[d] for d in past if d in part_hist]
+                avg = round(sum(recorded) / len(recorded), 1) if recorded else None
+            parts[key] = {"today": counts.get(today, 0), "avg": avg, "saturated": saturated}
         elif same_day and key in prev.get("production", {}).get("parts", {}):
             parts[key] = prev["production"]["parts"][key]
     if parts:
-        count = sum(p["today"] for p in parts.values())
-        history[today] = count
-        avgs = [p["avg"] for p in parts.values() if p.get("avg") is not None]
-        if len(avgs) == len(parts):
-            avg = round(sum(avgs), 1)
-        else:  # 받아온 목록만으로 지난 7일을 다 못 덮으면 그동안 기록해 둔 값으로
-            recorded = [n for d, n in history.items() if d in _past_days(today)]
-            avg = round(sum(recorded) / len(recorded), 1) if recorded else None
-        data["production"] = {"today": count, "avg": avg, "parts": parts}
+        data["production"] = {"today": sum(p["today"] for p in parts.values()), "parts": parts}
     elif same_day and "production" in prev:
         data["production"] = prev["production"]
-    data["production_history"] = {d: n for d, n in history.items() if d >= _past_days(today)[-1]}
+    data["production_history"] = {
+        k: {d: n for d, n in v.items() if d >= past[-1]} for k, v in history.items()
+    }
 
     # 판매: Tautulli
     if "tautulli" in fetched:
@@ -269,12 +279,41 @@ def _today() -> dict:
     return data if data.get("date") == datetime.now(KST).strftime("%Y-%m-%d") else {}
 
 
+_PART_LABELS = {"plex": "영상", "books": "자료실 신간"}
+
+
 def production() -> tuple[int, float]:
-    """(오늘 생산량, 최근 7일 하루 평균 대비 %)."""
+    """
+    (오늘 생산량, 평소 하루 생산량 대비 %). %는 평균을 아는 부문끼리만 비교한다 - 평균을 모르는
+    부문까지 기본 목표로 나누면 신간이 한꺼번에 들어온 날 840% 같은 숫자가 나온다.
+    """
     p = _today().get("production", {})
+    parts = p.get("parts", {})
     count = int(p.get("today", 0))
-    target = p.get("avg") or DEFAULT_PRODUCTION_TARGET
-    return count, round(count / target * 100, 1) if target else 0.0
+    known = [x for x in parts.values() if x.get("avg")]
+    if known:
+        pct = round(sum(x["today"] for x in known) / sum(x["avg"] for x in known) * 100, 1)
+    else:
+        pct = round(count / DEFAULT_PRODUCTION_TARGET * 100, 1) if DEFAULT_PRODUCTION_TARGET else 0.0
+    if any(x.get("saturated") for x in parts.values()):
+        # 받아온 한도가 전부 오늘 것 = 하루치로는 평소보다 확실히 많이 들어온 날
+        pct = max(pct, 200.0)
+    return count, pct
+
+
+def _production_line(p: dict) -> str:
+    parts = p.get("parts", {})
+    more = "+" if any(x.get("saturated") for x in parts.values()) else ""
+    details = []
+    for key, x in parts.items():
+        d = f"{_PART_LABELS.get(key, key)} {x['today']}건{'+' if x.get('saturated') else ''}"
+        if x.get("avg") is not None:
+            extra = [f"최근 7일 하루 평균 {x['avg']:g}건", "" if x.get("saturated") else pace(x["today"], x["avg"])]
+            d += f" ({', '.join(e for e in extra if e)})"
+        if x.get("saturated"):
+            d += " - 오늘 한꺼번에 대량 입고"
+        details.append(d)
+    return f"생산(신규 입고) {p.get('today', 0)}건{more}: " + ", ".join(details)
 
 
 def sales() -> int:
@@ -303,7 +342,9 @@ def describe() -> str:
     """이야기용 한 줄. 집계된 게 없으면 빈 문자열."""
     data = _today()
     parts = []
-    for key, label in (("production", "생산(신규 입고)"), ("sales", "출하(판매)"), ("orders", "주문·고객 문의")):
+    if data.get("production"):
+        parts.append(_production_line(data["production"]))
+    for key, label in (("sales", "출하(판매)"), ("orders", "주문·고객 문의")):
         m = data.get(key)
         if not m:
             continue
