@@ -30,6 +30,11 @@ ADMIN_DISCORD_IDS = _csv_ids(os.environ.get("ADMIN_DISCORD_IDS"))
 # --- Kakao (디스코드 채널 릴레이 방식 - 원본 봇과 동일, 실제 브릿지 코드로 형식 확인함) ---
 # 브릿지가 카톡 메시지를 "{발신자명}//{방ID}//{유저ID}" 닉네임으로 인코딩해서 아래 채널들에
 # 일반 디스코드 메시지로 올려준다. 이 봇은 별도 수신 서버 없이 on_message에서 파싱만 한다.
+# [신규] 카톡 애순이 말투 전용 - 이 사람들에겐 해요체(친한 동료), 나머지는 합쇼체(직장인 응대).
+# 권한과는 무관하다(카톡은 여전히 관리자 판별 불가 - 도구 권한은 항상 비관리자). 카톡 유저ID(member_no)나
+# 카톡 이름으로 지정한다. 이름은 바꿀 수 있으니 유저ID를 권장.
+KAKAO_FAMILIAR_USER_IDS = {x.strip() for x in os.environ.get("KAKAO_FAMILIAR_USER_IDS", "").split(",") if x.strip()}
+KAKAO_FAMILIAR_NAMES = {x.strip() for x in os.environ.get("KAKAO_FAMILIAR_NAMES", "유메미루").split(",") if x.strip()}
 KATALK_BRIDGE_URL = os.environ.get("KATALK_BRIDGE_URL", "")  # 답장을 내보낼 때만 사용
 KATALK_LINKED_CHANNEL_IDS = _csv_ids(os.environ.get("KATALK_LINKED_CHANNEL_IDS"))  # 기존 TARGET_THREAD_IDS
 NICKNAME_DELIMITER = os.environ.get("NICKNAME_DELIMITER", "//")

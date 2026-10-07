@@ -72,6 +72,14 @@ def _kakao_room(user: UserRef) -> str:
     return user.raw_id.split("//", 1)[0]
 
 
+
+def _is_kakao_familiar(user: UserRef | None) -> bool:
+    """카톡 애순이가 해요체로 대할 사람인지 (말투 전용, 권한 판단에 쓰지 않는다)."""
+    if user is None:
+        return False
+    member_no = user.raw_id.rpartition("//")[2]
+    return member_no in settings.KAKAO_FAMILIAR_USER_IDS or (user.display_name or "") in settings.KAKAO_FAMILIAR_NAMES
+
 class Chat(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -371,7 +379,7 @@ class Chat(commands.Cog):
             autonomous_reply.open_followup(followup_key)
             autonomous_reply.mark_active(key)
             try:
-                reply = GREETING_REPLY if not prompt else await self._generate(conversation_key, message, prompt, is_kakao)
+                reply = GREETING_REPLY if not prompt else await self._generate(conversation_key, message, prompt, is_kakao, user)
                 await self._reply(message, user, is_kakao, reply, conversation_key, should_log)
             except Exception:
                 # LLM/LiteLLM 인증 실패, 타임아웃 등 - 조용히 실패하지 않고 최소한 사용자에게 알린다.
@@ -396,7 +404,7 @@ class Chat(commands.Cog):
 
         autonomous_reply.mark_active(key)
         try:
-            reply = await self._generate(conversation_key, message, content, is_kakao)
+            reply = await self._generate(conversation_key, message, content, is_kakao, user)
             await self._reply(message, user, is_kakao, reply, conversation_key, should_log)
         except Exception:
             # 자율 응답은 원래 확률적으로 참견하는 거라, 실패했다고 채널에 에러 메시지까지
@@ -520,7 +528,8 @@ class Chat(commands.Cog):
             log.exception("실패 메시지 전송조차 실패 (channel=%s)", message.channel.id)
         await self._send_kakao(user, text)
 
-    async def _generate(self, conversation_key: str, message: Message, prompt: str, is_kakao: bool) -> str:
+    async def _generate(self, conversation_key: str, message: Message, prompt: str, is_kakao: bool,
+                        user: UserRef | None = None) -> str:
         # [신규] 서버에 영향을 주는 도구(core/tool_policy.py)는 관리자만 실제로 실행할 수
         # 있다. 카톡은 브릿지 계정이 author라서 진짜 관리자인지 판별 불가능하므로(머니
         # 시스템 관리자 명령과 동일한 이유) 항상 비관리자로 취급한다.
@@ -535,6 +544,7 @@ class Chat(commands.Cog):
                 is_kakao=is_kakao,
                 caller_is_admin=caller_is_admin,
                 confirm_scope=confirm_scope,
+                familiar=caller_is_admin or (is_kakao and _is_kakao_familiar(user)),
             )
 
     async def _reply(
