@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import time as dtime, timedelta, timezone
 
 from discord import Interaction, app_commands
@@ -60,10 +61,14 @@ class PoringFood(commands.Cog):
             return False
         async with self._lock:
             from poring_food import main as poring_main
+            started = time.monotonic()
+            log.info("포링푸드 회차 시작")
             try:
                 await asyncio.to_thread(poring_main.main)
             except Exception:
                 log.exception("포링푸드 회차 실행 실패 - 다음 회차에 다시 시도")
+            else:
+                log.info("포링푸드 회차 완료 (%.1f초)", time.monotonic() - started)
         return True
 
     @tasks.loop(time=RUN_TIMES)

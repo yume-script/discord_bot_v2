@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from config import settings
 
+from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from . import runtime
 from .config import DISCORD_WEBHOOK_URL, ROOM_ID, STATUS_OUT_PATH, HISTORY_LOG_PATH, HISTORY_RETENTION_DAYS
 
