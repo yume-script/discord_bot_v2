@@ -20,7 +20,7 @@ from ai.image_engine import generate_image
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
-from core import aesun_account, ant_voice, autonomous_reply, fortune, game_engine, katalk_stats, mbti, pending_actions, satellite
+from core import ant_voice, autonomous_reply, fortune, game_engine, katalk_stats, mbti, pending_actions, satellite
 from core.admin_auth import is_admin
 from core.concurrency import QueueLimitError, image_gen_pool
 from core.conversation_store import log_message
@@ -29,6 +29,7 @@ from core.kakao_relay import parse_kakao_author
 from core.katalk_bridge import send_image, send_message
 from core.money_system import money_system
 from core.nickname_watch import check_and_update_nickname
+from core.side_accounts import aesun, is_own_message as is_side_account_message
 from core.user_ref import Channel, UserRef
 
 log = logging.getLogger("chat")
@@ -90,8 +91,8 @@ class Chat(commands.Cog):
         # 웹훅)이 올리는 경우가 많아서, author.bot 전체를 걸러내면 카톡 메시지가 통째로 씹힌다.
         if message.author == self.bot.user:
             return
-        # 애순이 계정(같은 프로세스의 말하기 전용 계정)이 올린 답장도 자기 메시지로 본다
-        if aesun_account.is_own_message(message):
+        # 보조 계정(같은 프로세스의 애순이/소라)이 올린 메시지도 자기 메시지로 본다
+        if is_side_account_message(message):
             return
 
         content = message.content
@@ -526,7 +527,7 @@ class Chat(commands.Cog):
 
     async def _safe_reply(self, message: Message, user: UserRef, text: str) -> None:
         try:
-            if not (user.channel == Channel.KAKAO and await aesun_account.send(message.channel.id, text, reply_to=message.id)):
+            if not (user.channel == Channel.KAKAO and await aesun.send(message.channel.id, text, reply_to=message.id)):
                 await message.reply(text)
         except discord.HTTPException:
             log.exception("실패 메시지 전송조차 실패 (channel=%s)", message.channel.id)
@@ -608,7 +609,7 @@ class Chat(commands.Cog):
         (Invalid Form Body: 4000자 초과 등)으로 실패해서 "대답을 못 만들었어요" 폴백으로
         빠지는 문제가 있었다 - 길면 2000자 단위로 잘라서 여러 메시지로 나눠 보낸다.
         """
-        if as_aesun and await aesun_account.send(message.channel.id, text, reply_to=message.id):
+        if as_aesun and await aesun.send(message.channel.id, text, reply_to=message.id):
             return
         limit = 2000
         if not text or not text.strip():

@@ -6,7 +6,7 @@ from discord.ext import commands
 
 from ai.discord_reader import set_bot_client
 from ai.mcp_manager import init_mcp
-from core import aesun_account
+from core import side_accounts
 from config import settings
 from core.concurrency import image_gen_pool
 
@@ -118,12 +118,12 @@ class AesunBot(commands.Bot):
 async def main():
     bot = AesunBot()
     async with bot:
-        # 애순이 계정(말하기 전용)은 같은 이벤트 루프에서 따로 로그인한다 - 실패해도 아메하나는 그대로 뜬다
-        await aesun_account.start()
+        # 보조 계정(애순이/소라)은 같은 이벤트 루프에서 따로 로그인한다 - 실패해도 아메하나는 그대로 뜬다
+        await side_accounts.start_all()
         try:
             await bot.start(settings.DISCORD_BOT_TOKEN)
         finally:
-            await aesun_account.close()
+            await side_accounts.close_all()
 
 
 if __name__ == "__main__":
