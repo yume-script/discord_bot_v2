@@ -19,6 +19,8 @@ def _csv_ids(raw: str | None) -> list[str]:
 
 # --- Discord ---
 DISCORD_BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
+# [신규] 애순이 디스코드 계정(말하기 전용, core/aesun_account.py). 비우면 애순이 답장도 아메하나 계정으로.
+AESUN_BOT_TOKEN = os.environ.get("AESUN_BOT_TOKEN", "")
 DISCORD_GUILD_ID = int(os.environ.get("DISCORD_GUILD_ID", "0") or 0)
 DISCORD_LOG_CHANNEL_IDS = _csv_ids(os.environ.get("DISCORD_LOG_CHANNEL_IDS"))
 

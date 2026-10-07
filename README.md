@@ -100,6 +100,16 @@ python app.py
   - 카톡 일반 메시지(피드/명령어 제외)마다 닉네임 변경 체크 + 채팅 머니 10원 지급이 자동으로
     실행된다 (`cogs/chat.py`, 호출어/자율응답 여부와 무관하게 항상 실행 — 원본과 동일).
 
+## 애순이 디스코드 계정 (말하기 전용)
+- 봇 프로세스는 하나다. 메시지 수신/명령어/판단은 아메하나 계정이 전부 하고, 애순이 페르소나로 정해진 답만
+  두 번째 봇 계정(`AESUN_BOT_TOKEN`, `core/aesun_account.py`)으로 올린다: 카톡 연동 채널의 애순이 답장(디스코드 쪽
+  표시, 원래 메시지에 답장으로), 포링푸드 매시 일지와 연재 드라마 장면.
+- 애순이 계정은 이벤트를 처리하지 않아서 중복 응답이 없고, 명령어 등록이나 특수 권한(privileged intent)이 필요 없다.
+  아메하나는 애순이 계정이 올린 메시지를 자기 메시지처럼 무시한다.
+- 토큰이 없거나 로그인/전송이 실패하면(채널 미초대 등 403) 예전처럼 아메하나 계정으로 보낸다.
+- 애순이 봇 초대 권한: View Channel / Send Messages / Send Messages in Threads / Read Message History
+  (카톡 연동 채널이 스레드면 그 스레드에도 접근할 수 있어야 한다).
+
 ## 대화 맥락 (SQLite)
 - `core/conversation_store.py` — `storage/conversations.db` 하나에 모든 대화를 저장한다.
   카톡은 방(room_id), 순수 디스코드는 채널(`discord:{channel_id}`) 단위로 `conversation_key`가

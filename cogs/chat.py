@@ -20,7 +20,7 @@ from ai.image_engine import generate_image
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
-from core import ant_voice, autonomous_reply, fortune, game_engine, katalk_stats, mbti, pending_actions, satellite
+from core import aesun_account, ant_voice, autonomous_reply, fortune, game_engine, katalk_stats, mbti, pending_actions, satellite
 from core.admin_auth import is_admin
 from core.concurrency import QueueLimitError, image_gen_pool
 from core.conversation_store import log_message
@@ -29,7 +29,7 @@ from core.kakao_relay import parse_kakao_author
 from core.katalk_bridge import send_image, send_message
 from core.money_system import money_system
 from core.nickname_watch import check_and_update_nickname
-from core.user_ref import UserRef
+from core.user_ref import Channel, UserRef
 
 log = logging.getLogger("chat")
 
@@ -89,6 +89,9 @@ class Chat(commands.Cog):
         # 기존 봇과 동일하게 "봇 자기 자신"만 거른다. 카톡 릴레이 메시지는 브릿지 계정(봇 또는
         # 웹훅)이 올리는 경우가 많아서, author.bot 전체를 걸러내면 카톡 메시지가 통째로 씹힌다.
         if message.author == self.bot.user:
+            return
+        # 애순이 계정(같은 프로세스의 말하기 전용 계정)이 올린 답장도 자기 메시지로 본다
+        if aesun_account.is_own_message(message):
             return
 
         content = message.content
@@ -523,7 +526,8 @@ class Chat(commands.Cog):
 
     async def _safe_reply(self, message: Message, user: UserRef, text: str) -> None:
         try:
-            await message.reply(text)
+            if not (user.channel == Channel.KAKAO and await aesun_account.send(message.channel.id, text, reply_to=message.id)):
+                await message.reply(text)
         except discord.HTTPException:
             log.exception("실패 메시지 전송조차 실패 (channel=%s)", message.channel.id)
         await self._send_kakao(user, text)
@@ -556,7 +560,8 @@ class Chat(commands.Cog):
         conversation_key: str,
         should_log: bool,
     ) -> None:
-        await self._send_chunked(message, reply)
+        # 카톡 연동 채널의 답은 애순이 페르소나라 디스코드에도 애순이 계정으로 올린다 (없으면 아메하나)
+        await self._send_chunked(message, reply, as_aesun=is_kakao)
         if should_log:
             log_message(conversation_key, "애순이" if is_kakao else "아메하나", reply, direction="out")
         await self._send_kakao(user, reply)
@@ -595,7 +600,7 @@ class Chat(commands.Cog):
                 results.append(f"• {call.describe()}\n{result}")
         await self._send_chunked(message, "✅ 실행했어요.\n" + "\n\n".join(results))
 
-    async def _send_chunked(self, message: Message, text: str) -> None:
+    async def _send_chunked(self, message: Message, text: str, as_aesun: bool = False) -> None:
         """
         [신규] 디스코드는 메시지 하나에 2000자 제한이 있다(계정/서버에 따라 더 관대한
         경우도 있지만 최소 기준이 2000). Plex 검색 결과처럼 도구 결과가 길게 나올 때
@@ -603,6 +608,8 @@ class Chat(commands.Cog):
         (Invalid Form Body: 4000자 초과 등)으로 실패해서 "대답을 못 만들었어요" 폴백으로
         빠지는 문제가 있었다 - 길면 2000자 단위로 잘라서 여러 메시지로 나눠 보낸다.
         """
+        if as_aesun and await aesun_account.send(message.channel.id, text, reply_to=message.id):
+            return
         limit = 2000
         if not text or not text.strip():
             # 빈 메시지는 디스코드가 400(Cannot send an empty message)으로 거절한다.
