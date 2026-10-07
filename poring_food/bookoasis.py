@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
 
+from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from . import runtime
 from .config import (
@@ -171,7 +171,7 @@ def check_bookoasis() -> dict:
         return report
 
     state = _load_state()
-    now = datetime.now().isoformat(timespec="seconds")
+    now = now_kst().isoformat(timespec="seconds")
     was_ok = state.get("last_ok")  # None이면 첫 실행
 
     try:

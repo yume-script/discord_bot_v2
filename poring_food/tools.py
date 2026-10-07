@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 
 from langchain_core.tools import StructuredTool
 
+from .clock import now_kst
 from .config import STATUS_OUT_PATH, HISTORY_LOG_PATH, CHARACTERS_STATE_PATH, ORGANIZATION_GLOB, BOOKOASIS_STATE_PATH
 from .bookoasis import DB_TYPE_LABELS
 from . import characters
@@ -69,6 +70,12 @@ def get_current_status(character: str = "애순이") -> str:
             return f"상태 파일을 읽는 중 오류가 발생했어요: {e}"
 
         parts = []
+        # 언제 기준 상태인지 같이 알려준다 - 대화 쪽 LLM이 오래된 상태를 "지금"으로 착각하지 않게
+        try:
+            updated = datetime.fromisoformat(str(data.get("timestamp", "")))
+            parts.append(f"(이 상태는 {updated.strftime('%m월 %d일 %H:%M')} 기준, 지금은 {now_kst().strftime('%H:%M')})")
+        except ValueError:
+            pass
         if data.get("time_tag"):
             parts.append(f"[{data['time_tag']}]")
         if data.get("location") and data.get("activity"):
@@ -156,7 +163,7 @@ def get_recent_history(character: str = "애순이", days: int = 1) -> str:
     if not entries:
         return f"'{character}'의 히스토리 기록이 없어요."
 
-    cutoff = datetime.now() - timedelta(days=days)
+    cutoff = now_kst() - timedelta(days=days)
     by_date: dict[str, list[dict]] = {}
     for e in entries:
         ts = e.get("timestamp")
@@ -239,7 +246,7 @@ def get_character_story(character: str) -> str:
     if character == "애순이":
         return get_current_status("애순이")
 
-    cache_key = (character, datetime.now().strftime("%Y-%m-%d-%H"))
+    cache_key = (character, now_kst().strftime("%Y-%m-%d-%H"))
     if cache_key in _story_cache:
         return _story_cache[cache_key]
 

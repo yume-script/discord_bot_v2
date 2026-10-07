@@ -1,7 +1,7 @@
 import os
 import random
-from datetime import datetime
 
+from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from . import bookoasis
 from . import loader
@@ -54,7 +54,7 @@ def _run_world_tick(aesun_status: dict) -> None:
     [취침 중 전용] 애순이가 자는 시간엔 스포트라이트 로테이션 없이, 상태 갱신과 상호작용만
     수행한다 (그 시간대엔 다른 인물들도 대부분 자고 있어서 로테이션 후보가 거의 없다).
     """
-    now = datetime.now()
+    now = now_kst()
     rnd = random.Random(now.strftime("%Y-%m-%d-%H"))
 
     roster = characters.load_roster()
@@ -81,7 +81,7 @@ def _run_world_tick_common(roster: list, roster_map: dict, states: dict, rnd: ra
     상호작용을 시도한다. exclude_name이 주어지면 그 사람은 이미 별도로(스포트라이트 리포트로)
     히스토리에 기록했으니 여기서 중복 기록하지 않는다.
     """
-    now = datetime.now()
+    now = now_kst()
 
     for cid, info in states.items():
         name = info.get("name", cid)
@@ -183,7 +183,7 @@ def main():
     # 1. 현재 스케줄 및 상태 확인
     location, activity, focus, state, is_sleeping = processor.get_aesun_detailed_schedule()
     time_tag = processor.get_time_tag()
-    now = datetime.now()
+    now = now_kst()
     now_str = now.isoformat()
 
     # [통계] 생산량/영업 판매수량 및 오늘의 기분 가져오기

@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 
 import requests
 
+from .clock import now_kst
 from . import characters, signals
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import API_URL, LITELLM_MASTER_KEY, LLM_MODEL, STATE_DIR
@@ -235,7 +236,7 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
     장면 하나를 만들고 기억/줄거리/히스토리에 반영한다. 방송용 텍스트를 돌려준다(전송은 호출부).
     반환: {"discord": str, "kakao": str, "participants": [이름...], "summary": str} 또는 None
     """
-    now = datetime.now()
+    now = now_kst()
     cast, arc = _pick_scene(roster, states, rnd)
     if len(cast) < 2:
         print("[스토리] 이번 장면에 등장할 인물을 못 골라서 건너뜁니다.")
@@ -355,7 +356,7 @@ def maybe_run_writers_room(roster: list[dict], force: bool = False) -> bool:
     """
     if not STORY_ENABLED:
         return False
-    now = datetime.now()
+    now = now_kst()
     today = now.strftime("%Y-%m-%d")
     data = load_arcs()
     bootstrap = not _active_arcs(data)
@@ -464,7 +465,7 @@ def story_block_for(name: str) -> str:
         involved = " (너도 얽혀 있음)" if any(name == k.split("(")[0] for k in a.get("cast", [])) else ""
         latest = a.get("beats", [])[-1]["text"] if a.get("beats") else a.get("premise", "")
         lines.append(f"- {a['title']}{involved}: {latest}")
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = now_kst().replace(hour=0, minute=0, second=0, microsecond=0)
     mine = _recent_scenes(limit=2, since=today, name=name)
     block = "\n[회사에서 진행 중인 이야기]\n" + "\n".join(lines) + "\n"
     if mine:
@@ -489,7 +490,7 @@ def story_so_far(character: str = "") -> str:
     if data.get("digests"):
         d = data["digests"][-1]
         parts.append(f"[{d['date']} 하루 요약] {d['text']}")
-    scenes = _recent_scenes(limit=5, since=datetime.now() - timedelta(days=3), name=character or None)
+    scenes = _recent_scenes(limit=5, since=now_kst() - timedelta(days=3), name=character or None)
     if scenes:
         parts.append("[최근 장면]")
         parts.extend(f"- {s['ts'][5:16].replace('T', ' ')} {', '.join(s['participants'])}: {s['summary']}" for s in scenes)

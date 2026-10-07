@@ -2,8 +2,8 @@ import json
 import os
 import random
 import requests
-from datetime import datetime
 
+from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import API_URL, LITELLM_MASTER_KEY, LLM_MODEL
 from . import processor
@@ -42,7 +42,7 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
     """
     count, progress = stats  # 생산량 통계 언패킹
     main_product = org_data.get("main_product", "포링 젤리")
-    now = datetime.now()
+    now = now_kst()
     current_time_str = f"{now.strftime('%Y-%m-%d')} {now.hour:02d}:00 {time_tag}"
 
     # 상세 상태 가져오기
@@ -191,7 +191,7 @@ def generate_generic_character_report(character, issue, time_tag, weather_info, 
     것 - 애순이 파이프라인과 같은 이슈를 공유해서 세계관 연속성을 유지한다).
     """
     name = character["name"]
-    now = datetime.now()
+    now = now_kst()
     current_time_str = f"{now.strftime('%Y-%m-%d')} {now.hour:02d}:00 {time_tag}"
     status_header, topic_hint = _GENERIC_STATUS_HEADERS.get(state, _GENERIC_DEFAULT_HEADER)
     title = issue.get("title", "오늘의 사건")
