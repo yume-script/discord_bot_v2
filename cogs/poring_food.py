@@ -19,6 +19,7 @@ from discord import Interaction, app_commands
 from discord.ext import commands, tasks
 
 from config import settings
+from core import aesun_account
 from core.admin_auth import is_admin
 from poring_food import runtime
 
@@ -51,6 +52,9 @@ class PoringFood(commands.Cog):
 
     async def _send_discord(self, text: str) -> None:
         channel_id = settings.PORING_DISCORD_CHANNEL_ID
+        # 포링푸드 일지/장면은 애순이 계정으로 (토큰이 없거나 권한이 없으면 아메하나 계정)
+        if await aesun_account.send(channel_id, text):
+            return
         channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
         for i in range(0, len(text), DISCORD_LIMIT):
             await channel.send(text[i:i + DISCORD_LIMIT])
