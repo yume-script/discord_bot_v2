@@ -31,7 +31,7 @@ PRODUCTION_STATS_MENTION_PROBABILITY = float(os.getenv("PRODUCTION_STATS_MENTION
 
 # 함수 시그니처에 mood 인자를 추가했습니다.
 def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info, stats, mood, sales_count=0,
-                          bookoasis_block=""):
+                          bookoasis_block="", story_block=""):
     """
     processor에서 생성된 '이전 사건 후일담', '오늘의 기분', '생산 통계'를 바탕으로
     애순이의 인간적인 희노애락이 담긴 1인칭 보고서를 생성합니다.
@@ -80,6 +80,7 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
         f"- 우리 회사 주력 제품: {main_product}\n"
         f"{stats_line}"
         f"{bookoasis_block}"
+        f"{story_block}"
         "--- [애순이의 캐릭터 특징] ---\n"
         "1. 주 6일 근무하는 생산부 대리. 업무 스트레스와 일상의 소소한 행복(커피, 농담 등)을 동시에 느낀다. "
         "사내 자료실 '북오아시스'(사내 도서·오디오북 서고) 관리 담당도 겸직하고 있다 - 서고 소식이 "
@@ -182,7 +183,8 @@ GENERIC_TEMPLATE = (
 )
 
 
-def generate_generic_character_report(character, issue, time_tag, weather_info, mood, location, activity, state):
+def generate_generic_character_report(character, issue, time_tag, weather_info, mood, location, activity, state,
+                                      story_block=""):
     """
     character: characters.load_roster()의 항목 하나 (name/company/dept/rank/outer_persona/
     inner_truth 포함). issue: 그날의 회사 공통 이슈(processor.get_last_issue() 등에서 가져온
@@ -204,7 +206,8 @@ def generate_generic_character_report(character, issue, time_tag, weather_info, 
         f"- 오늘의 기분: {mood}\n"
         f"- 위치: {location}\n"
         f"- 현재 활동: {activity}\n"
-        f"- 현재 날씨: {weather_info}\n\n"
+        f"- 현재 날씨: {weather_info}\n"
+        f"{story_block}\n"
         "작성 지침:\n"
         f"- 회사에 떠도는 [오늘의 사건]을 알고 있다는 티를 살짝만 내되, '{name}'만의 시점과 속마음으로 "
         "재해석해서 써라 - 다른 사람(애순이 등)과 똑같은 반응/말투를 절대 흉내내지 마라.\n"

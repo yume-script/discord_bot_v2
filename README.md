@@ -153,6 +153,19 @@ python app.py
   (`BOOKOASIS_STORY_DB_TYPES`).
 - 확률/가중치 조정값(`AESUN_SPOTLIGHT_WEIGHT`, `INTERACTION_HOURS`, `EXTERNAL_TOPIC_PROBABILITY` 등)은
   예전 이름 그대로 봇 `.env`에 둔다.
+- **연재 드라마** (`poring_food/story.py`, `signals.py`): 인물들이 실제로 대화하고 그 대화가 쌓여 줄거리가 된다.
+  - **장면**: `PORING_SCENE_HOURS`(기본 9,11,13,15,17,20시)마다 2~3명이 대사 4~8줄짜리 장면을 만들어
+    디스코드/카톡에 올린다. 출연진은 진행 중인 줄거리의 등장인물에서 고르고(80%), 가끔은 우연한 일상 장면.
+    대사 화자가 출연진이 아니면 그 장면은 버린다.
+  - **기억**: 대화 원문(`dialogues.jsonl`), 두 사람 사이의 최근 사건 10개+친밀도(`relationships.json`),
+    줄거리 2~4개와 "지난 이야기" 압축 요약(`story_arcs.json`) - 모두 `storage/poring_food/`.
+  - **작가 회의**: 하루 한 번(`PORING_WRITERS_ROOM_HOUR`, 기본 23시) 그날 장면과 **바깥 세상 변화**를 보고
+    줄거리를 진행/종결/새로 띄운다. 바깥 변화 = 광주 날씨, 오늘의 화제(뉴스/스포츠/영화), 카톡 브릿지 상태
+    (공장 라인), 단톡방 대화량(생산량), 북오아시스 신간/장애(자료실), Redroid 차단(사내 보안), 요일·월말·계절.
+    매 장면에도 같은 신호가 들어가서 인물들이 그날 실제 변화에 반응한다.
+  - **매시 일지**에도 진행 중인 줄거리와 그 인물이 오늘 겪은 장면을 넣는다.
+  - 대화 중 "포링푸드 요즘 무슨 일 있어?"는 `get_poring_story` 도구로 답한다.
+  - 끄려면 `PORING_STORY_ENABLED=0` (예전 "우연한 마주침" 요약 방식으로 돌아감).
 
 ## Redroid 패키지 감시 알림
 - **감시/자동 삭제는 cron**이 한다: `scripts/redroid_check_packages.sh`가 15분마다 Redroid(192.168.0.50)의

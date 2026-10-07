@@ -370,7 +370,7 @@ def fetch_daily_topic():
     return None
 
 
-def generate_dynamic_issue(org_data, weather_info, factory_status, our_count=0, bookoasis_block=""):
+def generate_dynamic_issue(org_data, weather_info, factory_status, our_count=0, bookoasis_block="", story_block=""):
     location, activity, focus, state, _ = get_aesun_detailed_schedule()
     last_issue = get_last_issue()
     prev_context = f"이전 사건: '{last_issue['title']}' / 상황: {last_issue['description']}" if last_issue else "최근 특별한 사건 없음."
@@ -414,7 +414,8 @@ def generate_dynamic_issue(org_data, weather_info, factory_status, our_count=0, 
         f"등장 가능한 조연 후보(선택사항): {', '.join(selected)}\n"
         f"{topic_block}"
         f"{rival_block}"
-        f"{bookoasis_block}\n"
+        f"{bookoasis_block}"
+        f"{story_block}\n"
         "작성 규칙:\n"
         "1. 이전 사건이 진행 중이라면 해결책을 제시하고, 이미 해결되었다면 그 후일담을 짧게 언급해라.\n"
         "2. 오늘 이야기의 중심 소재는 완전히 자유롭게 골라라 - 회사 업무/사내 정치일 필요는 전혀 없다. "

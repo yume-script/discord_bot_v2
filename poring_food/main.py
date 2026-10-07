@@ -10,6 +10,8 @@ from . import generator
 from . import notifier
 from . import checker
 from . import characters
+from . import signals
+from . import story
 from .config import INTERACTION_HOURS
 
 # [신규] 애순이가 매시간 스포트라이트(=디스코드/카톡으로 방송)를 독점하지 않고, 깨어있는
@@ -79,6 +81,7 @@ def _run_world_tick_common(roster: list, roster_map: dict, states: dict, rnd: ra
     히스토리에 기록했으니 여기서 중복 기록하지 않는다.
     """
     now = datetime.now()
+
     for cid, info in states.items():
         name = info.get("name", cid)
         if name == "애순이" or name == exclude_name:
@@ -90,6 +93,21 @@ def _run_world_tick_common(roster: list, roster_map: dict, states: dict, rnd: ra
             "activity": info.get("activity"),
             "state": info.get("state"),
         })
+
+    # [신규] 연재 드라마 장면 - 정해진 시각(PORING_SCENE_HOURS)마다 인물들이 실제로 대화하는 장면을
+    # 만들어 디스코드/카톡에 올린다. 이 기능이 켜져 있으면 예전 "우연한 마주침" 요약은 쓰지 않는다.
+    if story.STORY_ENABLED:
+        if now.hour in story.SCENE_HOURS:
+            try:
+                scene = story.run_scene(roster, states, rnd)
+            except Exception as e:  # noqa: BLE001
+                print(f"[에러] 장면 생성 실패: {e}")
+                scene = None
+            if scene:
+                notifier.send_to_discord(scene["discord"])
+                notifier.send_to_local_bot(scene["kakao"])
+                print(f"[스토리] 장면 전송 완료: {scene['summary']}")
+        return
 
     if now.hour not in INTERACTION_HOURS:
         return
@@ -124,6 +142,21 @@ def _run_world_tick_common(roster: list, roster_map: dict, states: dict, rnd: ra
     print(f"[다인물] 상호작용 전송 완료: {episode_text}")
 
 
+def _maybe_run_writers_room() -> None:
+    """
+    [신규] 연재 드라마 - 하루 한 번(또는 줄거리가 하나도 없을 때) 작가 회의로 줄거리를 갱신한다.
+    회차 맨 앞에서 돌려서, 같은 회차의 일지/장면이 갱신된 줄거리를 바로 쓰게 한다.
+    """
+    if not story.STORY_ENABLED:
+        return
+    try:
+        roster = characters.load_roster()
+        if roster:
+            story.maybe_run_writers_room(roster)
+    except Exception as e:  # noqa: BLE001 - 작가 회의가 실패해도 이번 회차 나머지는 계속
+        print(f"[에러] 작가 회의 실패: {e}")
+
+
 def main():
     """
     애순이 봇 메인 파이프라인
@@ -133,6 +166,8 @@ def main():
        애순이 또는 깨어있는 다른 인물 중에서 가중치 랜덤으로 고른다(스포트라이트 로테이션)
     4. 다인물 시뮬레이션(상태 갱신/상호작용)도 같이 굴린다
     """
+    _maybe_run_writers_room()
+
     # 1. 현재 스케줄 및 상태 확인
     location, activity, focus, state, is_sleeping = processor.get_aesun_detailed_schedule()
     time_tag = processor.get_time_tag()
@@ -178,6 +213,7 @@ def main():
 
     print("[1/4] 광주 실시간 날씨 조회 중...")
     weather_info = processor.fetch_gwangju_weather()
+    signals.remember_weather(weather_info)  # 장면/작가 회의가 "바깥 세상 변화"로 다시 쓴다
 
     # [신규] 스포트라이트 로테이션 - 다인물 상태를 먼저 갱신하고 그중에서 이번 시간 주인공을 뽑는다
     # [변경] 이슈 생성보다 먼저 뽑는다 - 애순이가 주인공일 때만 애순이 담당 업무(북오아시스 서고)
@@ -200,17 +236,20 @@ def main():
         print("[1.5/4] 사내 자료실(북오아시스) 점검 중...")
         bookoasis_block = bookoasis.build_prompt_block(bookoasis.check_bookoasis())
 
+    # [신규] 연재 드라마의 진행 중인 줄거리를 일지에도 반영한다 (이번 시간 주인공 기준)
+    story_block = story.story_block_for(narrator_name)
+
     print("[2/4] 조직도 기반 동적 이슈 생성 중...")
     dynamic_issue = processor.generate_dynamic_issue(
         org_data, weather_info, factory_status=factory_msg, our_count=prod_count,
-        bookoasis_block=bookoasis_block,
+        bookoasis_block=bookoasis_block, story_block=story_block,
     )
 
     if is_aesun_spotlight:
         print("[3/4] 애순이 시점으로 보고서 변환 중...")
         report_data = generator.generate_aesun_report(
             dynamic_issue, time_tag, org_data, persona_data, weather_info, stats, mood, sales_count,
-            bookoasis_block=bookoasis_block,
+            bookoasis_block=bookoasis_block, story_block=story_block,
         )
         status_payload = {
             "timestamp": now_str,
@@ -236,7 +275,8 @@ def main():
 
         print(f"[3/4] {narrator_name} 시점으로 보고서 변환 중...")
         report_data = generator.generate_generic_character_report(
-            char, dynamic_issue, time_tag, weather_info, c_mood, c_location, c_activity, c_state
+            char, dynamic_issue, time_tag, weather_info, c_mood, c_location, c_activity, c_state,
+            story_block=story_block,
         )
         # 애순이 자신은 방송 주인공이 아니어도 위치/활동은 계속 가볍게 갱신해둔다
         # (get_current_status("애순이")가 항상 최신 위치를 보여줄 수 있게)
