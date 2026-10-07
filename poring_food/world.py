@@ -189,7 +189,7 @@ def tick(agents: list[dict], roster: list[dict], signals_block: str = "") -> lis
     return deliveries
 
 
-def today_lines() -> list[str]:
+def today_lines(company: str | None = None) -> list[str]:
     """오늘 이미 일어난 공개 사건 (배경 인물 장면/일지, 에이전트의 바깥 세상 신호용).
     에이전트 개인 사건은 빼고(당사자 받은편지함으로만 간다), 아직 확인 안 된 건 소문으로만."""
     data = _load()
@@ -198,6 +198,9 @@ def today_lines() -> list[str]:
     lines = []
     for e in data.get("plan", []):
         if not e.get("released") or e.get("private"):
+            continue
+        # company가 주어지면(에이전트 지각) 그 회사 사건과 동네 사건만 - 다른 회사 내부 일은 모른다
+        if company and company not in e["targets"] and TOWN not in e["targets"]:
             continue
         where = ", ".join(e["targets"])
         if e.get("confirmed"):

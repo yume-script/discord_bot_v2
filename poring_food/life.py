@@ -196,6 +196,8 @@ def _signal_effects(st: dict, info: dict, signals: dict, now: datetime) -> dict:
         d["energy"] = d.get("energy", 0) - 0.02
     elif "비" in weather or "눈" in weather:
         d["happiness"] = d.get("happiness", 0) - 0.01
+    if info.get("company", "포링푸드 (Poring Food)") != "포링푸드 (Poring Food)":
+        return d  # 아래는 포링푸드 내부 사정(공장 설비/생산) - 다른 회사 사람에겐 상관없다
     facility = signals.get("facility", "") + signals.get("factory", "")
     if working and any(w in facility for w in ("과부하", "과열", "포화", "멈춘", "이상")):
         d["stress"] = d.get("stress", 0) + 0.02
