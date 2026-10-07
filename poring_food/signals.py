@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 
 from config import settings
 
-from . import checker, mcp_signals, metrics, processor
+from . import checker, mcp_signals, metrics, processor, world
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import BOOKOASIS_STATE_PATH, STATE_DIR
 
@@ -188,6 +188,10 @@ def collect(include_factory: bool = True) -> dict:
     if production:
         signals["production"] = production
 
+    happened = world.today_lines()
+    if happened:
+        signals["world"] = " / ".join(happened[-5:])
+
     book = _bookoasis_line()
     if book:
         signals["bookoasis"] = book
@@ -203,7 +207,7 @@ def format_block(signals: dict) -> str:
     """프롬프트에 넣을 "바깥 세상 변화" 블록."""
     labels = {
         "calendar": "날짜/시간", "weather": "날씨(광주)", "topic": "오늘 세상의 화제",
-        "factory": "공장 상태", "facility": "공장 설비", "production": "생산/판매 현황", "bookoasis": "사내 자료실",
+        "factory": "공장 상태", "facility": "공장 설비", "world": "오늘 회사/동네에서 생긴 일", "production": "생산/판매 현황", "bookoasis": "사내 자료실",
         "security": "사내 보안",
     }
     lines = [f"- {labels[k]}: {v}" for k, v in signals.items() if k in labels and v]

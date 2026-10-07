@@ -154,7 +154,21 @@ def build_system_prompt(is_kakao: bool, familiar: bool = False) -> str:
     if not is_kakao:
         return body
     speech = _KAKAO_SPEECH_ADMIN if familiar else _KAKAO_SPEECH_OTHERS
-    return body + _KAKAO_NO_TECH_NOTE + speech
+    return body + _KAKAO_NO_TECH_NOTE + speech + _aesun_live_context()
+
+
+def _aesun_live_context() -> str:
+    """
+    [3단계] 카톡 애순이 = 포링푸드 LLM 에이전트 애순이. 지금 실제로 어디서 뭘 하고 무슨 생각인지
+    (에이전트의 가장 최근 판단 + 컨디션)를 대화에 넣는다. 반대로 이 대화는 다음 회차에 애순이의
+    지각/기억으로 들어간다(poring_food/agents.py). 실패하면 그냥 뺀다.
+    """
+    try:
+        from poring_food import agents
+        ctx = agents.live_context("애순이")
+    except Exception:  # noqa: BLE001
+        return ""
+    return f"\n\n{ctx}" if ctx else ""
 
 
 # 하위 호환용 - 기존에 이 상수를 직접 쓰던 곳이 있으면 디스코드(아메하나) 기준으로 동작한다.

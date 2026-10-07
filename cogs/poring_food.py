@@ -19,6 +19,7 @@ from discord import Interaction, app_commands
 from discord.ext import commands, tasks
 
 from config import settings
+from core import side_accounts
 from core.side_accounts import aesun
 from core.admin_auth import is_admin
 from poring_food import runtime
@@ -38,6 +39,8 @@ class PoringFood(commands.Cog):
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
         runtime.bind(asyncio.get_running_loop(), sender)
+        if settings.PORING_AGENT_CHANNEL_ID:
+            runtime.bind_agent_sender(self._send_as_agent)
         # [1회성] 인물 이름 변경 전 실행 기록을 새 이름으로 (조회 도구가 첫 회차 전에도 새 이름을 보게)
         from poring_food import rename_migration
         await asyncio.to_thread(rename_migration.migrate)
@@ -61,6 +64,15 @@ class PoringFood(commands.Cog):
         channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
         for i in range(0, len(text), DISCORD_LIMIT):
             await channel.send(text[i:i + DISCORD_LIMIT])
+
+    async def _send_as_agent(self, account: str, name: str, text: str) -> None:
+        """에이전트(애순이/소라...)의 말을 그 인물 계정으로 에이전트 채널에 올린다. 계정이 안 되면 아메하나가 이름을 붙여 대신."""
+        channel_id = settings.PORING_AGENT_CHANNEL_ID
+        acc = side_accounts.get(account)
+        if acc is not None and await acc.send(channel_id, text):
+            return
+        channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+        await channel.send(f"**{name}**: {text}"[:DISCORD_LIMIT])
 
     async def _run_once(self) -> bool:
         """한 회차 실행. 이미 도는 중이면 False."""

@@ -153,7 +153,8 @@ def save_states(states: dict) -> None:
         json.dump(states, f, ensure_ascii=False, indent=2)
 
 
-def update_all_states(roster: list[dict], rnd: random.Random, aesun_state: dict | None = None) -> dict:
+def update_all_states(roster: list[dict], rnd: random.Random, aesun_state: dict | None = None,
+                      overrides: dict[str, dict] | None = None) -> dict:
     """
     애순이를 제외한 전원의 상태를 갱신하고, 애순이 상태(main.py가 이미 계산해둔 것)도
     같이 합쳐서 하나의 공유 상태 파일로 저장한다. 이게 있어야 "같은 장소에 있는 사람끼리
@@ -172,7 +173,11 @@ def update_all_states(roster: list[dict], rnd: random.Random, aesun_state: dict 
                 "company": character["company"], "dept": character["dept"],
             }
             continue
-        loc, act, state = get_generic_schedule(character, rnd, life_states.get(character["name"]))
+        ov = (overrides or {}).get(character["name"])
+        if ov:  # [신규] LLM 에이전트(소라 등)는 스스로 정한 행동을 쓴다
+            loc, act, state = ov.get("location", ""), ov.get("activity", ""), ov.get("state", "개인시간")
+        else:
+            loc, act, state = get_generic_schedule(character, rnd, life_states.get(character["name"]))
         states[cid] = {
             "name": character["name"],
             "location": loc,

@@ -8,6 +8,7 @@ from . import loader
 from . import processor
 from . import generator
 from . import notifier
+from . import agents
 from . import checker
 from . import life
 from . import memory
@@ -52,6 +53,24 @@ def _pick_spotlight(roster: list, states: dict, rnd: random.Random, aesun_awake:
     return candidates[-1][0]
 
 
+def _agent_overrides() -> dict[str, dict]:
+    """이번 시간 LLM 에이전트가 스스로 정한 행동 {이름: {location, activity, state}} (애순이는 따로 처리)."""
+    out = {}
+    for name in agents.names() - {"애순이"}:
+        d = agents.current(name)
+        if d:
+            out[name] = {"location": d["location"], "activity": d["activity"], "state": d["state"]}
+    return out
+
+
+def _npc_only(roster: list, states: dict) -> tuple[list, dict]:
+    """[3단계] 작가가 대사를 대신 쓰는 장면/줄거리에는 LLM 에이전트를 넣지 않는다 (에이전트는 스스로 말한다)."""
+    agent_names = agents.names()
+    npc_roster = [c for c in roster if c["name"] not in agent_names]
+    ids = {c["id"] for c in npc_roster}
+    return npc_roster, {cid: s for cid, s in states.items() if cid in ids}
+
+
 def _run_world_tick(aesun_status: dict) -> None:
     """
     [취침 중 전용] 애순이가 자는 시간엔 스포트라이트 로테이션 없이, 상태 갱신과 상호작용만
@@ -72,7 +91,7 @@ def _run_world_tick(aesun_status: dict) -> None:
         "state": aesun_status.get("state"),
         "updated_at": now.isoformat(),
     }
-    states = characters.update_all_states(roster, rnd, aesun_state=aesun_state)
+    states = characters.update_all_states(roster, rnd, aesun_state=aesun_state, overrides=_agent_overrides())
     print(f"[다인물] {len(states)}명 상태 갱신 완료")
     _run_world_tick_common(roster, roster_map, states, rnd)
 
@@ -111,7 +130,7 @@ def _run_world_tick_common(roster: list, roster_map: dict, states: dict, rnd: ra
     if story.STORY_ENABLED:
         if now.hour in story.SCENE_HOURS:
             try:
-                scene = story.run_scene(roster, states, rnd)
+                scene = story.run_scene(*_npc_only(roster, states), rnd)
             except Exception as e:  # noqa: BLE001
                 print(f"[에러] 장면 생성 실패: {e}")
                 scene = None
@@ -164,7 +183,7 @@ def _maybe_run_writers_room() -> None:
     try:
         roster = characters.load_roster()
         if roster:
-            story.maybe_run_writers_room(roster)
+            story.maybe_run_writers_room(_npc_only(roster, {})[0])
     except Exception as e:  # noqa: BLE001 - 작가 회의가 실패해도 이번 회차 나머지는 계속
         print(f"[에러] 작가 회의 실패: {e}")
 
@@ -190,10 +209,23 @@ def main():
         metrics.refresh()
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 생산 지표 갱신 실패: {e}")
+
+    # [3단계] LLM 에이전트(애순이/소라...) - 세계 엔진 사건 전달 → 각자 판단 → 서로 연락/대화.
+    # 애순이의 규칙 일정은 "평소 루틴" 참고로 넘기고, 판단에 실패하면 그대로 대신 쓴다.
+    location, activity, focus, state, is_sleeping = processor.get_aesun_detailed_schedule()
+    try:
+        agents.tick(characters.load_roster(), {"애순이": f"{location}에서 {activity} ({state})"})
+    except Exception as e:  # noqa: BLE001 - 에이전트가 실패해도 이번 회차 나머지는 계속
+        print(f"[에러] 에이전트 회차 실패: {e}")
+    aesun_decision = agents.current("애순이")
+    if aesun_decision:
+        location, activity, state = aesun_decision["location"], aesun_decision["activity"], aesun_decision["state"]
+        focus = aesun_decision.get("thought") or focus
+        is_sleeping = state == "자는 중"
+
     _maybe_run_writers_room()
 
     # 1. 현재 스케줄 및 상태 확인
-    location, activity, focus, state, is_sleeping = processor.get_aesun_detailed_schedule()
     time_tag = processor.get_time_tag()
     now = now_kst()
     now_str = now.isoformat()
@@ -250,7 +282,8 @@ def main():
     roster = characters.load_roster()
     roster_map = characters.roster_by_id(roster) if roster else {}
     aesun_light_state = {"location": location, "activity": activity, "state": state, "updated_at": now_str}
-    states = characters.update_all_states(roster, rnd, aesun_state=aesun_light_state) if roster else {}
+    states = characters.update_all_states(roster, rnd, aesun_state=aesun_light_state,
+                                          overrides=_agent_overrides()) if roster else {}
     spotlight = _pick_spotlight(roster, states, rnd, aesun_awake=True) if roster else "애순이"
 
     is_aesun_spotlight = not isinstance(spotlight, dict)
@@ -265,7 +298,11 @@ def main():
         bookoasis_block = bookoasis.build_prompt_block(bookoasis.check_bookoasis())
 
     # [신규] 연재 드라마의 진행 중인 줄거리를 일지에도 반영한다 (이번 시간 주인공 기준)
-    story_block = story.story_block_for(narrator_name)
+    # [3단계] LLM 에이전트는 줄거리(미래)를 모른다 - 대신 이번 시간 자기가 실제로 한 일/생각을 쓴다
+    if agents.is_agent(narrator_name):
+        story_block = agents.diary_block(narrator_name)
+    else:
+        story_block = story.story_block_for(narrator_name)
     # [신규] 주인공의 지금 상태(감정/체력/돈/목표)와 관련 기억 - 일지에만 넣는다(회사 공통 이슈에는 X)
     if is_aesun_spotlight:
         n_loc, n_act = location, activity
