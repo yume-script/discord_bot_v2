@@ -11,7 +11,7 @@
   (자세한 관계는 아래 TODO의 "포링푸드" 항목 참고).
 - 카톡 로그 / 벡터DB / 회원상태: **초기화** (이관하지 않음, `storage/`는 빈 상태로 시작)
 - 카카오톡 연동: **유지** (디스코드 채널 릴레이 방식 - 아래 "카톡 연동" 참고)
-- 포링푸드(porning_food) 연동: **유지** (MCP 서버 방식 - `config/mcp_servers.yaml`의 `poring_food` 항목 참고)
+- 포링푸드(porning_food): **봇으로 합침** (`poring_food/`, 아래 "포링푸드" 참고 - 별도 프로젝트/cron/`/mnt/poring_food` 폴더 없음)
 - BookOasis 대화방 플러그인: **폐기** (Firebase 브릿지 관련 코드 없음)
 - 이미지 생성 백엔드: AI Horde만 사용 (구글 코랩 연동은 불편해서 제외)
 
@@ -133,6 +133,26 @@ python app.py
   `on_message`(`cogs/chat.py`)를 타기 때문에 자연히 공유된다 — 기존 봇과 동일한 동작.
 - **직전 메시지가 봇이면 스킵**: `channel.history()`로 확인 (`cogs/chat.py`의 `_should_skip`).
   카톡 메시지도 결국 같은 디스코드 채널의 메시지라서 별도 처리가 필요 없다.
+
+## 포링푸드 (애순이와 동료들의 회사 일상)
+- 원래 별도 저장소(`yume-script/porning_food`)의 cron 스크립트였는데 봇으로 합쳤다. 코드는 `poring_food/`,
+  기본 데이터(조직도/페르소나/경쟁사)는 `poring_food/data/`, 실행 중 쌓이는 상태(현재 상태/히스토리/
+  인물 상태/관계/최근 이슈/서고 점검)는 `storage/poring_food/`.
+- **실행**: `cogs/poring_food.py`가 매시 `PORING_FOOD_RUN_MINUTE`분(기본 3분, KST)에 한 회차를 돌린다.
+  포링푸드 코드는 동기(requests) 코드라 스레드에서 돌려서 봇을 막지 않는다. 관리자는 `/포링푸드실행`으로
+  지금 바로 한 회차를 돌려볼 수 있다. 봇이 꺼져 있던 시간의 회차는 건너뛴다.
+- **봇 것을 그대로 쓰는 것**: LLM(`LITELLM_*`, 모델만 `PORING_LLM_MODEL`로 따로 지정 가능), 카톡 브릿지
+  (`KATALK_BRIDGE_URL`, 방은 `PORING_KAKAO_ROOM_ID`), 디스코드(`PORING_DISCORD_CHANNEL_ID`면 봇이 직접
+  올림, 없으면 `PORING_DISCORD_WEBHOOK_URL` 웹훅), 북오아시스 MCP 연결, 대화 로그 DB("생산량"/경쟁사 지표).
+- **대화 중 조회**: `poring_food/tools.py`의 도구(`get_current_status`, `get_recent_history`,
+  `get_all_characters_status`, `get_character_story`, `get_bookoasis_report` 등)를 아메하나/애순이가 바로
+  쓴다 - 예전처럼 MCP 하위 프로세스를 띄우지 않는다.
+- **애순이 겸직 - 사내 자료실 "북오아시스"**: 애순이가 방송 주인공인 시간에 봇의 bookoasis MCP로 신간/장서를
+  **읽기 전용** 조회(`search_books`, `get_library_stats`만)해서, 신간 입고나 서고 연결 끊김/복구가 있을 때만
+  이야기에 1~2문장 넣는다. 이야기는 카톡으로도 나가므로 기본값으로 adult 서재는 제목·통계 모두 뺀다
+  (`BOOKOASIS_STORY_DB_TYPES`).
+- 확률/가중치 조정값(`AESUN_SPOTLIGHT_WEIGHT`, `INTERACTION_HOURS`, `EXTERNAL_TOPIC_PROBABILITY` 등)은
+  예전 이름 그대로 봇 `.env`에 둔다.
 
 ## Redroid 패키지 감시 알림
 - **감시/자동 삭제는 cron**이 한다: `scripts/redroid_check_packages.sh`가 15분마다 Redroid(192.168.0.50)의

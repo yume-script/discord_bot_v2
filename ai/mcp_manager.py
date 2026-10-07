@@ -25,6 +25,7 @@ MCP_CONNECT_TIMEOUT_SEC = 30
 _client: list[MultiServerMCPClient] | None = None
 _tools: list = []
 _admin_only_tools: set[str] = set()  # admin_only: true 서버에서 온 도구 이름 (개명 후 이름)
+_tools_by_server: dict[str, list] = {}  # 서버 이름 -> 그 서버의 도구들 (poring_food/bookoasis.py가 사용)
 
 _ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -78,7 +79,7 @@ async def init_mcp() -> list:
     "{서버이름}_{도구이름}"으로 자동 개명해서 충돌을 피한다. 서버 하나가 실패해도
     그 서버만 건너뛰고 나머지는 정상 연결된다.
     """
-    global _client, _tools, _admin_only_tools
+    global _client, _tools, _admin_only_tools, _tools_by_server
 
     if not settings.MCP_SERVERS_CONFIG_PATH.exists():
         _tools = []
@@ -102,6 +103,7 @@ async def init_mcp() -> list:
     merged_tools: list = []
     clients: list[MultiServerMCPClient] = []
     admin_only_tools: set[str] = set()
+    tools_by_server: dict[str, list] = {}
 
     for server_name, raw_cfg in server_config.items():
         try:
@@ -139,12 +141,14 @@ async def init_mcp() -> list:
             else:
                 seen_names[tool.name] = server_name
             merged_tools.append(tool)
+            tools_by_server.setdefault(server_name, []).append(tool)
             if admin_only:
                 admin_only_tools.add(tool.name)
 
     _client = clients
     _tools = merged_tools
     _admin_only_tools = admin_only_tools
+    _tools_by_server = tools_by_server
     if admin_only_tools:
         log.info("관리자 전용 MCP 도구: %s", sorted(admin_only_tools))
     return _tools
@@ -152,6 +156,11 @@ async def init_mcp() -> list:
 
 def get_tools() -> list:
     return _tools
+
+
+def get_server_tools(server_name: str) -> list:
+    """특정 MCP 서버의 도구만 (이름 충돌로 "{서버}_{도구}"로 개명된 것 포함). 연결 실패한 서버면 빈 리스트."""
+    return list(_tools_by_server.get(server_name, []))
 
 
 def is_admin_only_tool(tool_name: str) -> bool:
