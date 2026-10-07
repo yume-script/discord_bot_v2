@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from config import settings
 
+from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from . import runtime
 from .config import DISCORD_CHANNEL_ID, DISCORD_WEBHOOK_URL, ROOM_ID, STATUS_OUT_PATH, HISTORY_LOG_PATH, HISTORY_RETENTION_DAYS
@@ -44,7 +45,7 @@ def append_to_history(status_data, character="애순이"):
     try:
         os.makedirs(os.path.dirname(HISTORY_LOG_PATH), exist_ok=True)
 
-        cutoff = datetime.now() - timedelta(days=HISTORY_RETENTION_DAYS)
+        cutoff = now_kst() - timedelta(days=HISTORY_RETENTION_DAYS)
         kept_lines = []
         if os.path.exists(HISTORY_LOG_PATH):
             with open(HISTORY_LOG_PATH, "r", encoding="utf-8") as f:

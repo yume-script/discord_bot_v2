@@ -5,6 +5,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from .clock import now_kst
 from . import metrics
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import (
@@ -88,7 +89,7 @@ def get_rival_performance_report(our_count: int) -> list:
       하루 안에서 실행할 때마다 들쭉날쭉하지 않게 함)
     """
     rivals = _load_rivals()
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = now_kst().strftime("%Y-%m-%d")
     report = []
 
     for rival in rivals:
@@ -184,7 +185,7 @@ def get_aesun_detailed_schedule():
     바뀜), 시간이 지나면 자연스럽게 바뀐다. 출퇴근/취침/업무 시간대는 그대로 고정 - 실제로
     그 시간엔 다른 걸 하기 어려우니까.
     """
-    now = datetime.now()
+    now = now_kst()
     hour = now.hour
     weekday = now.weekday()
     is_weekend = (weekday == 6)
@@ -265,8 +266,8 @@ def get_last_issue():
         try:
             with open(ISSUE_LOG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            last_time = datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat()))
-            if datetime.now() - last_time > timedelta(hours=24):
+            last_time = datetime.fromisoformat(data.get("timestamp", now_kst().isoformat()))
+            if now_kst() - last_time > timedelta(hours=24):
                 return {"title": "평화로운 일상", "description": "지난 사건은 모두 해결되어 특별한 문제 없는 평온한 상태다."}
             return data
         except:
@@ -275,7 +276,7 @@ def get_last_issue():
 
 
 def save_current_issue(issue):
-    issue["timestamp"] = datetime.now().isoformat()
+    issue["timestamp"] = now_kst().isoformat()
     with open(ISSUE_LOG_FILE, "w", encoding="utf-8") as f:
         json.dump(issue, f, ensure_ascii=False)
 
@@ -426,7 +427,7 @@ def generate_dynamic_issue(org_data, weather_info, factory_status, our_count=0, 
 
 
 def get_time_tag():
-    now = datetime.now()
+    now = now_kst()
     weekday = now.weekday()
     hour = now.hour
     if weekday == 6:

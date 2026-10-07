@@ -20,8 +20,8 @@ import json
 import os
 import random
 import requests
-from datetime import datetime
 
+from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import (
     API_URL,
@@ -110,7 +110,7 @@ def get_generic_schedule(character: dict, rnd: random.Random) -> tuple[str, str,
     업무 시간엔 그 인물의 key_behavior(조직도에 있는, 콤마로 구분된 2~3개 행동) 중
     하나를 그대로 활동으로 쓰고, 그 외 시간엔 공용 개인활동 풀에서 가중치 랜덤으로 고른다.
     """
-    now = datetime.now()
+    now = now_kst()
     hour = now.hour
     is_weekend = now.weekday() >= 5  # 토/일 - 애순이와 달리 다른 인물은 토요일 특근 디테일 없음
 
@@ -155,7 +155,7 @@ def update_all_states(roster: list[dict], rnd: random.Random, aesun_state: dict 
     키는 인물 id(회사+이름)로 저장하지만, 표시용 "name"/"company" 필드도 같이 넣어둔다.
     """
     states = {}
-    now_iso = datetime.now().isoformat()
+    now_iso = now_kst().isoformat()
 
     for character in roster:
         cid = character["id"]
@@ -278,7 +278,7 @@ def generate_interaction(pair: tuple[str, str], states: dict, roster_map: dict[s
     rel["affinity"] = max(-100, min(100, rel.get("affinity", 0) + delta))
     rel["summary"] = data.get("relationship_summary", rel.get("summary", ""))
     rel["count"] = rel.get("count", 0) + 1
-    rel["last_interaction"] = datetime.now().isoformat()
+    rel["last_interaction"] = now_kst().isoformat()
     rels[rel_key] = rel
     save_relationships(rels)
 
