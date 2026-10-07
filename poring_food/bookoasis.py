@@ -5,9 +5,10 @@ checker.py가 카톡 브릿지 서버 상태를 "공장 가동 상태"로, proce
 로그를 "생산량"으로 바꿔 쓰는 것처럼, 실제 BookOasis 서버의 신간 입고/장서 현황을 애순이가
 관리하는 "서고" 이야기 소재로 쓴다.
 
-[연결] 봇(ai/mcp_manager.py)이 부팅 때 연결해 둔 bookoasis MCP 서버의 도구를 그대로 쓴다 -
-SSH를 따로 열지 않는다. 이 모듈은 봇 이벤트 루프 밖(스레드)에서 돌기 때문에, 도구 호출은
-runtime.run_on_bot_loop()로 봇 루프에 넘겨서 실행한다.
+[연결] 봇(ai/mcp_manager.py)에 설정된 bookoasis MCP 서버에 세션 "하나"를 열어서 조회를 연달아
+한다(server_session). 봇의 LangChain 도구는 호출마다 SSH+docker exec를 새로 띄워서, 조회 3번이면
+연결도 3번이라 느렸다(실서버에서 45초 타임아웃). 이 모듈은 봇 이벤트 루프 밖(스레드)에서 돌기
+때문에 세션 작업은 runtime.run_on_bot_loop()로 봇 루프에 넘겨서 실행한다.
 
 [안전] BookOasis MCP 서버에는 데이터를 바꾸는 도구도 있지만, 여기서는 조회 도구
 (search_books, get_library_stats)만 이름을 지정해서 호출한다. LLM이 도구를 고르는 구조가
@@ -26,7 +27,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from datetime import datetime
 
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -66,62 +66,63 @@ def _save_state(state: dict) -> None:
         print(f"[경고] 북오아시스 상태 저장 실패: {e}")
 
 
-def _parse_tool_result(raw) -> dict:
-    """
-    LangChain MCP 도구의 결과를 dict로. 보통 JSON 문자열이고, 콘텐츠 블록 리스트로 올 때도 있다
-    (scripts/new_content_notifier.py가 실제 서버로 검증한 형식과 같은 처리).
-    """
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str):
-        try:
-            data = json.loads(raw)
-            return data if isinstance(data, dict) else {}
-        except json.JSONDecodeError:
-            return {}
-    if isinstance(raw, (list, tuple)):
-        for block in raw:
-            text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
-            if text:
-                data = _parse_tool_result(text)
-                if data:
+def _parse_tool_result(result) -> dict:
+    """MCP 도구 결과(CallToolResult)를 dict로. 구조화 결과가 있으면 그걸, 없으면 텍스트를 JSON으로."""
+    structured = getattr(result, "structuredContent", None)
+    if isinstance(structured, dict):
+        # FastMCP는 반환값을 {"result": ...}로 감싸기도 한다 (문자열 JSON이면 한 번 더 파싱)
+        inner = structured.get("result", structured)
+        if isinstance(inner, dict):
+            return inner
+        if isinstance(inner, str):
+            try:
+                data = json.loads(inner)
+                if isinstance(data, dict):
                     return data
+            except json.JSONDecodeError:
+                pass
+    for block in getattr(result, "content", None) or []:
+        text = getattr(block, "text", None)
+        if not text:
+            continue
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            continue
     return {}
 
 
-def _find_tool(tools: dict, name: str):
-    """이름 충돌로 "{서버}_{도구}"로 개명됐을 수도 있어서 둘 다 찾아본다."""
-    return tools.get(name) or tools.get(f"{BOOKOASIS_MCP_SERVER}_{name}")
+async def _fetch_async() -> dict:
+    """bookoasis MCP 서버에 세션 하나를 열고 조회 도구만 호출한다. [봇 이벤트 루프에서 실행]"""
+    from ai.mcp_manager import server_session
+
+    async with server_session(BOOKOASIS_MCP_SERVER) as session:
+        tool_names = {t.name for t in (await session.list_tools()).tools}
+
+        series_by_type: dict[str, list] = {}
+        if "search_books" in tool_names:
+            for db_type in BOOKOASIS_STORY_DB_TYPES:
+                res = await session.call_tool(
+                    "search_books", {"db_type": db_type, "sort": "date_desc", "limit": SEARCH_LIMIT}
+                )
+                if getattr(res, "isError", False):
+                    continue
+                series_by_type[db_type] = _parse_tool_result(res).get("series", []) or []
+
+        stats: dict = {}
+        if "get_library_stats" in tool_names:
+            res = await session.call_tool("get_library_stats", {})
+            if not getattr(res, "isError", False):
+                stats = _parse_tool_result(res)
+
+    return {"series_by_type": series_by_type, "stats": stats}
 
 
 def _fetch() -> dict:
-    """봇이 연결해 둔 bookoasis MCP 서버의 조회 도구만 호출한다. [스레드에서 호출]"""
-    from ai.mcp_manager import get_server_tools
-
-    tools = {t.name: t for t in get_server_tools(BOOKOASIS_MCP_SERVER)}
-    if not tools:
-        raise RuntimeError(f"봇에 '{BOOKOASIS_MCP_SERVER}' MCP 서버가 연결되어 있지 않음")
-    deadline = time.monotonic() + BOOKOASIS_TIMEOUT_SEC
-
-    def call(tool, args: dict) -> dict:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError()
-        return _parse_tool_result(runtime.run_on_bot_loop(tool.ainvoke(args), timeout=remaining))
-
-    series_by_type: dict[str, list] = {}
-    search = _find_tool(tools, "search_books")
-    if search is not None:
-        for db_type in BOOKOASIS_STORY_DB_TYPES:
-            data = call(search, {"db_type": db_type, "sort": "date_desc", "limit": SEARCH_LIMIT})
-            series_by_type[db_type] = data.get("series", []) or []
-
-    stats: dict = {}
-    stats_tool = _find_tool(tools, "get_library_stats")
-    if stats_tool is not None:
-        stats = call(stats_tool, {})
-
-    return {"series_by_type": series_by_type, "stats": stats}
+    """[스레드에서 호출] 봇 이벤트 루프에서 _fetch_async를 돌리고 결과를 기다린다."""
+    return runtime.run_on_bot_loop(_fetch_async(), timeout=BOOKOASIS_TIMEOUT_SEC)
 
 
 def _root_cause(exc: BaseException) -> BaseException:

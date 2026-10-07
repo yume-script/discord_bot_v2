@@ -74,7 +74,7 @@ API_URL = _chat_completions_url(settings.LITELLM_BASE_URL)
 # 봇이 이미 연결해 둔 bookoasis MCP 서버의 조회 도구만 쓴다 (SSH를 따로 열지 않음).
 BOOKOASIS_ENABLED = os.getenv("BOOKOASIS_ENABLED", "1") not in ("0", "false", "False", "")
 BOOKOASIS_MCP_SERVER = os.getenv("BOOKOASIS_MCP_SERVER", "bookoasis")  # config/mcp_servers.yaml의 서버 이름
-BOOKOASIS_TIMEOUT_SEC = int(os.getenv("BOOKOASIS_TIMEOUT_SEC", "45"))
+BOOKOASIS_TIMEOUT_SEC = int(os.getenv("BOOKOASIS_TIMEOUT_SEC", "90"))  # SSH+docker exec 연결 포함
 # 이야기에 쓸 서재 종류. 이야기는 카톡으로도 나가므로 기본값에서 adult는 뺐다.
 BOOKOASIS_STORY_DB_TYPES = [
     t.strip() for t in os.getenv("BOOKOASIS_STORY_DB_TYPES", "general,audiobook").split(",") if t.strip()
