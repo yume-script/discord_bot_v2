@@ -7,7 +7,7 @@ from config import settings
 
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from . import runtime
-from .config import DISCORD_WEBHOOK_URL, ROOM_ID, STATUS_OUT_PATH, HISTORY_LOG_PATH, HISTORY_RETENTION_DAYS
+from .config import DISCORD_CHANNEL_ID, DISCORD_WEBHOOK_URL, ROOM_ID, STATUS_OUT_PATH, HISTORY_LOG_PATH, HISTORY_RETENTION_DAYS
 
 
 def save_to_file(status_data):
@@ -78,17 +78,24 @@ def send_to_discord(text):
         try:
             runtime.send_discord(text)
             print("[성공] Discord 전송 완료 (봇)")
+            return
         except Exception as e:
-            print(f"[에러] Discord 전송 실패: {e}")
-        return
+            # 예: 403 Missing Access - 봇이 그 채널(서버)에 권한이 없음. 웹훅이 있으면 웹훅으로 다시 보낸다
+            # (웹훅은 봇이 그 서버에 없어도 올릴 수 있다).
+            hint = " - 봇에 그 채널의 '채널 보기/메시지 보내기' 권한이 있는지 확인" if "Missing Access" in str(e) else ""
+            print(f"[에러] Discord 전송 실패 (봇, 채널 {DISCORD_CHANNEL_ID}): {e}{hint}")
+            if not DISCORD_WEBHOOK_URL:
+                return
+            print("[정보] 웹훅(PORING_DISCORD_WEBHOOK_URL)으로 다시 보냅니다.")
     if not DISCORD_WEBHOOK_URL:
         return
     try:
-        requests.post(
+        resp = requests.post(
             DISCORD_WEBHOOK_URL,
-            json={"content": text, "allowed_mentions": {"parse": []}},
-            timeout=5,
+            json={"content": text[:2000], "allowed_mentions": {"parse": []}},
+            timeout=10,
         )
+        resp.raise_for_status()
         print("[성공] Discord 전송 완료 (웹훅)")
     except Exception as e:
         print(f"[에러] Discord 전송 실패: {e}")

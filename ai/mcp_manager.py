@@ -26,6 +26,7 @@ _client: list[MultiServerMCPClient] | None = None
 _tools: list = []
 _admin_only_tools: set[str] = set()  # admin_only: true 서버에서 온 도구 이름 (개명 후 이름)
 _tools_by_server: dict[str, list] = {}  # 서버 이름 -> 그 서버의 도구들 (poring_food/bookoasis.py가 사용)
+_clients_by_server: dict[str, MultiServerMCPClient] = {}  # 서버 이름 -> 연결 설정이 들어 있는 클라이언트
 
 _ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -79,7 +80,7 @@ async def init_mcp() -> list:
     "{서버이름}_{도구이름}"으로 자동 개명해서 충돌을 피한다. 서버 하나가 실패해도
     그 서버만 건너뛰고 나머지는 정상 연결된다.
     """
-    global _client, _tools, _admin_only_tools, _tools_by_server
+    global _client, _tools, _admin_only_tools, _tools_by_server, _clients_by_server
 
     if not settings.MCP_SERVERS_CONFIG_PATH.exists():
         _tools = []
@@ -104,6 +105,7 @@ async def init_mcp() -> list:
     clients: list[MultiServerMCPClient] = []
     admin_only_tools: set[str] = set()
     tools_by_server: dict[str, list] = {}
+    clients_by_server: dict[str, MultiServerMCPClient] = {}
 
     for server_name, raw_cfg in server_config.items():
         try:
@@ -122,6 +124,7 @@ async def init_mcp() -> list:
             continue
 
         clients.append(client)
+        clients_by_server[server_name] = client
         for tool in server_tools:
             if tool.name in seen_names:
                 owner = seen_names[tool.name]
@@ -149,6 +152,7 @@ async def init_mcp() -> list:
     _tools = merged_tools
     _admin_only_tools = admin_only_tools
     _tools_by_server = tools_by_server
+    _clients_by_server = clients_by_server
     if admin_only_tools:
         log.info("관리자 전용 MCP 도구: %s", sorted(admin_only_tools))
     return _tools
@@ -161,6 +165,20 @@ def get_tools() -> list:
 def get_server_tools(server_name: str) -> list:
     """특정 MCP 서버의 도구만 (이름 충돌로 "{서버}_{도구}"로 개명된 것 포함). 연결 실패한 서버면 빈 리스트."""
     return list(_tools_by_server.get(server_name, []))
+
+
+def server_session(server_name: str):
+    """
+    특정 MCP 서버에 세션 하나를 열어서 여러 도구를 연달아 호출할 때 쓴다 (async with).
+
+    get_tools()로 받은 LangChain 도구는 호출할 때마다 서버를 새로 띄운다(stdio면 매번 프로세스
+    실행 - bookoasis는 매번 SSH + docker exec). 한 번에 여러 개를 부를 땐 이 세션을 쓰는 게
+    훨씬 빠르다. 도구 이름은 서버가 정한 원래 이름(개명 전)이다.
+    """
+    client = _clients_by_server.get(server_name)
+    if client is None:
+        raise RuntimeError(f"MCP 서버 '{server_name}'가 연결되어 있지 않음")
+    return client.session(server_name)
 
 
 def is_admin_only_tool(tool_name: str) -> bool:
