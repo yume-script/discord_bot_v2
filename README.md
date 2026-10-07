@@ -143,7 +143,7 @@ python app.py
   지금 바로 한 회차를 돌려볼 수 있다. 봇이 꺼져 있던 시간의 회차는 건너뛴다.
 - **봇 것을 그대로 쓰는 것**: LLM(`LITELLM_*`, 모델만 `PORING_LLM_MODEL`로 따로 지정 가능), 카톡 브릿지
   (`KATALK_BRIDGE_URL`, 방은 `PORING_KAKAO_ROOM_ID`), 디스코드(`PORING_DISCORD_CHANNEL_ID`면 봇이 직접
-  올림, 없으면 `PORING_DISCORD_WEBHOOK_URL` 웹훅), 북오아시스 MCP 연결, 대화 로그 DB("생산량"/경쟁사 지표).
+  올림, 없으면 `PORING_DISCORD_WEBHOOK_URL` 웹훅), 북오아시스 MCP 연결, 대화 로그 DB("주문·고객 문의"/경쟁사 지표).
 - **대화 중 조회**: `poring_food/tools.py`의 도구(`get_current_status`, `get_recent_history`,
   `get_all_characters_status`, `get_character_story`, `get_bookoasis_report` 등)를 아메하나/애순이가 바로
   쓴다 - 예전처럼 MCP 하위 프로세스를 띄우지 않는다.
@@ -161,13 +161,18 @@ python app.py
     줄거리 2~4개와 "지난 이야기" 압축 요약(`story_arcs.json`) - 모두 `storage/poring_food/`.
   - **작가 회의**: 하루 한 번(`PORING_WRITERS_ROOM_HOUR`, 기본 23시) 그날 장면과 **바깥 세상 변화**를 보고
     줄거리를 진행/종결/새로 띄운다. 바깥 변화 = 광주 날씨, 오늘의 화제(뉴스/스포츠/영화), 카톡 브릿지 상태
-    (공장 라인), 서버 상태(공장 설비), 단톡방 대화량(생산량), 북오아시스 신간/장애(자료실), Redroid 차단(사내 보안),
+    (공장 라인), 서버 상태(공장 설비), 생산/판매/주문 지표, 북오아시스 신간/장애(자료실), Redroid 차단(사내 보안),
     요일·월말·계절. 매 장면에도 같은 신호가 들어가서 인물들이 그날 실제 변화에 반응한다.
   - **MCP 실측 신호** (`poring_food/mcp_signals.py`): 매시 회차 시작 때 봇이 연결해 둔 MCP 서버로 한 번 조회한다.
     `korea_weather`(기상청 초단기예보, 광주 좌표) → 날씨 - 받으면 일지의 LLM 날씨 검색을 건너뛴다.
     `server_status` → 공장 설비(CPU=가동률, 메모리=작업장 혼잡도, 디스크=창고 적재율, 온도=설비 온도,
     가동시간=연속 가동, 멈춘 서비스=멈춘 라인). 평소엔 수치 한 줄, 임계값(폭염/폭우/과부하/창고 80·90%/
     과열/재부팅 등)을 넘을 때만 "사건"으로 표시한다. 실패한 서버는 그냥 빠진다.
+  - **생산/판매/주문 지표** (`poring_food/metrics.py`, 매시 회차 시작 때 집계 → `storage/poring_food/metrics.json`):
+    생산량 = 오늘 Plex 신규 등록 + 북오아시스 신간(이야기용 서재만), 판매량 = 오늘 Plex 재생 수(Tautulli,
+    지금 시청 중인 수는 "매장 손님"), 주문·고객 문의 = 오늘 사람이 봇에게 보낸 메시지 수. 목표는 고정값이
+    아니라 각 지표의 최근 7일 하루 평균이고, 지금 시각까지로 비례 환산해서 바쁨/평소/한산을 정한다.
+    이야기에는 개수만 들어간다(제목 없음). 조회 실패 시 같은 날의 직전 값을 쓴다.
   - **매시 일지**에도 진행 중인 줄거리와 그 인물이 오늘 겪은 장면을 넣는다.
   - 대화 중 "포링푸드 요즘 무슨 일 있어?"는 `get_poring_story` 도구로 답한다.
   - 끄려면 `PORING_STORY_ENABLED=0` (예전 "우연한 마주침" 요약 방식으로 돌아감).
