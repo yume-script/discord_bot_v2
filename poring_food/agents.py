@@ -25,7 +25,7 @@ import random
 import sqlite3
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from . import characters, life, memory, runtime, signals, world
 from .clock import now_kst
@@ -37,11 +37,11 @@ AGENTS_PATH = os.path.join(DATA_DIR, "agents.json")
 STATE_PATH = os.path.join(STATE_DIR, "agents_state.json")
 DIALOGUES_PATH = os.path.join(STATE_DIR, "dialogues.jsonl")  # story.py와 같은 파일 (조회 도구가 같이 읽는다)
 
-MAX_AGENTS = 5
+MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "12"))
 MAX_INBOX = 20
 MAX_LOG = 24
 MAX_TURNS = int(os.getenv("PORING_AGENT_MAX_TURNS", "6"))                  # 대화 한 번의 최대 발언 수
-MAX_CONVOS_PER_DAY = int(os.getenv("PORING_AGENT_MAX_CONVOS_PER_DAY", "8"))
+MAX_CONVOS_PER_DAY = int(os.getenv("PORING_AGENT_MAX_CONVOS_PER_DAY", "12"))
 TYPING_DELAY = (float(os.getenv("PORING_AGENT_DELAY_MIN", "3")), float(os.getenv("PORING_AGENT_DELAY_MAX", "8")))
 DECIDE_TIMEOUT_SEC = 45
 VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
@@ -109,6 +109,37 @@ def current(name: str) -> dict | None:
     if d and d.get("hour") == _hour_key(now_kst()):
         return d
     return None
+
+
+def latest(name: str, max_age_h: int = 1) -> dict | None:
+    """가장 최근 판단이 max_age_h시간 이내면 그걸 (몇 시간마다 판단하는 에이전트는 그사이에도 그 행동을 이어간다)."""
+    d = _load_state().get(name, {}).get("decision")
+    if not d:
+        return None
+    try:
+        age = (now_kst() - datetime.strptime(d["hour"], "%Y-%m-%d %H")).total_seconds() / 3600
+    except (KeyError, ValueError):
+        return None
+    return d if age < max_age_h else None
+
+
+def active(name: str) -> dict | None:
+    """지금 유효한 그 에이전트의 행동 (이번 시간 판단, 또는 판단 주기 안의 최근 판단)."""
+    agent = next((a for a in load_agents() if a["name"] == name), None)
+    return latest(name, _every(agent)) if agent else None
+
+
+def _every(agent: dict) -> int:
+    try:
+        return max(1, int(agent.get("decide_every") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _due(agent: dict, hour: int) -> bool:
+    """이번 시간이 판단할 차례인가. 사람마다 시각을 흩어 놓는다(모두 같은 시간에 몰리지 않게)."""
+    every = _every(agent)
+    return every == 1 or (hour + sum(map(ord, agent["name"]))) % every == 0
 
 
 def _asleep(agent: dict, hour: int) -> bool:
@@ -223,7 +254,7 @@ def _post(agent: dict, text: str) -> None:
         print(f"[에이전트] (채널 미설정) {agent['name']}: {text}")
         return
     try:
-        runtime.send_as(agent.get("account", ""), agent["name"], text)
+        runtime.send_as(agent.get("account", ""), agent["name"], text, agent.get("avatar_url", ""))
     except Exception as e:  # noqa: BLE001
         print(f"[경고] {agent['name']} 메시지 전송 실패: {e}")
 
@@ -241,7 +272,7 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
     rel = rels.get(characters._rel_key(roster_ids.get(name, name), roster_ids.get(other["name"], other["name"])), {})
     lines = "\n".join(f"{t['speaker']}: {t['line']}" for t in transcript)
     now = now_kst()
-    me = current(name) or {}
+    me = latest(name, _every(agent) + 1) or {}
     now_line = (f"[지금 나] 오늘은 {now.month}월 {now.day}일 {'월화수목금토일'[now.weekday()]}요일 {now.strftime('%H:%M')}. "
                 + (f"나는 지금 {me['location']}에서 {me['activity']} 중이다." if me else ""))
     user = (
@@ -357,6 +388,9 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         if (st.get("decision") or {}).get("hour") == hk:
             decisions[name] = st["decision"]
             continue
+        # 몇 시간마다 판단하는 에이전트: 차례가 아니고 새 소식도 없으면 이전 판단을 이어간다 (LLM 호출 절약)
+        if not _due(agent, now.hour) and not st.get("inbox"):
+            continue
         kakao, new_since = _kakao_digest(agent, st.get("kakao_since", ""))
         others = [o for o in agents if o is not agent]
         d = _decide(agent, st, routine_hints.get(name, ""), kakao, others)
@@ -384,7 +418,10 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         convo.clear()
         convo.update({"date": today, "count": 0, "hours": []})
     if hk not in convo["hours"] and convo["count"] < MAX_CONVOS_PER_DAY:
-        for name, d in decisions.items():
+        # 연락하려는 사람이 여럿이면 매번 같은 사람이 먼저 되지 않게 섞는다
+        order = list(decisions.items())
+        random.Random(hk).shuffle(order)
+        for name, d in order:
             c = d.get("contact")
             if not c or c.get("done"):
                 continue
@@ -410,7 +447,8 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
 # ===================================================================== 다른 곳에서 쓰는 요약
 def diary_block(name: str) -> str:
     """주인공 일지용: 이번 시간 그 에이전트가 실제로 한 일/생각 (작가 회의 줄거리 대신)."""
-    d = current(name)
+    agent = next((a for a in load_agents() if a["name"] == name), {})
+    d = latest(name, _every(agent)) if agent else current(name)
     if not d:
         return ""
     lines = [f"[이번 시간 {name}가 실제로 한 일과 생각 - 이걸 바탕으로 써라]",

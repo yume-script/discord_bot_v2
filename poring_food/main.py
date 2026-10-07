@@ -57,7 +57,7 @@ def _agent_overrides() -> dict[str, dict]:
     """이번 시간 LLM 에이전트가 스스로 정한 행동 {이름: {location, activity, state}} (애순이는 따로 처리)."""
     out = {}
     for name in agents.names() - {"애순이"}:
-        d = agents.current(name)
+        d = agents.active(name)
         if d:
             out[name] = {"location": d["location"], "activity": d["activity"], "state": d["state"]}
     return out
