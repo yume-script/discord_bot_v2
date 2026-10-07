@@ -9,6 +9,7 @@ from . import processor
 from . import generator
 from . import notifier
 from . import checker
+from . import metrics
 from . import characters
 from . import signals
 from . import story
@@ -172,6 +173,11 @@ def main():
         signals.refresh_live()
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 외부 신호 갱신 실패: {e}")
+    # 생산(Plex/북오아시스 신규 입고)/판매(Plex 재생)/주문(대화량) 지표도 회차마다 한 번 집계
+    try:
+        metrics.refresh()
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 생산 지표 갱신 실패: {e}")
     _maybe_run_writers_room()
 
     # 1. 현재 스케줄 및 상태 확인
@@ -184,9 +190,10 @@ def main():
     prod_count, progress_rate = processor.get_production_stats()
     stats = (prod_count, progress_rate)
     sales_count = processor.get_sales_stats()
+    order_count = processor.get_order_stats()
     mood = processor.get_daily_mood()
 
-    print(f"[통계] 현재 생산량: {prod_count}건 ({progress_rate}%) / 영업 판매수량: {sales_count}건")
+    print(f"[통계] 생산(신규 입고): {prod_count}건 (평소 대비 {progress_rate}%) / 판매(재생): {sales_count}건 / 주문(대화): {order_count}건")
     print(f"[감정] 오늘의 애순이: {mood}")
 
     # 2. 취침 중일 경우 처리 (기존과 동일 - 스포트라이트 로테이션 없음)
@@ -250,7 +257,7 @@ def main():
 
     print("[2/4] 조직도 기반 동적 이슈 생성 중...")
     dynamic_issue = processor.generate_dynamic_issue(
-        org_data, weather_info, factory_status=factory_msg, our_count=prod_count,
+        org_data, weather_info, factory_status=factory_msg, our_count=order_count,
         bookoasis_block=bookoasis_block, story_block=story_block,
     )
 

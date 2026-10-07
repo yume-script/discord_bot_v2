@@ -35,7 +35,7 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
     """
     processor에서 생성된 '이전 사건 후일담', '오늘의 기분', '생산 통계'를 바탕으로
     애순이의 인간적인 희노애락이 담긴 1인칭 보고서를 생성합니다.
-    sales_count: 오늘 "영업 판매수량"(discord_bot_v2 대화로그의 봇 응답 건수 기반) - 생산량과
+    sales_count: 오늘 "영업 판매수량"(Plex 재생 수, poring_food/metrics.py) - 생산량과
     같은 확률(PRODUCTION_STATS_MENTION_PROBABILITY)로 같이 언급되거나 같이 빠진다.
     bookoasis_block: [신규] 애순이 겸직(사내 자료실 북오아시스) 소식 - 신간 입고나 서고 전산
     장애/복구가 있을 때만 내용이 있고(bookoasis.build_prompt_block), 없으면 빈 문자열이다.
@@ -53,8 +53,8 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
     include_stats = random.random() < PRODUCTION_STATS_MENTION_PROBABILITY
 
     stats_line = (
-        f"- 현재 생산 현황: {main_product} {count}건 달성 (목표 대비 {progress}%)\n"
-        f"- 오늘 영업 판매수량: {sales_count}건\n\n"
+        f"- 오늘 생산 현황(신규 입고): {main_product} {count}건 (평소 하루 생산량 대비 {progress}%)\n"
+        f"- 오늘 영업 판매수량(출하): {sales_count}건\n\n"
     ) if include_stats else "\n"
     prev_callback_rule = (
         "- 이전 사건에 대한 후일담을 1~2문장 정도 자연스럽게 섞어라, 그때 느꼈던 감정도 살짝 곁들여라.\n"

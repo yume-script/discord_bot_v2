@@ -5,6 +5,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from . import metrics
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import (
     API_URL, LITELLM_MASTER_KEY, LLM_MODEL, SEARCH_MODEL, DISCORD_BOT_V2_DB_PATH, ISSUE_LOG_PATH, RIVALS_PATH,
@@ -18,56 +19,24 @@ KST = timezone(timedelta(hours=9))
 # 이 길드(디스코드 서버) 전체로 들어오는 입력을 "고객의 요청사항"으로 간주.
 # https://discord.com/channels/{길드ID}/{채널ID} 에서 길드ID 부분.
 TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "591180628842774550")
-DAILY_TARGET = int(os.getenv("DAILY_TARGET_PRODUCTION", 1000))
-
-
-
-def _count_discord_bot_v2_messages(direction: str) -> int:
-    """
-    [신규] discord_bot_v2의 conversations.db(SQLite, messages 테이블)에서 오늘(KST)
-    메시지 수를 direction별로 센다. direction='in'(유저가 보낸 것)은 생산량, 'out'
-    (아메하나/애순이가 응답한 것)은 영업 판매수량으로 쓴다.
-
-    [변경] 원래 지메일 API(OAuth)로 하려다, 이미 다른 프로젝트에서 OAuth 쿼터를 많이
-    쓰고 있고 게시 안 된 앱은 refresh_token이 7일마다 만료돼서 자동화에 안 맞아 포기했다.
-    이미 연동되어 있는 discord_bot_v2의 SQLite 파일을 직접 읽는 쪽이 새 인증 없이 훨씬
-    간단하다. ts 컬럼이 이미 KST(+09:00)로 저장되어 있어서(discord_bot_v2 쪽에서 타임존
-    버그를 고친 뒤부터) 문자열 앞부분(YYYY-MM-DD)만 비교해도 "오늘" 판정이 정확하다.
-    """
-    if not os.path.exists(DISCORD_BOT_V2_DB_PATH):
-        print(f"[경고] discord_bot_v2 DB를 못 찾음: {DISCORD_BOT_V2_DB_PATH}")
-        return 0
-    today_str = datetime.now(KST).strftime("%Y-%m-%d")
-    try:
-        conn = sqlite3.connect(f"file:{DISCORD_BOT_V2_DB_PATH}?mode=ro", uri=True)
-        try:
-            cur = conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE direction = ? AND ts LIKE ?",
-                (direction, f"{today_str}%"),
-            )
-            row = cur.fetchone()
-            return row[0] if row else 0
-        finally:
-            conn.close()
-    except Exception as e:
-        print(f"[경고] discord_bot_v2 DB 조회 실패: {e}")
-        return 0
 
 
 def get_production_stats():
     """
-    [변경] 원래는 카톡 로그를 직접 스캔했는데, discord_bot_v2가 이미 conversations.db에
-    카톡+디스코드 메시지를 전부 기록해두고 있어서 그걸 그대로 쓴다. 오늘(KST) 유저가 보낸
-    메시지 수(direction='in')를 "생산량"으로 삼는다.
+    (오늘 생산량, 최근 7일 하루 평균 대비 %). [변경] 예전엔 대화 로그의 사람 메시지 수였는데,
+    이제 생산량은 오늘 Plex/북오아시스 신규 입고 수다 (poring_food/metrics.py, 회차 시작 때 갱신).
     """
-    count = _count_discord_bot_v2_messages("in")
-    progress = (count / DAILY_TARGET) * 100 if DAILY_TARGET > 0 else 0
-    return count, round(progress, 1)
+    return metrics.production()
 
 
 def get_sales_stats():
-    """오늘(KST) 아메하나/애순이가 응답한 메시지 수(direction='out')를 "영업 판매수량"으로 삼는다."""
-    return _count_discord_bot_v2_messages("out")
+    """오늘 영업 판매수량 = 오늘 Plex 재생 수 (Tautulli)."""
+    return metrics.sales()
+
+
+def get_order_stats():
+    """오늘 주문·고객 문의 수 = 오늘 사람이 봇에게 보낸 메시지 수 (예전 "생산량")."""
+    return metrics.orders()
 
 
 # =============================================================================

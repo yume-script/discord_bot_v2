@@ -9,7 +9,9 @@
 | 광주 날씨(기상청 MCP) / 오늘의 화제 | 출근길·점심 수다·회식 분위기                    |
 | 서버 상태 MCP(CPU/메모리/디스크/온도) | 공장 설비 가동률·작업장 혼잡도·창고 적재율·과열 |
 | 카톡 브릿지 서버 상태             | 포링푸드 공장 라인 가동/정지                    |
-| 오늘 단톡방 대화량               | 생산량/주문량 (많으면 바쁨, 적으면 한가)        |
+| Plex/북오아시스 신규 등록 (metrics) | 생산량(신규 입고)                              |
+| Plex 재생 수 / 지금 시청 중 (Tautulli) | 출하(판매) / 매장 손님                        |
+| 오늘 대화량                       | 주문·고객 문의 (각각 최근 7일 평균과 비교)        |
 | 북오아시스 신간/장애              | 사내 자료실 입고 / 전산 먹통 (애순이 겸직)      |
 | Redroid 비인가 앱 차단            | 사내 보안 사고 / 보안팀 비상                     |
 | 요일·월말·계절                   | 월말 마감 압박, 토요 특근, 금요일 퇴근 분위기    |
@@ -28,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 
 from config import settings
 
-from . import checker, mcp_signals, processor
+from . import checker, mcp_signals, metrics, processor
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import BOOKOASIS_STATE_PATH, STATE_DIR
 
@@ -182,12 +184,9 @@ def collect(include_factory: bool = True) -> dict:
     if facility:
         signals["facility"] = facility
 
-    try:
-        count, progress = processor.get_production_stats()
-        level = "주문 폭주" if progress >= 80 else "평소 수준" if progress >= 20 else "한산함"
-        signals["production"] = f"오늘 생산량 {count}건 (목표 대비 {progress}%, {level})"
-    except Exception:  # noqa: BLE001
-        pass
+    production = metrics.describe()
+    if production:
+        signals["production"] = production
 
     book = _bookoasis_line()
     if book:
@@ -204,7 +203,7 @@ def format_block(signals: dict) -> str:
     """프롬프트에 넣을 "바깥 세상 변화" 블록."""
     labels = {
         "calendar": "날짜/시간", "weather": "날씨(광주)", "topic": "오늘 세상의 화제",
-        "factory": "공장 상태", "facility": "공장 설비", "production": "생산 현황", "bookoasis": "사내 자료실",
+        "factory": "공장 상태", "facility": "공장 설비", "production": "생산/판매 현황", "bookoasis": "사내 자료실",
         "security": "사내 보안",
     }
     lines = [f"- {labels[k]}: {v}" for k, v in signals.items() if k in labels and v]
