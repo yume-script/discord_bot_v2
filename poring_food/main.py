@@ -166,6 +166,12 @@ def main():
        애순이 또는 깨어있는 다른 인물 중에서 가중치 랜덤으로 고른다(스포트라이트 로테이션)
     4. 다인물 시뮬레이션(상태 갱신/상호작용)도 같이 굴린다
     """
+    # 바깥 세상 실측값(기상청 날씨, 공장 설비=서버 상태)을 회차 맨 앞에서 한 번 받아 둔다 -
+    # 작가 회의/일지/장면이 모두 같은 값을 쓴다. 실패해도 이야기는 그대로 진행.
+    try:
+        signals.refresh_live()
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 외부 신호 갱신 실패: {e}")
     _maybe_run_writers_room()
 
     # 1. 현재 스케줄 및 상태 확인
@@ -212,8 +218,11 @@ def main():
     org_data, _, persona_data = loader.load_resources()
 
     print("[1/4] 광주 실시간 날씨 조회 중...")
-    weather_info = processor.fetch_gwangju_weather()
-    signals.remember_weather(weather_info)  # 장면/작가 회의가 "바깥 세상 변화"로 다시 쓴다
+    # 회차 시작 때 기상청 MCP로 받아 둔 실측값이 있으면 그걸 쓰고(LLM 검색 호출 절약), 없을 때만 검색
+    weather_info = signals.live_weather()
+    if not weather_info:
+        weather_info = processor.fetch_gwangju_weather()
+        signals.remember_weather(weather_info)  # 장면/작가 회의가 "바깥 세상 변화"로 다시 쓴다
 
     # [신규] 스포트라이트 로테이션 - 다인물 상태를 먼저 갱신하고 그중에서 이번 시간 주인공을 뽑는다
     # [변경] 이슈 생성보다 먼저 뽑는다 - 애순이가 주인공일 때만 애순이 담당 업무(북오아시스 서고)
