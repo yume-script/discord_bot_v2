@@ -22,6 +22,10 @@ def bind(loop: asyncio.AbstractEventLoop, discord_sender: Callable[[str], Awaita
     _discord_sender = discord_sender
 
 
+def is_bound() -> bool:
+    return _loop is not None
+
+
 def run_on_bot_loop(coro: Awaitable[Any], timeout: float) -> Any:
     """[스레드에서 호출] 봇 이벤트 루프에서 코루틴을 실행하고 결과를 기다린다."""
     if _loop is None:

@@ -6,16 +6,19 @@
 
 | 실제 신호                        | 이야기 속 의미 (LLM에게 알려주는 대응)         |
 |----------------------------------|-----------------------------------------------|
-| 광주 날씨 / 오늘의 화제(뉴스 등)  | 출근길·점심 수다·회식 분위기                    |
+| 광주 날씨(기상청 MCP) / 오늘의 화제 | 출근길·점심 수다·회식 분위기                    |
+| 서버 상태 MCP(CPU/메모리/디스크/온도) | 공장 설비 가동률·작업장 혼잡도·창고 적재율·과열 |
 | 카톡 브릿지 서버 상태             | 포링푸드 공장 라인 가동/정지                    |
 | 오늘 단톡방 대화량               | 생산량/주문량 (많으면 바쁨, 적으면 한가)        |
 | 북오아시스 신간/장애              | 사내 자료실 입고 / 전산 먹통 (애순이 겸직)      |
 | Redroid 비인가 앱 차단            | 사내 보안 사고 / 보안팀 비상                     |
 | 요일·월말·계절                   | 월말 마감 압박, 토요 특근, 금요일 퇴근 분위기    |
 
-collect()는 가벼운 신호만(파일/DB/짧은 HTTP) 모으고, 날씨/화제처럼 LLM 검색이 필요한 건
-캐시(signals_cache.json)를 쓴다 - 날씨는 매시 일지가 이미 조회한 값을 remember_weather()로
-넣어두고, 화제는 하루 한 번(작가 회의 때) refresh_daily_topic()으로 갱신한다.
+collect()는 가벼운 신호만(파일/DB/짧은 HTTP) 모으고, 느린 건 캐시(signals_cache.json)를 쓴다:
+- 날씨/공장 설비: 매시 회차 시작 때 refresh_live()가 MCP(korea_weather, server_status)로
+  실측값을 받아 넣는다 (mcp_signals.py). 기상청 날씨를 못 받으면 매시 일지의 LLM 검색 날씨
+  (remember_weather)로 대신한다.
+- 화제: 하루 한 번(작가 회의 때) refresh_daily_topic()으로 갱신한다.
 """
 from __future__ import annotations
 
@@ -25,13 +28,14 @@ from datetime import datetime, timedelta, timezone
 
 from config import settings
 
-from . import checker, processor
+from . import checker, mcp_signals, processor
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import BOOKOASIS_STATE_PATH, STATE_DIR
 
 KST = timezone(timedelta(hours=9))
 CACHE_PATH = os.path.join(STATE_DIR, "signals_cache.json")
 WEATHER_MAX_AGE = timedelta(hours=3)
+LIVE_MAX_AGE = timedelta(hours=2)  # 기상청 날씨/공장 설비 - 매시 갱신이니 두 번 연속 실패하면 버린다
 _WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
 
@@ -60,6 +64,33 @@ def remember_weather(weather: str) -> None:
     cache = _load_cache()
     cache["weather"] = {"text": weather, "at": datetime.now(KST).isoformat()}
     _save_cache(cache)
+
+
+def refresh_live() -> None:
+    """[매시 회차 시작] MCP로 실측 날씨(기상청)와 공장 설비(서버 상태)를 받아 캐시에 넣는다."""
+    live = mcp_signals.fetch()
+    if not live:
+        return
+    cache = _load_cache()
+    at = datetime.now(KST).isoformat()
+    for key, text in live.items():
+        cache[f"live_{key}"] = {"text": text, "at": at}
+    _save_cache(cache)
+    print(f"[신호] MCP 실측값 갱신: {', '.join(live)}")
+
+
+def _fresh(entry: dict, now: datetime, max_age: timedelta) -> str:
+    try:
+        if entry and now - datetime.fromisoformat(entry["at"]) <= max_age:
+            return entry["text"]
+    except (KeyError, ValueError, TypeError):
+        pass
+    return ""
+
+
+def live_weather() -> str:
+    """기상청 실측 날씨(최근 회차에 받은 것). 없으면 빈 문자열 - 매시 일지가 LLM 검색 대신 쓴다."""
+    return _fresh(_load_cache().get("live_weather", {}), datetime.now(KST), LIVE_MAX_AGE)
 
 
 def refresh_daily_topic() -> None:
@@ -131,12 +162,10 @@ def collect(include_factory: bool = True) -> dict:
     cache = _load_cache()
     signals: dict = {"calendar": _calendar_line(now)}
 
-    weather = cache.get("weather", {})
-    try:
-        if weather and now - datetime.fromisoformat(weather["at"]) <= WEATHER_MAX_AGE:
-            signals["weather"] = weather["text"]
-    except (KeyError, ValueError):
-        pass
+    weather = (_fresh(cache.get("live_weather", {}), now, LIVE_MAX_AGE)
+               or _fresh(cache.get("weather", {}), now, WEATHER_MAX_AGE))
+    if weather:
+        signals["weather"] = weather
 
     topic = cache.get("topic", {})
     if topic.get("date") == now.strftime("%Y-%m-%d") and topic.get("topic_title"):
@@ -148,6 +177,10 @@ def collect(include_factory: bool = True) -> dict:
             signals["factory"] = "공장 라인 정상 가동" if ok else f"공장 라인 이상: {msg}"
         except Exception:  # noqa: BLE001
             pass
+
+    facility = _fresh(cache.get("live_facility", {}), now, LIVE_MAX_AGE)
+    if facility:
+        signals["facility"] = facility
 
     try:
         count, progress = processor.get_production_stats()
@@ -171,7 +204,7 @@ def format_block(signals: dict) -> str:
     """프롬프트에 넣을 "바깥 세상 변화" 블록."""
     labels = {
         "calendar": "날짜/시간", "weather": "날씨(광주)", "topic": "오늘 세상의 화제",
-        "factory": "공장 상태", "production": "생산 현황", "bookoasis": "사내 자료실",
+        "factory": "공장 상태", "facility": "공장 설비", "production": "생산 현황", "bookoasis": "사내 자료실",
         "security": "사내 보안",
     }
     lines = [f"- {labels[k]}: {v}" for k, v in signals.items() if k in labels and v]
