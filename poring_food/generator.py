@@ -6,7 +6,7 @@ import requests
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import API_URL, LITELLM_MASTER_KEY, LLM_MODEL
-from . import processor
+from . import life, memory, processor
 
 # [변경] 마무리 섹션("🎮 나의 라그M 상태")이 활동과 상관없이 항상 게임 얘기로 고정되어
 # 있었다 - 영화관에 있어도 "라그나로크M 접속은 못 했지만..." 식으로 억지로 게임을 끌어오게
@@ -96,7 +96,10 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
         f"- **중요**: 마지막 'game_status' 필드는 반드시 \"{status_topic_hint}\"에 대한 내용으로 채워라. "
         f"오늘 애순이는 '{state}'({activity}) 중이라 게임과 무관한 날일 수 있다 - 게임 중이 아닐 때는 "
         "게임 얘기를 억지로 끌어오지 말고, 실제 오늘 활동에 대한 짧은 소감으로 채워라.\n"
-        "- 반드시 아래 키를 가진 JSON 객체로 응답: {\"narrative\": \"...\", \"game_status\": \"...\", \"cynical_thought\": \"...\"}"
+        "- 지금 상태/기억이 주어졌다면 그 컨디션이 글에 자연스럽게 묻어나게 하고, 이번 일로 마음이 어떻게 "
+        "바뀌었는지 state_change에, 오래 기억할 만한 경험이 있으면 memory에 적어라.\n"
+        "- 반드시 아래 키를 가진 JSON 객체로 응답: {\"narrative\": \"...\", \"game_status\": \"...\", "
+        f"\"cynical_thought\": \"...\", {life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
     )
 
     user_prompt = f"[오늘의 사건]\n제목: {issue['title']}\n내용: {issue['description']}"
@@ -213,7 +216,10 @@ def generate_generic_character_report(character, issue, time_tag, weather_info, 
         "재해석해서 써라 - 다른 사람(애순이 등)과 똑같은 반응/말투를 절대 흉내내지 마라.\n"
         f"- 마지막 'closing' 필드는 \"{topic_hint}\"에 대한 내용으로 채워라.\n"
         "- 매번 똑같은 표현/문장 구조를 반복하지 말고 새로운 소재와 어휘로 써라.\n"
-        "- 반드시 아래 키를 가진 JSON 객체로 응답: {\"narrative\": \"...\", \"closing\": \"...\", \"cynical_thought\": \"...\"}"
+        "- 지금 상태/기억이 주어졌다면 그 컨디션이 글에 자연스럽게 묻어나게 하고, 이번 일로 마음이 어떻게 "
+        "바뀌었는지 state_change에, 오래 기억할 만한 경험이 있으면 memory에 적어라.\n"
+        "- 반드시 아래 키를 가진 JSON 객체로 응답: {\"narrative\": \"...\", \"closing\": \"...\", "
+        f"\"cynical_thought\": \"...\", {life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
     )
     user_prompt = f"[오늘의 사건]\n제목: {title}\n내용: {issue.get('description', '')}"
 

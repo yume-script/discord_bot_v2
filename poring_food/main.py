@@ -9,6 +9,9 @@ from . import processor
 from . import generator
 from . import notifier
 from . import checker
+from . import life
+from . import memory
+from . import rename_migration
 from . import metrics
 from . import characters
 from . import signals
@@ -82,6 +85,14 @@ def _run_world_tick_common(roster: list, roster_map: dict, states: dict, rnd: ra
     히스토리에 기록했으니 여기서 중복 기록하지 않는다.
     """
     now = now_kst()
+
+    # [신규] 인물 상태(감정/체력/돈) 매시 규칙 반영 - 근무/휴식/수면, 월급/월세/지출, 바깥 세상 신호
+    try:
+        life.tick(roster, states, signals.collect(include_factory=False))
+        if now.hour == 4:
+            memory.prune()
+    except Exception as e:  # noqa: BLE001 - 상태 갱신이 실패해도 이야기는 계속
+        print(f"[경고] 인물 상태 갱신 실패: {e}")
 
     for cid, info in states.items():
         name = info.get("name", cid)
@@ -167,6 +178,7 @@ def main():
        애순이 또는 깨어있는 다른 인물 중에서 가중치 랜덤으로 고른다(스포트라이트 로테이션)
     4. 다인물 시뮬레이션(상태 갱신/상호작용)도 같이 굴린다
     """
+    rename_migration.migrate()  # [1회성] 인물 이름 변경 전 실행 기록을 새 이름으로
     # 바깥 세상 실측값(기상청 날씨, 공장 설비=서버 상태)을 회차 맨 앞에서 한 번 받아 둔다 -
     # 작가 회의/일지/장면이 모두 같은 값을 쓴다. 실패해도 이야기는 그대로 진행.
     try:
@@ -254,6 +266,16 @@ def main():
 
     # [신규] 연재 드라마의 진행 중인 줄거리를 일지에도 반영한다 (이번 시간 주인공 기준)
     story_block = story.story_block_for(narrator_name)
+    # [신규] 주인공의 지금 상태(감정/체력/돈/목표)와 관련 기억 - 일지에만 넣는다(회사 공통 이슈에는 X)
+    if is_aesun_spotlight:
+        n_loc, n_act = location, activity
+    else:
+        n_info = states.get(spotlight["id"], {})
+        n_loc, n_act = n_info.get("location", ""), n_info.get("activity", "")
+    inner_block = "\n".join(b for b in (
+        life.prompt_block(narrator_name),
+        memory.prompt_block(narrator_name, [n_loc, *str(n_act).split()]),
+    ) if b)
 
     print("[2/4] 조직도 기반 동적 이슈 생성 중...")
     dynamic_issue = processor.generate_dynamic_issue(
@@ -265,7 +287,7 @@ def main():
         print("[3/4] 애순이 시점으로 보고서 변환 중...")
         report_data = generator.generate_aesun_report(
             dynamic_issue, time_tag, org_data, persona_data, weather_info, stats, mood, sales_count,
-            bookoasis_block=bookoasis_block, story_block=story_block,
+            bookoasis_block=bookoasis_block, story_block=f"{story_block}\n{inner_block}\n",
         )
         status_payload = {
             "timestamp": now_str,
@@ -292,7 +314,7 @@ def main():
         print(f"[3/4] {narrator_name} 시점으로 보고서 변환 중...")
         report_data = generator.generate_generic_character_report(
             char, dynamic_issue, time_tag, weather_info, c_mood, c_location, c_activity, c_state,
-            story_block=story_block,
+            story_block=f"{story_block}\n{inner_block}\n",
         )
         # 애순이 자신은 방송 주인공이 아니어도 위치/활동은 계속 가볍게 갱신해둔다
         # (get_current_status("애순이")가 항상 최신 위치를 보여줄 수 있게)
@@ -306,6 +328,11 @@ def main():
             "title": dynamic_issue.get('title', '오늘의 사건'),
             "narrative": report_data.get("narrative"),
         })
+
+    # [신규] 일지에서 생긴 마음의 변화/기억을 주인공 상태에 반영 (LLM이 같이 돌려준 것, 추가 호출 없음)
+    if report_data:
+        life.apply_feedback(narrator_name, report_data, "일지")
+        memory.apply_feedback(narrator_name, report_data, "일지")
 
     # 4. 다인물 시뮬레이션(배경 상태 히스토리 + 상호작용) - 스포트라이트 인물은 이미 기록했으니 제외
     if roster:

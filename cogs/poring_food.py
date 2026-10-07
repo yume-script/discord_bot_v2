@@ -38,6 +38,9 @@ class PoringFood(commands.Cog):
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
         runtime.bind(asyncio.get_running_loop(), sender)
+        # [1회성] 인물 이름 변경 전 실행 기록을 새 이름으로 (조회 도구가 첫 회차 전에도 새 이름을 보게)
+        from poring_food import rename_migration
+        await asyncio.to_thread(rename_migration.migrate)
         if settings.PORING_FOOD_ENABLED:
             self.hourly.start()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",

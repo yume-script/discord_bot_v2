@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from .clock import now_kst
-from . import metrics
+from . import life, metrics
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import (
     API_URL, LITELLM_MASTER_KEY, LLM_MODEL, SEARCH_MODEL, DISCORD_BOT_V2_DB_PATH, ISSUE_LOG_PATH, RIVALS_PATH,
@@ -163,7 +163,14 @@ def fetch_gwangju_weather():
 
 
 def _weighted_choice(rnd, candidates):
-    """candidates: [(location, activity, focus, state, weight), ...] 중 가중치 랜덤으로 하나 고른다."""
+    """
+    candidates: [(location, activity, focus, state, weight), ...] 중 가중치 랜덤으로 하나 고른다.
+    [변경] 애순이의 지금 상태(life.py - 스트레스/체력/외로움/돈 등)로 가중치를 조정한다 -
+    스트레스가 쌓이면 술자리, 지치면 집에서 쉬기가 더 잘 나온다.
+    """
+    st = life.get("애순이")
+    candidates = [(loc, act, focus, state, life.bias_weight(st, f"{loc} {act}", w))
+                  for loc, act, focus, state, w in candidates]
     total = sum(c[4] for c in candidates)
     r = rnd.uniform(0, total)
     upto = 0
@@ -246,6 +253,7 @@ def get_aesun_detailed_schedule():
                 ("헬스장/요가원", "저녁 운동 클래스", "운동보다 씻고 나오는 뿌듯함이 더 큼", "운동 중", 1),
                 ("집(책상)", "밤에 잠깐 독서", "두 페이지 읽고 스르륵 잠들 뻔함", "휴식 중", 1),
                 ("친구와 전화", "밀린 수다 타임", "회사 스트레스를 친구한테 다 쏟아냄", "휴식 중", 1),
+                ("동네 포장마차", "동기와 퇴근 후 소주 한잔", "오늘 쌓인 걸 안주 삼아 털어냄", "휴식 중", 1),
             ])
             return loc, act, focus, state, False
 
