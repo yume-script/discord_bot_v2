@@ -32,13 +32,15 @@ DEFAULT_GUILD = "591180628842774550"
 DEFAULT_CHANNEL = "1524285939365707868"
 VIEW, SEND, HISTORY = 1 << 10, 1 << 11, 1 << 16
 ALLOW = VIEW | SEND | HISTORY  # 68608
-NAMES = {"aesun": "애순이", "sora": "소라"}
+MANAGE_WEBHOOKS = 1 << 29
+NAMES = {"aesun": "애순이", "sora": "소라", "kaje": "카제"}
+WEBHOOK_BOT = "카제"  # 봇 토큰 없는 에이전트용 채널 웹훅을 만드는 봇 - "웹후크 관리"도 필요
 
 
 def _tokens() -> list[tuple[str, str]]:
     out = [("아메하나(메인)", os.environ.get("DISCORD_BOT_TOKEN", ""))]
-    keys = [k.strip().lower() for k in os.environ.get("SIDE_BOT_KEYS", "aesun,sora").split(",") if k.strip()]
-    for must in ("aesun", "sora"):
+    keys = [k.strip().lower() for k in os.environ.get("SIDE_BOT_KEYS", "aesun,sora,kaje").split(",") if k.strip()]
+    for must in ("aesun", "sora", "kaje"):
         if must not in keys:
             keys.append(must)
     for key in keys:
@@ -79,6 +81,10 @@ def main() -> int:
             bots.append({"label": label, "token": token, "id": user["id"], "user": user["username"],
                          "app_id": app_id, "in_guild": in_guild, "sees": sees})
             state = "채널 OK" if sees else ("서버에는 있음, 채널 안 보임" if in_guild else "서버에 없음")
+            if sees and label == WEBHOOK_BOT:
+                hooks_ok = _get(client, token, f"/channels/{channel}/webhooks").status_code == 200
+                bots[-1]["hooks_ok"] = hooks_ok
+                state += " / 웹후크 관리 " + ("OK" if hooks_ok else "없음")
             print(f"- {label} ({user['username']}, id {user['id']}): {state}")
 
         # 2) 서버에 없는 봇 -> 초대 링크
@@ -90,7 +96,7 @@ def main() -> int:
                       f"&scope=bot&permissions={ALLOW}&guild_id={guild}&disable_guild_select=true")
 
         # 3) 서버엔 있는데 채널이 안 보이는 봇 -> 채널을 볼 수 있는 봇이 권한 덮어쓰기 추가 시도
-        need = [b for b in bots if b["in_guild"] and not b["sees"]]
+        need = [b for b in bots if b["in_guild"] and (not b["sees"] or b.get("hooks_ok") is False)]
         if not need:
             print("\n채널 권한 설정이 필요한 봇 없음." if not missing else "")
             return 0
@@ -101,15 +107,20 @@ def main() -> int:
         failed = []
         for b in need:
             done = False
+            wants = [ALLOW | MANAGE_WEBHOOKS, ALLOW] if b["label"] == WEBHOOK_BOT else [ALLOW]
             for g in granters:
-                r = client.put(
-                    f"{API}/channels/{channel}/permissions/{b['id']}",
-                    headers={"Authorization": f"Bot {g['token']}"},
-                    json={"type": 1, "allow": str(ALLOW), "deny": "0"},
-                )
-                if r.status_code in (200, 204):
-                    print(f"\n✅ {g['label']}가 채널 권한에 {b['label']}를 추가함 (보기/보내기/기록 보기)")
-                    done = True
+                for allow in wants:
+                    r = client.put(
+                        f"{API}/channels/{channel}/permissions/{b['id']}",
+                        headers={"Authorization": f"Bot {g['token']}"},
+                        json={"type": 1, "allow": str(allow), "deny": "0"},
+                    )
+                    if r.status_code in (200, 204):
+                        extra = " + 웹후크 관리" if allow & MANAGE_WEBHOOKS else ""
+                        print(f"\n✅ {g['label']}가 채널 권한에 {b['label']}를 추가함 (보기/보내기/기록 보기{extra})")
+                        done = bool(allow & MANAGE_WEBHOOKS) or b["label"] != WEBHOOK_BOT
+                        break
+                if done:
                     break
             if not done:
                 failed.append(b)
@@ -120,6 +131,8 @@ def main() -> int:
             print("  채널 보기 / 메시지 보내기 / 메시지 기록 보기 ✅")
             for b in failed:
                 print(f"  - {b['label']} ({b['user']})")
+            print(f"  ({WEBHOOK_BOT}는 '웹후크 관리'도 ✅ - 봇 토큰 없는 에이전트들이 이 웹훅으로 말한다."
+                  " 또는 채널 설정 → 연동 → 웹후크를 직접 만들고 URL을 .env PORING_AGENT_WEBHOOK_URL에 넣어도 된다)")
             print("다음부터 이 스크립트로 처리하려면 아메하나 봇을 이 채널에 넣고 '권한 관리'(Manage Permissions)도 허용해 두면 된다.")
             return 1
     return 0

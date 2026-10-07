@@ -8,6 +8,8 @@
 - 애순이(AESUN_BOT_TOKEN): 카톡 연동 채널의 애순이 답장, 포링푸드 일지/연재 드라마 장면 (cogs/chat.py,
   cogs/poring_food.py)
 - 소라(SORA_BOT_TOKEN): 포링푸드 두 번째 LLM 에이전트 - 에이전트끼리의 대화를 포링푸드 채널에 올린다
+- 카제(KAJE_BOT_TOKEN): 봇 토큰 없는 에이전트들이 말하는 채널 웹훅을 찾거나 만드는 관리용 계정
+  (채널에 "웹후크 관리" 권한 필요. PORING_AGENT_WEBHOOK_URL을 직접 넣으면 필요 없음)
 - 그 밖의 계정: .env의 SIDE_BOT_KEYS에 키를 추가하면({KEY}_BOT_TOKEN, {KEY}_BOT_ACTIVITY) 같은 방식으로
   늘어난다 (포링푸드 에이전트 최대 5명 - poring_food/data/agents.json의 "account"가 이 키)
 
@@ -67,6 +69,11 @@ class SideAccount:
     def is_ready(self) -> bool:
         return self._client is not None and self._client.is_ready()
 
+    @property
+    def client(self) -> discord.Client | None:
+        """로그인된 클라이언트 (준비 안 됐으면 None)."""
+        return self._client if self.is_ready() else None
+
     def is_own_message(self, message: discord.Message) -> bool:
         client = self._client
         return client is not None and client.user is not None and message.author.id == client.user.id
@@ -99,12 +106,12 @@ class SideAccount:
         return sent > 0
 
 
-_DISPLAY_NAMES = {"aesun": "애순이", "sora": "소라"}
+_DISPLAY_NAMES = {"aesun": "애순이", "sora": "소라", "kaje": "카제"}
 
 
 def _build_accounts() -> dict[str, SideAccount]:
     keys = [k.strip().lower() for k in settings.SIDE_BOT_KEYS.split(",") if k.strip()]
-    for must in ("aesun", "sora"):
+    for must in ("aesun", "sora", "kaje"):
         if must not in keys:
             keys.append(must)
     accounts = {}

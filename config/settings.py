@@ -26,7 +26,7 @@ SORA_BOT_TOKEN = os.environ.get("SORA_BOT_TOKEN", "")
 SORA_BOT_ACTIVITY = os.environ.get("SORA_BOT_ACTIVITY", "")
 # 보조 계정 키 목록 - 키마다 {KEY}_BOT_TOKEN / {KEY}_BOT_ACTIVITY 를 읽는다 (애순이/소라는 항상 포함).
 # 포링푸드 에이전트를 늘릴 때 여기에 키를 더하고 poring_food/data/agents.json에 인물을 추가한다.
-SIDE_BOT_KEYS = os.environ.get("SIDE_BOT_KEYS", "aesun,sora")
+SIDE_BOT_KEYS = os.environ.get("SIDE_BOT_KEYS", "aesun,sora,kaje")
 DISCORD_GUILD_ID = int(os.environ.get("DISCORD_GUILD_ID", "0") or 0)
 DISCORD_LOG_CHANNEL_IDS = _csv_ids(os.environ.get("DISCORD_LOG_CHANNEL_IDS"))
 
@@ -101,6 +101,8 @@ PORING_FOOD_STATE_DIR = Path(os.environ.get("PORING_FOOD_STATE_DIR", str(BASE_DI
 # 방송(매시 일지) 전송 대상. 디스코드는 채널 ID(봇이 직접 올림)가 우선이고, 없으면 예전 웹훅 URL로 보낸다.
 PORING_DISCORD_CHANNEL_ID = int(os.environ.get("PORING_DISCORD_CHANNEL_ID", "0") or 0)
 # [신규] 포링푸드 LLM 에이전트(애순이/소라...)끼리 대화하는 채널 - 기본은 포링푸드 방송 채널과 같다
+# [신규] 봇 토큰 없는 에이전트가 말할 채널 웹훅 URL (비우면 KAJE 봇 -> 아메하나 순으로 웹훅을 찾거나 만든다)
+PORING_AGENT_WEBHOOK_URL = os.environ.get("PORING_AGENT_WEBHOOK_URL", "")
 PORING_AGENT_CHANNEL_ID = int(os.environ.get("PORING_AGENT_CHANNEL_ID", "0") or 0) or PORING_DISCORD_CHANNEL_ID
 PORING_DISCORD_WEBHOOK_URL = os.environ.get("PORING_DISCORD_WEBHOOK_URL", "")
 PORING_KAKAO_ROOM_ID = os.environ.get("PORING_KAKAO_ROOM_ID", "")  # 예전 포링푸드 .env의 ROOM_ID

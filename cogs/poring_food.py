@@ -15,6 +15,7 @@ import logging
 import time
 from datetime import time as dtime, timedelta, timezone
 
+import discord
 from discord import Interaction, app_commands
 from discord.ext import commands, tasks
 
@@ -29,12 +30,15 @@ log = logging.getLogger("poring_food")
 KST = timezone(timedelta(hours=9))
 RUN_TIMES = [dtime(hour=h, minute=settings.PORING_FOOD_RUN_MINUTE, tzinfo=KST) for h in range(24)]
 DISCORD_LIMIT = 2000
+AGENT_WEBHOOK_NAME = "포링푸드 에이전트"
 
 
 class PoringFood(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._lock = asyncio.Lock()
+        self._webhook: discord.Webhook | None = None
+        self._webhook_retry_at = 0.0
 
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
@@ -65,14 +69,61 @@ class PoringFood(commands.Cog):
         for i in range(0, len(text), DISCORD_LIMIT):
             await channel.send(text[i:i + DISCORD_LIMIT])
 
-    async def _send_as_agent(self, account: str, name: str, text: str) -> None:
-        """에이전트(애순이/소라...)의 말을 그 인물 계정으로 에이전트 채널에 올린다. 계정이 안 되면 아메하나가 이름을 붙여 대신."""
+    async def _send_as_agent(self, account: str, name: str, text: str, avatar_url: str = "") -> None:
+        """
+        에이전트의 말을 에이전트 채널에 올린다.
+        1) 봇 계정이 있는 에이전트(애순이/소라): 그 계정으로
+        2) 봇 토큰 없는 에이전트: 채널 웹훅으로 이름/아바타만 바꿔서 (사람마다 다른 사람처럼 보인다)
+        3) 둘 다 안 되면 아메하나가 이름을 붙여 대신
+        """
         channel_id = settings.PORING_AGENT_CHANNEL_ID
-        acc = side_accounts.get(account)
+        acc = side_accounts.get(account) if account else None
         if acc is not None and await acc.send(channel_id, text):
             return
+        hook = await self._agent_webhook()
+        if hook is not None:
+            try:
+                await hook.send(text[:DISCORD_LIMIT], username=name[:80], avatar_url=avatar_url or None,
+                                allowed_mentions=discord.AllowedMentions.none())
+                return
+            except discord.HTTPException as exc:
+                log.warning("에이전트 웹훅 전송 실패 (%s) - 아메하나가 대신 올림: %s", name, exc)
+                self._webhook = None
         channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
         await channel.send(f"**{name}**: {text}"[:DISCORD_LIMIT])
+
+    async def _agent_webhook(self) -> discord.Webhook | None:
+        """
+        봇 토큰 없는 에이전트용 채널 웹훅. .env의 PORING_AGENT_WEBHOOK_URL이 있으면 그걸, 없으면 카제 봇 ->
+        아메하나 순으로 채널의 기존 웹훅을 찾거나 만든다("웹후크 관리" 권한 필요). 실패하면 1시간 뒤 다시 시도.
+        """
+        if self._webhook is not None:
+            return self._webhook
+        if settings.PORING_AGENT_WEBHOOK_URL:
+            self._webhook = discord.Webhook.from_url(settings.PORING_AGENT_WEBHOOK_URL, client=self.bot)
+            return self._webhook
+        if time.monotonic() < self._webhook_retry_at:
+            return None
+        kaje = side_accounts.get("kaje")
+        for client in (kaje.client if kaje else None, self.bot):
+            if client is None:
+                continue
+            try:
+                ch_id = settings.PORING_AGENT_CHANNEL_ID
+                channel = client.get_channel(ch_id) or await client.fetch_channel(ch_id)
+                hooks = await channel.webhooks()
+                hook = next((h for h in hooks if h.name == AGENT_WEBHOOK_NAME and h.token), None)
+                if hook is None:
+                    hook = await channel.create_webhook(name=AGENT_WEBHOOK_NAME, reason="포링푸드 에이전트 대화")
+                    log.info("포링푸드 에이전트 웹훅을 만들었다 (%s)", client.user)
+                self._webhook = hook
+                return hook
+            except discord.HTTPException as exc:
+                log.warning("에이전트 웹훅 준비 실패 (%s): %s", client.user, exc)
+        self._webhook_retry_at = time.monotonic() + 3600
+        log.warning("에이전트 웹훅을 못 만들었다 - 카제/아메하나에 채널 '웹후크 관리' 권한을 주거나 "
+                    "PORING_AGENT_WEBHOOK_URL을 넣어라. 그때까지는 아메하나가 이름을 붙여 대신 올린다.")
+        return None
 
     async def _run_once(self) -> bool:
         """한 회차 실행. 이미 도는 중이면 False."""
