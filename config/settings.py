@@ -78,3 +78,17 @@ MCP_SERVERS_CONFIG_PATH = BASE_DIR / "config" / "mcp_servers.yaml"
 REDROID_EVENTS_PATH = Path(os.environ.get("REDROID_EVENTS_PATH", "/mnt/redroid_watch/events.jsonl"))
 REDROID_NOTIFY_CHANNEL_ID = int(os.environ.get("REDROID_NOTIFY_CHANNEL_ID", "591180628842774554") or 0)
 REDROID_WATCH_STATE_PATH = BASE_DIR / "storage" / "redroid_watch_state.json"
+
+# --- 포링푸드 (poring_food/ - 애순이와 동료들의 회사 일상, cogs/poring_food.py가 매시 실행) ---
+# 원래 별도 cron 프로젝트(/mnt/poring_food)였는데 봇으로 합쳤다. LLM/카톡 브릿지는 봇 설정을 쓴다.
+PORING_FOOD_ENABLED = os.environ.get("PORING_FOOD_ENABLED", "1") not in ("0", "false", "False", "")
+PORING_FOOD_RUN_MINUTE = int(os.environ.get("PORING_FOOD_RUN_MINUTE", "3"))  # 매시 몇 분에 실행할지 (예전 cron: 매시 3분)
+PORING_FOOD_DATA_DIR = Path(os.environ.get("PORING_FOOD_DATA_DIR", str(BASE_DIR / "poring_food" / "data")))
+PORING_FOOD_STATE_DIR = Path(os.environ.get("PORING_FOOD_STATE_DIR", str(BASE_DIR / "storage" / "poring_food")))
+# 방송(매시 일지) 전송 대상. 디스코드는 채널 ID(봇이 직접 올림)가 우선이고, 없으면 예전 웹훅 URL로 보낸다.
+PORING_DISCORD_CHANNEL_ID = int(os.environ.get("PORING_DISCORD_CHANNEL_ID", "0") or 0)
+PORING_DISCORD_WEBHOOK_URL = os.environ.get("PORING_DISCORD_WEBHOOK_URL", "")
+PORING_KAKAO_ROOM_ID = os.environ.get("PORING_KAKAO_ROOM_ID", "")  # 예전 포링푸드 .env의 ROOM_ID
+# LLM - 기본은 봇과 같은 LiteLLM. 포링푸드만 다른 모델을 쓰려면 지정 (예전 .env의 LLM_MODEL/SEARCH_MODEL)
+PORING_LLM_MODEL = os.environ.get("PORING_LLM_MODEL", "") or LITELLM_MODEL
+PORING_SEARCH_MODEL = os.environ.get("PORING_SEARCH_MODEL", "gemini-search")

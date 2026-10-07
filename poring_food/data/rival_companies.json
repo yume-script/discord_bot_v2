@@ -1,0 +1,28 @@
+{
+  "rivals": [
+    {
+      "name": "에린 로지스틱스",
+      "product": "포포링육포",
+      "flavor": "레시피를 표절한 괘씸한 경쟁사. 촘촘한 물류망 같은 영업력으로 유명함",
+      "benchmark_room_id": null
+    },
+    {
+      "name": "프론테라 F&B",
+      "product": "프론지엘라또",
+      "flavor": "화려한 마케팅과 팝업스토어로 젊은 층을 빠르게 공략하는 신흥 강자",
+      "benchmark_room_id": null
+    },
+    {
+      "name": "모로크 상사",
+      "product": "모로크 스파이스칩",
+      "flavor": "이국적인 향신료 컨셉으로 입소문을 타는 중, 실체는 베일에 싸여 있음",
+      "benchmark_room_id": null
+    },
+    {
+      "name": "알데바란 유업",
+      "product": "알데바란 요거트",
+      "flavor": "전통과 정직을 내세우는 노포 이미지, 화려하진 않지만 은근히 저력 있음",
+      "benchmark_room_id": null
+    }
+  ]
+}

@@ -21,6 +21,7 @@ INITIAL_COGS = [
     "cogs.fun",
     "cogs.chat",
     "cogs.redroid_watch",
+    "cogs.poring_food",
 ]
 
 

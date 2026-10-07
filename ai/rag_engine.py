@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from ai.llm_client import build_chat_model, message_text
 from ai.local_tools import LOCAL_TOOLS
 from ai.mcp_manager import get_tools
+from poring_food.tools import PORING_FOOD_TOOLS
 from ai.prompts import build_system_prompt
 from core import pending_actions
 from core.conversation_store import get_recent_context
@@ -73,7 +74,11 @@ async def a_query(
     confirm_scope: 관리자가 위험한 도구를 부르게 했을 때 확인 대기 목록에 담을 키
     (core/pending_actions.make_scope). 없으면 위험한 도구는 관리자라도 실행하지 않는다.
     """
-    tools = [*LOCAL_TOOLS, *get_tools()]
+    # 포링푸드 도구는 봇 안의 함수다(예전엔 poring_food MCP 서버였음). 혹시 MCP 쪽에 같은 이름의
+    # 도구가 남아 있으면(예전 yaml) 이름이 겹쳐 LLM이 호출 자체를 거부하므로 로컬 쪽을 우선한다.
+    local_tools = [*LOCAL_TOOLS, *PORING_FOOD_TOOLS]
+    local_names = {t.name for t in local_tools}
+    tools = [*local_tools, *(t for t in get_tools() if t.name not in local_names)]
     tools_by_name = {t.name: t for t in tools}
 
     model = build_chat_model()

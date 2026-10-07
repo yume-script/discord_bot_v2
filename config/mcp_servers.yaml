@@ -92,12 +92,6 @@ bookoasis:
     - "python3"
     - "/app/tools/mcp_server.py"
 
-poring_food:
-  transport: stdio
-  command: /mnt/poring_food/venv/bin/python3
-  args:
-    - "/mnt/poring_food/mcp_server.py"
-
 plex:
   transport: stdio
   command: /root/.nvm/versions/node/v24.18.0/bin/node
