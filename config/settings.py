@@ -10,6 +10,22 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+# [수정] .env에서 `KEY=   # 설명`처럼 빈 값 뒤에 주석을 붙이면 python-dotenv가 주석을 값으로 읽는다
+# (그래서 int()에서 봇이 죽고 재시작을 반복했다). "#"로 시작하는 값은 빈 값으로 본다.
+for _k, _v in list(os.environ.items()):
+    if _v.strip().startswith("#"):
+        os.environ[_k] = ""
+
+
+def _int(name: str, default: int | str = 0) -> int:
+    """정수 설정. 비었거나 숫자가 아니면(오타 등) 봇을 죽이지 않고 기본값을 쓴다."""
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        return int(raw or default or 0)
+    except ValueError:
+        print(f"[settings] {name}={raw!r} 는 숫자가 아니라서 기본값 {default}을 씀 (.env 확인)")
+        return int(default or 0)
+
 
 def _csv_ids(raw: str | None) -> list[str]:
     if not raw:
@@ -27,7 +43,7 @@ SORA_BOT_ACTIVITY = os.environ.get("SORA_BOT_ACTIVITY", "")
 # 보조 계정 키 목록 - 키마다 {KEY}_BOT_TOKEN / {KEY}_BOT_ACTIVITY 를 읽는다 (애순이/소라는 항상 포함).
 # 포링푸드 에이전트를 늘릴 때 여기에 키를 더하고 poring_food/data/agents.json에 인물을 추가한다.
 SIDE_BOT_KEYS = os.environ.get("SIDE_BOT_KEYS", "aesun,sora,kaje")
-DISCORD_GUILD_ID = int(os.environ.get("DISCORD_GUILD_ID", "0") or 0)
+DISCORD_GUILD_ID = _int("DISCORD_GUILD_ID", 0)
 DISCORD_LOG_CHANNEL_IDS = _csv_ids(os.environ.get("DISCORD_LOG_CHANNEL_IDS"))
 
 # 머니 시스템을 마음대로 조정할 수 있는 디스코드 유저ID 목록 (comma-separated).
@@ -58,11 +74,11 @@ AUTO_REPLY_TRIGGER_KEYWORDS = _csv_ids(os.environ.get("AUTO_REPLY_TRIGGER_KEYWOR
 GAS_WEBHOOK_NAMES = set(
     n.strip() for n in os.environ.get("GAS_WEBHOOK_NAMES", "4KHD_SNDER.GAS").split(",") if n.strip()
 )
-AUTO_REPLY_COOLDOWN_SEC = int(os.environ.get("AUTO_REPLY_COOLDOWN_SEC", "60"))
+AUTO_REPLY_COOLDOWN_SEC = _int("AUTO_REPLY_COOLDOWN_SEC", 60)
 AUTO_REPLY_PROBABILITY = float(os.environ.get("AUTO_REPLY_PROBABILITY", "0.03"))
 # 호출어("하나야"/"애순아")로 부른 뒤 이 시간(초) 동안은 같은 사람이 호출어 없이 말해도 응답한다.
 # 0이면 끈다(매번 호출어 필요).
-CALL_FOLLOWUP_SEC = int(os.environ.get("CALL_FOLLOWUP_SEC", "300"))
+CALL_FOLLOWUP_SEC = _int("CALL_FOLLOWUP_SEC", 300)
 
 # --- LLM (LiteLLM proxy) ---
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "")
@@ -71,14 +87,14 @@ LITELLM_MODEL = os.environ.get("LITELLM_MODEL", "")
 
 # --- Image generation (AI Horde) ---
 IMAGE_GEN_BACKEND = os.environ.get("IMAGE_GEN_BACKEND", "horde")
-IMAGE_GEN_MAX_CONCURRENCY = int(os.environ.get("IMAGE_GEN_MAX_CONCURRENCY", "2"))
+IMAGE_GEN_MAX_CONCURRENCY = _int("IMAGE_GEN_MAX_CONCURRENCY", 2)
 
 HORDE_API_KEY = os.environ.get("HORDE_API_KEY", "")
 HORDE_DEFAULT_MODEL = os.environ.get("HORDE_DEFAULT_MODEL", "Nova Anime XL")
 
 # --- Storage paths (초기화 결정: 빈 상태로 시작) ---
 CONVERSATION_DB_PATH = BASE_DIR / "storage" / "conversations.db"  # 대화 로그 (SQLite - 최근 맥락 조회용)
-CONVERSATION_CONTEXT_LIMIT = int(os.environ.get("CONVERSATION_CONTEXT_LIMIT", "12"))
+CONVERSATION_CONTEXT_LIMIT = _int("CONVERSATION_CONTEXT_LIMIT", 12)
 VECTOR_DB_DIR = BASE_DIR / "storage" / "vector_db"
 NICKNAME_DETECT_DIR = BASE_DIR / "storage" / "nickname_detect"  # 기존 check_and_update_nickname.py와 동일 용도
 MONEY_DIR = BASE_DIR / "storage" / "money"
@@ -89,24 +105,24 @@ MCP_SERVERS_CONFIG_PATH = BASE_DIR / "config" / "mcp_servers.yaml"
 # 결과를 한 줄(JSON)씩 추가한다. 봇은 새 줄을 읽어서 아메하나 말투로 아래 채널에 알린다.
 # REDROID_NOTIFY_CHANNEL_ID를 빈 값으로 두면 이 기능을 끈다.
 REDROID_EVENTS_PATH = Path(os.environ.get("REDROID_EVENTS_PATH", "/mnt/redroid_watch/events.jsonl"))
-REDROID_NOTIFY_CHANNEL_ID = int(os.environ.get("REDROID_NOTIFY_CHANNEL_ID", "591180628842774554") or 0)
+REDROID_NOTIFY_CHANNEL_ID = _int("REDROID_NOTIFY_CHANNEL_ID", 591180628842774554)
 REDROID_WATCH_STATE_PATH = BASE_DIR / "storage" / "redroid_watch_state.json"
 
 # --- 포링푸드 (poring_food/ - 애순이와 동료들의 회사 일상, cogs/poring_food.py가 매시 실행) ---
 # 원래 별도 cron 프로젝트(/mnt/poring_food)였는데 봇으로 합쳤다. LLM/카톡 브릿지는 봇 설정을 쓴다.
 PORING_FOOD_ENABLED = os.environ.get("PORING_FOOD_ENABLED", "1") not in ("0", "false", "False", "")
-PORING_FOOD_RUN_MINUTE = int(os.environ.get("PORING_FOOD_RUN_MINUTE", "3"))  # 매시 몇 분에 실행할지 (예전 cron: 매시 3분)
+PORING_FOOD_RUN_MINUTE = _int("PORING_FOOD_RUN_MINUTE", 3)  # 매시 몇 분에 실행할지 (예전 cron: 매시 3분)
 PORING_FOOD_DATA_DIR = Path(os.environ.get("PORING_FOOD_DATA_DIR", str(BASE_DIR / "poring_food" / "data")))
 PORING_FOOD_STATE_DIR = Path(os.environ.get("PORING_FOOD_STATE_DIR", str(BASE_DIR / "storage" / "poring_food")))
 # 방송(매시 일지) 전송 대상. 디스코드는 채널 ID(봇이 직접 올림)가 우선이고, 없으면 예전 웹훅 URL로 보낸다.
-PORING_DISCORD_CHANNEL_ID = int(os.environ.get("PORING_DISCORD_CHANNEL_ID", "0") or 0)
+PORING_DISCORD_CHANNEL_ID = _int("PORING_DISCORD_CHANNEL_ID", 0)
 # [신규] 포링푸드 LLM 에이전트(애순이/소라...)끼리 대화하는 채널 - 기본은 포링푸드 방송 채널과 같다
 # [신규] 봇 토큰 없는 에이전트가 말할 채널 웹훅 URL (비우면 KAJE 봇 -> 아메하나 순으로 웹훅을 찾거나 만든다)
 PORING_AGENT_WEBHOOK_URL = os.environ.get("PORING_AGENT_WEBHOOK_URL", "")
 # [신규] 회사 단톡방 - 포링푸드 소속 에이전트가 같이 보고 쓰는 채널 (기존 포링푸드 이야기 채널)
-PORING_GROUP_CHAT_CHANNEL_ID = int(os.environ.get("PORING_GROUP_CHAT_CHANNEL_ID", "1524285939365707868") or 0)
+PORING_GROUP_CHAT_CHANNEL_ID = _int("PORING_GROUP_CHAT_CHANNEL_ID", 1524285939365707868)
 PORING_GROUP_WEBHOOK_URL = os.environ.get("PORING_GROUP_WEBHOOK_URL", "")
-PORING_AGENT_CHANNEL_ID = int(os.environ.get("PORING_AGENT_CHANNEL_ID", "0") or 0) or PORING_DISCORD_CHANNEL_ID
+PORING_AGENT_CHANNEL_ID = _int("PORING_AGENT_CHANNEL_ID", 0) or PORING_DISCORD_CHANNEL_ID
 PORING_DISCORD_WEBHOOK_URL = os.environ.get("PORING_DISCORD_WEBHOOK_URL", "")
 PORING_KAKAO_ROOM_ID = os.environ.get("PORING_KAKAO_ROOM_ID", "")  # 예전 포링푸드 .env의 ROOM_ID
 # LLM - 기본은 봇과 같은 LiteLLM. 포링푸드만 다른 모델을 쓰려면 지정 (예전 .env의 LLM_MODEL/SEARCH_MODEL)
