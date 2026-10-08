@@ -38,18 +38,23 @@ AGENTS_PATH = os.path.join(DATA_DIR, "agents.json")
 STATE_PATH = os.path.join(STATE_DIR, "agents_state.json")
 DIALOGUES_PATH = os.path.join(STATE_DIR, "dialogues.jsonl")  # story.py와 같은 파일 (조회 도구가 같이 읽는다)
 
-MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "12"))
+MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "20"))
 MAX_INBOX = 20
 MAX_LOG = 24
 MAX_TURNS = int(os.getenv("PORING_AGENT_MAX_TURNS", "6"))                  # 대화 한 번의 최대 발언 수
 MAX_CONVOS_PER_DAY = int(os.getenv("PORING_AGENT_MAX_CONVOS_PER_DAY", "12"))
+STATUS_DIGEST = os.getenv("PORING_AGENT_STATUS_DIGEST", "1") not in ("0", "false", "False", "")
 TYPING_DELAY = (float(os.getenv("PORING_AGENT_DELAY_MIN", "3")), float(os.getenv("PORING_AGENT_DELAY_MAX", "8")))
 DECIDE_TIMEOUT_SEC = 45
 VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
 
-# 회사 단톡방 - 그 회사 소속 에이전트만 보고 쓴다 (모두가 보는 곳이라 비밀 얘기는 안 쓴다)
+# 단톡방 - 멤버만 보고 쓴다 (모두가 보는 곳이라 비밀 얘기는 안 쓴다)
+#  - 포링푸드 단톡방: 포링푸드 소속 에이전트 전원 (기존 포링푸드 이야기 채널)
+#  - 동네 단톡방: agents.json에서 "groups"에 넣은 사람 (에이전트 대화 채널에 머리줄을 붙여 같이 올린다)
 GROUP_COMPANY = "포링푸드 (Poring Food)"
 GROUP_NAME = "포링푸드 단톡방"
+TOWN_GROUP = "동네 단톡방"
+GROUP_HEADERS = {TOWN_GROUP: "-# 🏘️ 동네 단톡방"}  # 다른 글과 같은 채널을 쓰는 단톡방은 머리줄로 구분
 GROUP_PATH = os.path.join(STATE_DIR, "group_chat.jsonl")
 GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))
 GROUP_MAX_POSTS_PER_HOUR = 2
@@ -59,6 +64,7 @@ GROUP_RECENT = 10
 GOSSIP_MAX_RECIPIENTS = 2
 GOSSIP_P_SAME_PLACE = 0.6     # 직접 만난 대화를 같은 곳에 있던 사람이 엿들음
 GOSSIP_P_COLLEAGUE = 0.25     # 같은 회사 동료에게 말이 돎
+GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/포장마차 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
 GOSSIP_P_OTHER = 0.05
 GOSSIP_MESSENGER_FACTOR = 0.4  # 메신저 대화는 잘 안 샌다
 
@@ -163,12 +169,26 @@ def _asleep(agent: dict, hour: int) -> bool:
     return s <= hour < e if s <= e else (hour >= s or hour < e)
 
 
-# ===================================================================== 회사 단톡방
+# ===================================================================== 단톡방 (회사 / 동네)
+def _group_channel(group: str) -> int:
+    if group == GROUP_NAME:
+        return bot_settings.PORING_GROUP_CHAT_CHANNEL_ID
+    if group == TOWN_GROUP:
+        return bot_settings.PORING_TOWN_CHAT_CHANNEL_ID or bot_settings.PORING_AGENT_CHANNEL_ID
+    return 0
+
+
+def _groups_of(agent: dict) -> list[str]:
+    groups = [GROUP_NAME] if agent.get("company") == GROUP_COMPANY else []
+    groups += [g for g in (agent.get("groups") or []) if g not in groups]
+    return [g for g in groups if _group_channel(g)]
+
+
 def _has_group(agent: dict) -> bool:
-    return agent.get("company") == GROUP_COMPANY and bool(bot_settings.PORING_GROUP_CHAT_CHANNEL_ID)
+    return bool(_groups_of(agent))
 
 
-def _group_recent(hours: int = 24, limit: int = GROUP_RECENT) -> list[dict]:
+def _group_recent(group: str, hours: int = 24, limit: int = GROUP_RECENT) -> list[dict]:
     if not os.path.exists(GROUP_PATH):
         return []
     since = (now_kst() - timedelta(hours=hours)).isoformat()
@@ -179,38 +199,41 @@ def _group_recent(hours: int = 24, limit: int = GROUP_RECENT) -> list[dict]:
                 m = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if m.get("at", "") >= since:
+            if m.get("at", "") >= since and m.get("group", GROUP_NAME) == group:
                 out.append(m)
     return out[-limit:]
 
 
 def _group_block(agent: dict, st: dict) -> str:
-    if not _has_group(agent):
-        return ""
     last_seen = (st.get("decision") or {}).get("hour", "")
-    lines = []
-    for m in _group_recent():
-        new = " (새 글)" if m["at"][:13].replace("T", " ") >= last_seen and m["name"] != agent["name"] else ""
-        lines.append(f"- {m['at'][5:16].replace('T', ' ')} {m['name']}: {m['text']}{new}")
-    return (f"[{GROUP_NAME} 최근 글 - 회사 사람들이 다 보는 곳]\n" + ("\n".join(lines) or "- 조용함"))
+    blocks = []
+    for group in _groups_of(agent):
+        who = "회사 사람들" if group == GROUP_NAME else "동네 사람들"
+        lines = []
+        for m in _group_recent(group):
+            new = " (새 글)" if m["at"][:13].replace("T", " ") >= last_seen and m["name"] != agent["name"] else ""
+            lines.append(f"- {m['at'][5:16].replace('T', ' ')} {m['name']}: {m['text']}{new}")
+        blocks.append(f"[{group} 최근 글 - {who}이 다 보는 곳]\n" + ("\n".join(lines) or "- 조용함"))
+    return "\n\n".join(blocks)
 
 
-def _post_group(agent: dict, text: str, data: dict, agents: list[dict]) -> None:
-    """단톡방에 올리고 기록한다. 이름이 불린 동료는 받은편지함으로 깨운다."""
+def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dict]) -> None:
+    """단톡방에 올리고 기록한다. 이름이 불린 멤버는 받은편지함으로 깨운다."""
     now = now_kst()
+    header = GROUP_HEADERS.get(group)
     try:
-        runtime.send_as(agent.get("account", ""), agent["name"], text, agent.get("avatar_url", ""),
-                        channel_id=bot_settings.PORING_GROUP_CHAT_CHANNEL_ID)
+        runtime.send_as(agent.get("account", ""), agent["name"], f"{header}\n{text}" if header else text,
+                        agent.get("avatar_url", ""), channel_id=_group_channel(group))
     except Exception as e:  # noqa: BLE001
-        print(f"[경고] {agent['name']} 단톡방 전송 실패: {e}")
+        print(f"[경고] {agent['name']} {group} 전송 실패: {e}")
         return
     with open(GROUP_PATH, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"at": now.isoformat(timespec="minutes"), "name": agent["name"], "text": text},
-                           ensure_ascii=False) + "\n")
+        f.write(json.dumps({"at": now.isoformat(timespec="minutes"), "group": group, "name": agent["name"],
+                            "text": text}, ensure_ascii=False) + "\n")
     for other in agents:
-        if other is not agent and _has_group(other) and other["name"] in text:
-            _push_inbox(data, other["name"], f"{GROUP_NAME}에서 {agent['name']}가 나를 언급함: {text}", "단톡방")
-    print(f"[에이전트] 단톡방 {agent['name']}: {text}")
+        if other is not agent and group in _groups_of(other) and other["name"] in text:
+            _push_inbox(data, other["name"], f"{group}에서 {agent['name']}가 나를 언급함: {text}", "단톡방")
+    print(f"[에이전트] {group} {agent['name']}: {text}")
 
 
 # ===================================================================== 지각
@@ -280,15 +303,29 @@ def _system(agent: dict) -> str:
 
 
 # ===================================================================== 판단
+def _parse_group_post(raw, groups: list[str]) -> dict | None:
+    """{"group", "text"} 또는 그냥 글(첫 단톡방으로). 멤버가 아닌 단톡방이면 버린다."""
+    if not groups or not raw:
+        return None
+    if isinstance(raw, str):
+        raw = {"group": groups[0], "text": raw}
+    if not isinstance(raw, dict):
+        return None
+    group = raw.get("group") if raw.get("group") in groups else groups[0]
+    text = str(raw.get("text") or "").strip()[:300]
+    return {"group": group, "text": text} if text else None
+
+
 def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: list[dict]) -> dict | None:
     other_names = [o["name"] for o in others]
-    group = _has_group(agent)
+    groups = _groups_of(agent)
     group_rule = (
-        f"- {GROUP_NAME}은 회사 사람들이 다 보는 곳이다. 업무 공지/질문/가벼운 잡담/누가 부른 것에 대한 답이 있으면 "
+        f"- 단톡방({', '.join(groups)})은 멤버들이 다 보는 곳이다. 공지/질문/가벼운 잡담/누가 부른 것에 대한 답이 있으면 "
         "group_post에 써라. 개인적인 비밀이나 남의 험담은 쓰지 마라(다 본다). 할 말이 없으면 null - 매번 쓰지 마라.\n"
-        if group else ""
+        if groups else ""
     )
-    group_spec = ', "group_post": null 또는 "단톡방에 올릴 말(1~2문장)"' if group else ""
+    group_spec = (f', "group_post": null 또는 {{"group": "{"|".join(groups)}", "text": "단톡방에 올릴 말(1~2문장)"}}'
+                  if groups else "")
     user = (
         _perception(agent, st, routine_hint, kakao, others) + "\n\n"
         "이번 한 시간 동안 무엇을 할지 정해라.\n"
@@ -320,7 +357,7 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "thought": str(out.get("thought") or "").strip()[:200],
         "plan": str(out.get("plan") or "").strip()[:120],
         "contact": contact, "raw": out,
-        "group_post": (str(out.get("group_post") or "").strip()[:300] or None) if group else None,
+        "group_post": _parse_group_post(out.get("group_post"), groups),
     }
 
 
@@ -380,6 +417,15 @@ def _same_place(x: str, y: str) -> bool:
     return bool(x and y) and (x in y or y in x)
 
 
+def _shared_hangout(other: dict, a: dict, b: dict, place: str) -> str:
+    """other와 대화 당사자가 같이 드나드는 단골 가게(또는 대화 장소가 other의 단골)면 그 이름."""
+    mine = other.get("hangouts") or []
+    for h in mine:
+        if _same_place(h, place) or h in (a.get("hangouts") or []) or h in (b.get("hangouts") or []):
+            return h
+    return ""
+
+
 def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs: dict) -> list[tuple[str, str]]:
     """
     [엿듣기/소문] 대화가 끝나면 주변에 확률적으로 샌다. 직접 만난 대화를 같은 곳에 있던 사람이 엿듣거나,
@@ -405,6 +451,8 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
             p, text = GOSSIP_P_SAME_PLACE, f"{place}에서 {a['name']}와 {b['name']}가 하는 얘기를 우연히 들었다 - {line['speaker']}: \"{quote}\""
         elif other.get("company") in (a.get("company"), b.get("company")):
             p, text = GOSSIP_P_COLLEAGUE, f"{a['name']}랑 {b['name']}가 얘기하던데, \"{quote}\" 이런 말이 나왔다더라"
+        elif shared := _shared_hangout(other, a, b, place):
+            p, text = GOSSIP_P_REGULAR, f"{shared}에서 들었는데, {a['name']}랑 {b['name']}가 \"{quote}\" 이런 얘기를 했다더라"
         else:
             p, text = GOSSIP_P_OTHER, f"동네에서 {a['name']}와 {b['name']} 얘기를 들었다 - \"{quote}\" 그랬다던데"
         if rnd.random() < min(0.9, p * weight):
@@ -498,6 +546,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
 
     data = _load_state()
     decisions: dict[str, dict] = {}
+    fresh: list[str] = []  # 이번 시간 새로 판단한 사람 (근황 요약용)
     awake = [a for a in agents if not _asleep(a, now.hour)]
     for agent in awake:
         name = agent["name"]
@@ -524,6 +573,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         st.setdefault("log", []).append({k: d[k] for k in ("hour", "location", "activity", "state", "thought")})
         st["log"] = st["log"][-MAX_LOG:]
         decisions[name] = d
+        fresh.append(name)
         print(f"[에이전트] {name}: {d['location']}에서 {d['activity']} ({d['state']}) - {d['thought']}")
     _save_state(data)
 
@@ -564,19 +614,43 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     gc = data.setdefault("_group", {})
     if gc.get("date") != today:
         gc.clear()
-        gc.update({"date": today, "count": 0})
+        gc.update({"date": today, "counts": {}})
+    counts = gc.setdefault("counts", {})
     posted = 0
     for name, d in decisions.items():
-        if not d.get("group_post") or d.get("group_done"):
+        gp = d.get("group_post")
+        if not isinstance(gp, dict) or d.get("group_done"):
             continue
-        if posted >= GROUP_MAX_POSTS_PER_HOUR or gc["count"] >= GROUP_MAX_POSTS_PER_DAY:
+        if posted >= GROUP_MAX_POSTS_PER_HOUR:
             break
-        _post_group(by_name[name], d["group_post"], data, agents)
+        if counts.get(gp["group"], 0) >= GROUP_MAX_POSTS_PER_DAY:
+            continue
+        _post_group(by_name[name], gp["group"], gp["text"], data, agents)
         data.setdefault(name, {}).setdefault("decision", d)["group_done"] = True
-        gc["count"] += 1
+        counts[gp["group"]] = counts.get(gp["group"], 0) + 1
         posted += 1
     _save_state(data)
+
+    # 4) 근황 - 이번 시간 새로 판단한 사람들이 어디서 뭘 하는지 한 메시지로 (대화 채널)
+    if STATUS_DIGEST and fresh:
+        _post_digest(now, [(by_name[n], decisions[n]) for n in fresh if n in decisions])
     return decisions
+
+
+def _post_digest(now, items: list[tuple[dict, dict]]) -> None:
+    lines = [f"-# 🕒 {now.strftime('%H:%M')} 지금 다들 뭐 하나"]
+    for agent, d in items:
+        thought = d.get("thought", "")
+        thought = (thought[:45] + "…") if len(thought) > 45 else thought
+        lines.append(f"• **{agent['name']}** · {d['location']} — {d['activity']}" + (f" *({thought})*" if thought else ""))
+    text = "\n".join(lines)[:1900]
+    if not runtime.has_agent_sender():
+        print(f"[에이전트] (채널 미설정) 근황\n{text}")
+        return
+    try:
+        runtime.send_as("", "동네 소식", text, "")
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 근황 전송 실패: {e}")
 
 
 # ===================================================================== 다른 곳에서 쓰는 요약

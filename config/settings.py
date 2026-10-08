@@ -122,6 +122,8 @@ PORING_AGENT_WEBHOOK_URL = os.environ.get("PORING_AGENT_WEBHOOK_URL", "")
 # [신규] 회사 단톡방 - 포링푸드 소속 에이전트가 같이 보고 쓰는 채널 (기존 포링푸드 이야기 채널)
 PORING_GROUP_CHAT_CHANNEL_ID = _int("PORING_GROUP_CHAT_CHANNEL_ID", 1524285939365707868)
 PORING_GROUP_WEBHOOK_URL = os.environ.get("PORING_GROUP_WEBHOOK_URL", "")
+# [신규] 동네 단톡방 채널 - 비우면 에이전트 대화 채널에 "동네 단톡방" 머리줄을 붙여 같이 올린다
+PORING_TOWN_CHAT_CHANNEL_ID = _int("PORING_TOWN_CHAT_CHANNEL_ID", 0)
 PORING_AGENT_CHANNEL_ID = _int("PORING_AGENT_CHANNEL_ID", 0) or PORING_DISCORD_CHANNEL_ID
 PORING_DISCORD_WEBHOOK_URL = os.environ.get("PORING_DISCORD_WEBHOOK_URL", "")
 PORING_KAKAO_ROOM_ID = os.environ.get("PORING_KAKAO_ROOM_ID", "")  # 예전 포링푸드 .env의 ROOM_ID
