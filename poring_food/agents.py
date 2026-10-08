@@ -32,6 +32,7 @@ from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import DATA_DIR, DISCORD_BOT_V2_DB_PATH, STATE_DIR
 from .llm import llm_json
+from config import settings as bot_settings
 
 AGENTS_PATH = os.path.join(DATA_DIR, "agents.json")
 STATE_PATH = os.path.join(STATE_DIR, "agents_state.json")
@@ -45,6 +46,21 @@ MAX_CONVOS_PER_DAY = int(os.getenv("PORING_AGENT_MAX_CONVOS_PER_DAY", "12"))
 TYPING_DELAY = (float(os.getenv("PORING_AGENT_DELAY_MIN", "3")), float(os.getenv("PORING_AGENT_DELAY_MAX", "8")))
 DECIDE_TIMEOUT_SEC = 45
 VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
+
+# 회사 단톡방 - 그 회사 소속 에이전트만 보고 쓴다 (모두가 보는 곳이라 비밀 얘기는 안 쓴다)
+GROUP_COMPANY = "포링푸드 (Poring Food)"
+GROUP_NAME = "포링푸드 단톡방"
+GROUP_PATH = os.path.join(STATE_DIR, "group_chat.jsonl")
+GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))
+GROUP_MAX_POSTS_PER_HOUR = 2
+GROUP_RECENT = 10
+
+# 엿듣기/소문 - 대화가 끝나면 주변 사람에게 확률적으로 퍼진다 (추가 LLM 호출 없음)
+GOSSIP_MAX_RECIPIENTS = 2
+GOSSIP_P_SAME_PLACE = 0.6     # 직접 만난 대화를 같은 곳에 있던 사람이 엿들음
+GOSSIP_P_COLLEAGUE = 0.25     # 같은 회사 동료에게 말이 돎
+GOSSIP_P_OTHER = 0.05
+GOSSIP_MESSENGER_FACTOR = 0.4  # 메신저 대화는 잘 안 샌다
 
 
 # ===================================================================== 목록/저장
@@ -147,6 +163,56 @@ def _asleep(agent: dict, hour: int) -> bool:
     return s <= hour < e if s <= e else (hour >= s or hour < e)
 
 
+# ===================================================================== 회사 단톡방
+def _has_group(agent: dict) -> bool:
+    return agent.get("company") == GROUP_COMPANY and bool(bot_settings.PORING_GROUP_CHAT_CHANNEL_ID)
+
+
+def _group_recent(hours: int = 24, limit: int = GROUP_RECENT) -> list[dict]:
+    if not os.path.exists(GROUP_PATH):
+        return []
+    since = (now_kst() - timedelta(hours=hours)).isoformat()
+    out = []
+    with open(GROUP_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                m = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if m.get("at", "") >= since:
+                out.append(m)
+    return out[-limit:]
+
+
+def _group_block(agent: dict, st: dict) -> str:
+    if not _has_group(agent):
+        return ""
+    last_seen = (st.get("decision") or {}).get("hour", "")
+    lines = []
+    for m in _group_recent():
+        new = " (새 글)" if m["at"][:13].replace("T", " ") >= last_seen and m["name"] != agent["name"] else ""
+        lines.append(f"- {m['at'][5:16].replace('T', ' ')} {m['name']}: {m['text']}{new}")
+    return (f"[{GROUP_NAME} 최근 글 - 회사 사람들이 다 보는 곳]\n" + ("\n".join(lines) or "- 조용함"))
+
+
+def _post_group(agent: dict, text: str, data: dict, agents: list[dict]) -> None:
+    """단톡방에 올리고 기록한다. 이름이 불린 동료는 받은편지함으로 깨운다."""
+    now = now_kst()
+    try:
+        runtime.send_as(agent.get("account", ""), agent["name"], text, agent.get("avatar_url", ""),
+                        channel_id=bot_settings.PORING_GROUP_CHAT_CHANNEL_ID)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] {agent['name']} 단톡방 전송 실패: {e}")
+        return
+    with open(GROUP_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"at": now.isoformat(timespec="minutes"), "name": agent["name"], "text": text},
+                           ensure_ascii=False) + "\n")
+    for other in agents:
+        if other is not agent and _has_group(other) and other["name"] in text:
+            _push_inbox(data, other["name"], f"{GROUP_NAME}에서 {agent['name']}가 나를 언급함: {text}", "단톡방")
+    print(f"[에이전트] 단톡방 {agent['name']}: {text}")
+
+
 # ===================================================================== 지각
 def _kakao_digest(agent: dict, since: str) -> tuple[list[str], str]:
     """애순이처럼 카톡에서 실제 사람과 대화하는 에이전트: 지난 회차 이후 그 대화들 (방별 최근 줄)."""
@@ -194,6 +260,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
     ]
     if kakao:
         parts.append("[카톡에서 실제 사람들과 나눈 대화 - 내가 직접 한 대화다]\n" + "\n".join(kakao[-20:]))
+    parts.append(_group_block(agent, st))
     parts += [
         "[최근 내 행동]\n" + ("\n".join(recent) or "- 없음"),
         f"[연락할 수 있는 사람(스스로 사는 사람들)] {others_line}",
@@ -215,17 +282,25 @@ def _system(agent: dict) -> str:
 # ===================================================================== 판단
 def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: list[dict]) -> dict | None:
     other_names = [o["name"] for o in others]
+    group = _has_group(agent)
+    group_rule = (
+        f"- {GROUP_NAME}은 회사 사람들이 다 보는 곳이다. 업무 공지/질문/가벼운 잡담/누가 부른 것에 대한 답이 있으면 "
+        "group_post에 써라. 개인적인 비밀이나 남의 험담은 쓰지 마라(다 본다). 할 말이 없으면 null - 매번 쓰지 마라.\n"
+        if group else ""
+    )
+    group_spec = ', "group_post": null 또는 "단톡방에 올릴 말(1~2문장)"' if group else ""
     user = (
         _perception(agent, st, routine_hint, kakao, others) + "\n\n"
         "이번 한 시간 동안 무엇을 할지 정해라.\n"
         "- 다른 사람에게 연락할 이유가 있으면(전할 말, 걱정, 반가움, 부탁, 그냥 수다) contact를 써라. "
         "억지로 매번 연락하지는 마라. 같은 장소에 있을 법하면 how를 '직접', 아니면 '메신저'.\n"
         "- 카톡 대화나 받은 소식으로 마음이 바뀌었으면 state_change에, 오래 기억할 일이면 memory에 적어라.\n"
+        + group_rule +
         "반드시 JSON으로만 응답:\n"
         '{"location": "지금 있는 곳", "activity": "하는 일(짧게)", '
         f'"state": "{"|".join(VALID_STATES)} 중 하나", '
         '"thought": "지금 속마음 1~2문장", "plan": "다음에 할 일 한 줄", '
-        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "메신저|직접", "opening": "첫 마디"}}, '
+        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "메신저|직접", "opening": "첫 마디"}}{group_spec}, '
         f"{life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
     )
     out = llm_json(_system(agent), user, temperature=0.85, timeout=DECIDE_TIMEOUT_SEC, tag=f"에이전트 {agent['name']}")
@@ -245,6 +320,7 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "thought": str(out.get("thought") or "").strip()[:200],
         "plan": str(out.get("plan") or "").strip()[:120],
         "contact": contact, "raw": out,
+        "group_post": (str(out.get("group_post") or "").strip()[:300] or None) if group else None,
     }
 
 
@@ -299,6 +375,44 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
     return out
 
 
+def _same_place(x: str, y: str) -> bool:
+    x, y = (x or "").replace(" ", ""), (y or "").replace(" ", "")
+    return bool(x and y) and (x in y or y in x)
+
+
+def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs: dict) -> list[tuple[str, str]]:
+    """
+    [엿듣기/소문] 대화가 끝나면 주변에 확률적으로 샌다. 직접 만난 대화를 같은 곳에 있던 사람이 엿듣거나,
+    같은 회사 동료에게 말이 돈다. 메신저 대화는 잘 안 새고, 중요한 얘기일수록 잘 퍼진다. (추가 LLM 호출 없음)
+    반환: [(받는 사람, 소문 글)] - 호출한 쪽이 받은편지함에 넣는다.
+    """
+    importance = 3
+    for o in outs.values():
+        try:
+            importance = max(importance, int((o.get("memory") or {}).get("importance", 0)))
+        except (TypeError, ValueError):
+            pass
+    weight = max(0.4, min(1.6, importance / 5)) * (1.0 if how != "메신저" else GOSSIP_MESSENGER_FACTOR)
+    line = max(transcript, key=lambda t: len(t["line"]))  # 가장 할 말이 많았던 대목
+    quote = line["line"][:80]
+    rnd = random.Random(f"{now_kst().isoformat()}|{a['name']}|{b['name']}")
+    picked = []
+    for other in load_agents():
+        if other["name"] in (a["name"], b["name"]):
+            continue
+        od = active(other["name"]) or {}
+        if how != "메신저" and _same_place(od.get("location", ""), place):
+            p, text = GOSSIP_P_SAME_PLACE, f"{place}에서 {a['name']}와 {b['name']}가 하는 얘기를 우연히 들었다 - {line['speaker']}: \"{quote}\""
+        elif other.get("company") in (a.get("company"), b.get("company")):
+            p, text = GOSSIP_P_COLLEAGUE, f"{a['name']}랑 {b['name']}가 얘기하던데, \"{quote}\" 이런 말이 나왔다더라"
+        else:
+            p, text = GOSSIP_P_OTHER, f"동네에서 {a['name']}와 {b['name']} 얘기를 들었다 - \"{quote}\" 그랬다던데"
+        if rnd.random() < min(0.9, p * weight):
+            picked.append((other["name"], text))
+    rnd.shuffle(picked)
+    return picked[:GOSSIP_MAX_RECIPIENTS]
+
+
 def _conversation(a: dict, b: dict, opening: str, how: str, place: str) -> dict:
     """a가 먼저 말을 걸고 b와 번갈아 말한다. 각자 자기 계정으로 채널에 올린다."""
     now = now_kst()
@@ -347,7 +461,10 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str) -> dict:
     rels[key] = rel
     characters.save_relationships(rels)
 
+    gossip = _gossip(a, b, how, place, transcript, outs)
+
     scene = {
+        "gossip": gossip,
         "id": uuid.uuid4().hex[:12], "ts": now.isoformat(timespec="seconds"), "hour": now.hour,
         "location": "메신저" if how == "메신저" else place, "participants": [a["name"], b["name"]],
         "arc_id": None, "lines": transcript, "narration": "", "summary": summary, "agents": True,
@@ -434,12 +551,30 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
                 _push_inbox(data, target["name"], f"{name}에게서 온 메시지: {c['opening']}", "메시지")
             else:
                 place = d.get("location") or "어딘가"
-                _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place)
+                scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place)
+                for who, text in scene.get("gossip", []):
+                    _push_inbox(data, who, text, "소문")
+                    print(f"[에이전트] 소문: {who} <- {text}")
             c["done"] = True
             data.setdefault(name, {}).setdefault("decision", d)["contact"] = c
             convo["count"] += 1
             convo["hours"].append(hk)
             break
+    # 3) 회사 단톡방 - 판단 때 group_post를 쓴 사람이 올린다 (시간당/하루 상한)
+    gc = data.setdefault("_group", {})
+    if gc.get("date") != today:
+        gc.clear()
+        gc.update({"date": today, "count": 0})
+    posted = 0
+    for name, d in decisions.items():
+        if not d.get("group_post") or d.get("group_done"):
+            continue
+        if posted >= GROUP_MAX_POSTS_PER_HOUR or gc["count"] >= GROUP_MAX_POSTS_PER_DAY:
+            break
+        _post_group(by_name[name], d["group_post"], data, agents)
+        data.setdefault(name, {}).setdefault("decision", d)["group_done"] = True
+        gc["count"] += 1
+        posted += 1
     _save_state(data)
     return decisions
 

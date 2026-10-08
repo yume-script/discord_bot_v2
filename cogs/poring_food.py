@@ -38,10 +38,9 @@ class PoringFood(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._lock = asyncio.Lock()
-        self._webhook: discord.Webhook | None = None
-        self._webhook_retry_at = 0.0
-        # 에이전트 채널이 스레드면 웹훅은 부모 채널 것이고, 보낼 때마다 이 스레드를 지정해야 한다
-        self._webhook_thread: discord.Object | None = None
+        # 채널별 (웹훅, 스레드) - 채널이 스레드면 웹훅은 부모 채널 것이고 보낼 때마다 스레드를 지정해야 한다
+        self._webhooks: dict[int, tuple[discord.Webhook, discord.Object | None]] = {}
+        self._webhook_retry_at: dict[int, float] = {}
 
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
@@ -72,85 +71,88 @@ class PoringFood(commands.Cog):
         for i in range(0, len(text), DISCORD_LIMIT):
             await channel.send(text[i:i + DISCORD_LIMIT])
 
-    async def _send_as_agent(self, account: str, name: str, text: str, avatar_url: str = "") -> None:
+    async def _send_as_agent(self, account: str, name: str, text: str, avatar_url: str = "", channel_id: int = 0) -> None:
         """
-        에이전트의 말을 에이전트 채널에 올린다.
+        에이전트의 말을 채널에 올린다 (channel_id 기본: 에이전트 대화 채널, 회사 단톡방 등은 지정).
         1) 봇 계정이 있는 에이전트(애순이/소라): 그 계정으로
-        2) 봇 토큰 없는 에이전트: 채널 웹훅으로 이름/아바타만 바꿔서 (사람마다 다른 사람처럼 보인다)
+        2) 봇 토큰 없는 에이전트: 그 채널의 웹훅으로 이름/아바타만 바꿔서 (사람마다 다른 사람처럼 보인다)
         3) 둘 다 안 되면 아메하나가 이름을 붙여 대신
         """
-        channel_id = settings.PORING_AGENT_CHANNEL_ID
+        channel_id = channel_id or settings.PORING_AGENT_CHANNEL_ID
         acc = side_accounts.get(account) if account else None
         if acc is not None and await acc.send(channel_id, text):
             return
-        hook = await self._agent_webhook()
+        hook, thread = await self._agent_webhook(channel_id)
         if hook is not None:
             try:
-                kwargs = {"thread": self._webhook_thread} if self._webhook_thread else {}
+                kwargs = {"thread": thread} if thread else {}
                 await hook.send(text[:DISCORD_LIMIT], username=name[:80], avatar_url=avatar_url or None,
                                 allowed_mentions=discord.AllowedMentions.none(), **kwargs)
                 return
             except discord.HTTPException as exc:
-                log.warning("에이전트 웹훅 전송 실패 (%s) - 아메하나가 대신 올림: %s", name, exc)
-                self._webhook = None
+                log.warning("에이전트 웹훅 전송 실패 (%s, 채널 %s) - 아메하나가 대신 올림: %s", name, channel_id, exc)
+                self._webhooks.pop(channel_id, None)
         channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
         await channel.send(f"**{name}**: {text}"[:DISCORD_LIMIT])
 
-    async def _agent_webhook(self) -> discord.Webhook | None:
-        """
-        봇 토큰 없는 에이전트용 채널 웹훅. .env의 PORING_AGENT_WEBHOOK_URL이 있으면 그걸, 없으면 카제 봇 ->
-        아메하나 순으로 채널의 기존 웹훅을 찾거나 만든다("웹후크 관리" 권한 필요). 실패하면 1시간 뒤 다시 시도.
+    def _webhook_url_for(self, channel_id: int) -> str:
+        if channel_id == settings.PORING_AGENT_CHANNEL_ID:
+            return settings.PORING_AGENT_WEBHOOK_URL
+        if channel_id == settings.PORING_GROUP_CHAT_CHANNEL_ID:
+            return settings.PORING_GROUP_WEBHOOK_URL
+        return ""
 
-        [수정] 에이전트 채널이 스레드일 때: 웹훅은 스레드가 아니라 부모 채널에 속해서, 보낼 때 thread를
-        지정하지 않으면 부모 채널로 간다(애순이는 봇 계정이라 스레드에, 웹훅 인물은 부모 채널에 올라가던 문제).
-        URL 끝의 ?thread_id=는 discord.py가 버리므로 직접 읽고, 없으면 에이전트 채널이 스레드인지 확인한다.
+    async def _agent_webhook(self, channel_id: int) -> tuple[discord.Webhook | None, discord.Object | None]:
         """
-        if self._webhook is not None:
-            return self._webhook
-        if settings.PORING_AGENT_WEBHOOK_URL:
-            url = settings.PORING_AGENT_WEBHOOK_URL
+        봇 토큰 없는 에이전트용 채널 웹훅과 (스레드면) 지정할 스레드. 채널마다 따로 기억한다.
+        .env에 그 채널의 웹훅 URL(PORING_AGENT_WEBHOOK_URL / PORING_GROUP_WEBHOOK_URL)이 있으면 그걸, 없으면
+        카제 봇 -> 아메하나 순으로 채널의 기존 웹훅을 찾거나 만든다("웹후크 관리" 권한 필요). 실패하면 1시간 뒤 다시.
+
+        [수정] 채널이 스레드일 때: 웹훅은 스레드가 아니라 부모 채널에 속해서, 보낼 때 thread를 지정하지 않으면
+        부모 채널로 간다. URL 끝의 ?thread_id=는 discord.py가 버리므로 직접 읽고, 없으면 채널이 스레드인지 확인한다.
+        """
+        if channel_id in self._webhooks:
+            return self._webhooks[channel_id]
+        url = self._webhook_url_for(channel_id)
+        if url:
             thread_id = parse_qs(urlparse(url).query).get("thread_id", [""])[0]
-            self._webhook = discord.Webhook.from_url(url.split("?", 1)[0], client=self.bot)
-            if thread_id.isdigit():
-                self._webhook_thread = discord.Object(id=int(thread_id))
-            else:
-                await self._detect_agent_thread()
-            return self._webhook
-        if time.monotonic() < self._webhook_retry_at:
-            return None
+            hook = discord.Webhook.from_url(url.split("?", 1)[0], client=self.bot)
+            thread = discord.Object(id=int(thread_id)) if thread_id.isdigit() else await self._thread_of(channel_id)
+            self._webhooks[channel_id] = (hook, thread)
+            return self._webhooks[channel_id]
+        if time.monotonic() < self._webhook_retry_at.get(channel_id, 0.0):
+            return None, None
         kaje = side_accounts.get("kaje")
         for client in (kaje.client if kaje else None, self.bot):
             if client is None:
                 continue
             try:
-                ch_id = settings.PORING_AGENT_CHANNEL_ID
-                channel = client.get_channel(ch_id) or await client.fetch_channel(ch_id)
+                channel = client.get_channel(channel_id) or await client.fetch_channel(channel_id)
+                thread = None
                 if isinstance(channel, discord.Thread):  # 스레드엔 웹훅을 못 만든다 - 부모 채널 웹훅 + 스레드 지정
-                    self._webhook_thread = discord.Object(id=channel.id)
+                    thread = discord.Object(id=channel.id)
                     channel = channel.parent or await client.fetch_channel(channel.parent_id)
                 hooks = await channel.webhooks()
                 hook = next((h for h in hooks if h.name == AGENT_WEBHOOK_NAME and h.token), None)
                 if hook is None:
                     hook = await channel.create_webhook(name=AGENT_WEBHOOK_NAME, reason="포링푸드 에이전트 대화")
-                    log.info("포링푸드 에이전트 웹훅을 만들었다 (%s)", client.user)
-                self._webhook = hook
-                return hook
+                    log.info("포링푸드 에이전트 웹훅을 만들었다 (%s, 채널 %s)", client.user, channel.id)
+                self._webhooks[channel_id] = (hook, thread)
+                return hook, thread
             except discord.HTTPException as exc:
-                log.warning("에이전트 웹훅 준비 실패 (%s): %s", client.user, exc)
-        self._webhook_retry_at = time.monotonic() + 3600
-        log.warning("에이전트 웹훅을 못 만들었다 - 카제/아메하나에 채널 '웹후크 관리' 권한을 주거나 "
-                    "PORING_AGENT_WEBHOOK_URL을 넣어라. 그때까지는 아메하나가 이름을 붙여 대신 올린다.")
-        return None
+                log.warning("에이전트 웹훅 준비 실패 (%s, 채널 %s): %s", client.user, channel_id, exc)
+        self._webhook_retry_at[channel_id] = time.monotonic() + 3600
+        log.warning("채널 %s의 에이전트 웹훅을 못 만들었다 - 카제/아메하나에 '웹후크 관리' 권한을 주거나 웹훅 URL을 "
+                    ".env에 넣어라. 그때까지는 아메하나가 이름을 붙여 대신 올린다.", channel_id)
+        return None, None
 
-    async def _detect_agent_thread(self) -> None:
-        """에이전트 채널이 스레드면 웹훅을 보낼 때 지정할 스레드로 기억한다."""
+    async def _thread_of(self, channel_id: int) -> discord.Object | None:
+        """채널이 스레드면 웹훅을 보낼 때 지정할 스레드."""
         try:
-            ch_id = settings.PORING_AGENT_CHANNEL_ID
-            channel = self.bot.get_channel(ch_id) or await self.bot.fetch_channel(ch_id)
+            channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
         except discord.HTTPException:
-            return
-        if isinstance(channel, discord.Thread):
-            self._webhook_thread = discord.Object(id=channel.id)
+            return None
+        return discord.Object(id=channel.id) if isinstance(channel, discord.Thread) else None
 
     async def _run_once(self) -> bool:
         """한 회차 실행. 이미 도는 중이면 False."""
