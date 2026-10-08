@@ -103,6 +103,9 @@ PORING_DISCORD_CHANNEL_ID = int(os.environ.get("PORING_DISCORD_CHANNEL_ID", "0")
 # [신규] 포링푸드 LLM 에이전트(애순이/소라...)끼리 대화하는 채널 - 기본은 포링푸드 방송 채널과 같다
 # [신규] 봇 토큰 없는 에이전트가 말할 채널 웹훅 URL (비우면 KAJE 봇 -> 아메하나 순으로 웹훅을 찾거나 만든다)
 PORING_AGENT_WEBHOOK_URL = os.environ.get("PORING_AGENT_WEBHOOK_URL", "")
+# [신규] 회사 단톡방 - 포링푸드 소속 에이전트가 같이 보고 쓰는 채널 (기존 포링푸드 이야기 채널)
+PORING_GROUP_CHAT_CHANNEL_ID = int(os.environ.get("PORING_GROUP_CHAT_CHANNEL_ID", "1524285939365707868") or 0)
+PORING_GROUP_WEBHOOK_URL = os.environ.get("PORING_GROUP_WEBHOOK_URL", "")
 PORING_AGENT_CHANNEL_ID = int(os.environ.get("PORING_AGENT_CHANNEL_ID", "0") or 0) or PORING_DISCORD_CHANNEL_ID
 PORING_DISCORD_WEBHOOK_URL = os.environ.get("PORING_DISCORD_WEBHOOK_URL", "")
 PORING_KAKAO_ROOM_ID = os.environ.get("PORING_KAKAO_ROOM_ID", "")  # 예전 포링푸드 .env의 ROOM_ID
