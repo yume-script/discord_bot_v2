@@ -107,17 +107,56 @@ def _save_state(data: dict) -> None:
     os.replace(tmp, STATE_PATH)
 
 
-def _push_inbox(data: dict, name: str, text: str, kind: str) -> None:
+def _push_inbox(data: dict, name: str, text: str, kind: str, urgent: bool = False) -> None:
     st = data.setdefault(name, {})
-    st.setdefault("inbox", []).append({"at": now_kst().isoformat(timespec="minutes"), "kind": kind, "text": text[:300]})
+    item = {"at": now_kst().isoformat(timespec="minutes"), "kind": kind, "text": text[:300]}
+    if urgent:
+        item["urgent"] = True  # 이번 시간에 이미 판단했어도 다시 판단한다 (관리자 사건/메시지)
+    st.setdefault("inbox", []).append(item)
     st["inbox"] = st["inbox"][-MAX_INBOX:]
 
 
-def deliver(name: str, text: str, kind: str) -> None:
+def deliver(name: str, text: str, kind: str, urgent: bool = False) -> None:
     """에이전트 받은편지함에 지각 하나를 넣는다 (사건/소문/메시지). 다음 판단 때 읽는다."""
     data = _load_state()
-    _push_inbox(data, name, text, kind)
+    _push_inbox(data, name, text, kind, urgent)
     _save_state(data)
+
+
+def send_message(to: str, text: str, sender: str = "") -> bool:
+    """[관리자 귓속말] 에이전트 받은편지함에 메시지를 넣는다. 보낸 사람 이름을 비우면 '누군가'.
+    다음 판단(관리자가 바로 반영을 고르면 지금)에 읽고 반응한다. 없는 이름이면 False."""
+    if not is_agent(to):
+        return False
+    who = (sender or "").strip() or "누군가"
+    deliver(to, f"{who}에게서 온 메시지: {text.strip()}", "메시지", urgent=True)
+    print(f"[에이전트] 관리자 메시지: {to} <- {who}: {text.strip()}")
+    return True
+
+
+def inject_event(target_list: list[str], detail: str, title: str = "") -> list[str]:
+    """[관리자 사건] 세계 엔진에 지금 사건 하나를 넣고 당사자 받은편지함에 바로 전달한다.
+    반환: 전달된 에이전트 이름 (대상이 회사/동네면 소속 에이전트 전부, 배경 인물은 장면/일지로 안다)."""
+    out = world.inject(title or detail, detail, target_list, load_agents(), characters.load_roster())
+    for name, text, kind in out:
+        deliver(name, text, kind, urgent=True)
+    return [name for name, _, _ in out]
+
+
+def target_names() -> list[str]:
+    return world.targets(load_agents(), characters.load_roster())
+
+
+def is_asleep_now(name: str) -> bool:
+    agent = next((a for a in load_agents() if a["name"] == name), None)
+    return bool(agent) and _asleep(agent, now_kst().hour)
+
+
+def run_agents_only() -> None:
+    """[관리자 바로 반영] 일지/방송 없이 에이전트 회차만 돈다 (급한 소식을 받은 사람만 다시 판단)."""
+    from . import processor  # 일지 쪽 모듈 - 에이전트 회차만 돌 때만 필요
+    location, activity, _focus, state, _sleeping = processor.get_aesun_detailed_schedule()
+    tick(characters.load_roster(), {"애순이": f"{location}에서 {activity} ({state})"})
 
 
 def _hour_key(now) -> str:
@@ -547,16 +586,20 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     data = _load_state()
     decisions: dict[str, dict] = {}
     fresh: list[str] = []  # 이번 시간 새로 판단한 사람 (근황 요약용)
+    pushed: set[str] = set()  # 관리자 사건/메시지로 다시 판단한 사람 - 이번 시간 대화를 이미 했어도 한 번 더 허용
     awake = [a for a in agents if not _asleep(a, now.hour)]
     for agent in awake:
         name = agent["name"]
         st = data.setdefault(name, {})
-        if (st.get("decision") or {}).get("hour") == hk:
+        urgent = any(m.get("urgent") for m in st.get("inbox", []))
+        if (st.get("decision") or {}).get("hour") == hk and not urgent:
             decisions[name] = st["decision"]
             continue
         # 몇 시간마다 판단하는 에이전트: 차례가 아니고 새 소식도 없으면 이전 판단을 이어간다 (LLM 호출 절약)
         if not _due(agent, now.hour) and not st.get("inbox"):
             continue
+        if urgent:
+            pushed.add(name)
         kakao, new_since = _kakao_digest(agent, st.get("kakao_since", ""))
         others = [o for o in agents if o is not agent]
         d = _decide(agent, st, routine_hints.get(name, ""), kakao, others)
@@ -584,10 +627,14 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     if convo.get("date") != today:
         convo.clear()
         convo.update({"date": today, "count": 0, "hours": []})
-    if hk not in convo["hours"] and convo["count"] < MAX_CONVOS_PER_DAY:
+    pushed_contacts = [(n, decisions[n]) for n in pushed
+                       if n in decisions and (decisions[n].get("contact") or {}).get("to")]
+    if (hk not in convo["hours"] or pushed_contacts) and convo["count"] < MAX_CONVOS_PER_DAY:
         # 연락하려는 사람이 여럿이면 매번 같은 사람이 먼저 되지 않게 섞는다
         order = list(decisions.items())
         random.Random(hk).shuffle(order)
+        if hk in convo["hours"]:
+            order = pushed_contacts  # 이번 시간 대화는 이미 있었다 - 관리자 개입으로 깨어난 사람만
         for name, d in order:
             c = d.get("contact")
             if not c or c.get("done"):

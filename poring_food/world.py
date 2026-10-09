@@ -163,7 +163,7 @@ def tick(agents: list[dict], roster: list[dict], signals_block: str = "") -> lis
             return []
         log = data.get("log", [])
         plan = _plan_day(now, agents, roster, signals_block, log)
-        data = {"date": today, "plan": plan, "log": log}
+        data = {"date": today, "plan": plan, "log": log, "manual": data.get("manual", {})}
         _save(data)
         print(f"[세계] 오늘 사건 {len(plan)}개 계획 (에이전트에게는 비밀): {[(e['hour'], e['title']) for e in plan]}")
 
@@ -189,14 +189,59 @@ def tick(agents: list[dict], roster: list[dict], signals_block: str = "") -> lis
     return deliveries
 
 
+def targets(agents: list[dict], roster: list[dict]) -> list[str]:
+    """사건 대상으로 쓸 수 있는 이름들: 에이전트, 회사, 동네."""
+    return [a["name"] for a in agents] + sorted({c["company"] for c in roster}) + [TOWN]
+
+
+def inject(title: str, detail: str, target_list: list[str], agents: list[dict], roster: list[dict],
+           effects: dict | None = None) -> list[tuple[str, str, str]]:
+    """
+    [관리자 사건] 지금 바로 사건 하나를 일으킨다. 하루 계획과 같은 방식으로 기록/전달된다
+    (에이전트에게는 그냥 세상에서 생긴 일로 보인다). 반환: 전달할 지각 [(이름, 글, "사건"), ...]
+    대상이 하나도 맞지 않으면 빈 목록.
+    """
+    now = now_kst()
+    today = now.strftime("%Y-%m-%d")
+    valid = set(targets(agents, roster))
+    target_list = [t for t in target_list if t in valid]
+    if not target_list:
+        return []
+    agent_names = {a["name"] for a in agents}
+    e = {
+        "id": uuid.uuid4().hex[:8], "hour": now.hour, "title": title.strip()[:80] or detail.strip()[:40],
+        "detail": detail.strip()[:300], "rumor": "", "visibility": "direct", "targets": target_list,
+        "effects": effects or {}, "released": True, "confirmed": True, "manual": True,
+        "private": all(t in agent_names for t in target_list),
+    }
+    data = _load()
+    manual = data.get("manual") if isinstance(data.get("manual"), dict) else {}
+    if manual.get("date") != today:
+        manual = {"date": today, "events": []}
+    manual["events"].append(e)
+    data["manual"] = manual  # 하루 계획(plan)과 따로 둔다 - 계획 전(새벽)에 넣어도 그날 계획이 막히지 않게
+    data.setdefault("log", []).append({"date": today, "hour": e["hour"], "title": e["title"], "targets": target_list})
+    data["log"] = data["log"][-MAX_LOG:]
+    _save(data)
+    _apply_npc_effects(e, roster, agent_names)
+    print(f"[세계] 관리자 사건 {e['hour']}시: {e['title']} -> {target_list}")
+    return [(name, e["detail"], "사건") for name in _recipients(e, agents)]
+
+
+def _today_events(data: dict, today: str) -> list[dict]:
+    events = list(data.get("plan", [])) if data.get("date") == today else []
+    manual = data.get("manual") if isinstance(data.get("manual"), dict) else {}
+    if manual.get("date") == today:
+        events += manual.get("events", [])
+    return sorted(events, key=lambda x: x.get("hour", 0))
+
+
 def today_lines(company: str | None = None) -> list[str]:
     """오늘 이미 일어난 공개 사건 (배경 인물 장면/일지, 에이전트의 바깥 세상 신호용).
     에이전트 개인 사건은 빼고(당사자 받은편지함으로만 간다), 아직 확인 안 된 건 소문으로만."""
     data = _load()
-    if data.get("date") != now_kst().strftime("%Y-%m-%d"):
-        return []
     lines = []
-    for e in data.get("plan", []):
+    for e in _today_events(data, now_kst().strftime("%Y-%m-%d")):
         if not e.get("released") or e.get("private"):
             continue
         # company가 주어지면(에이전트 지각) 그 회사 사건과 동네 사건만 - 다른 회사 내부 일은 모른다
