@@ -5,8 +5,8 @@
 던지고 각자 자기 상태/기억으로 반응하면서 이야기가 생긴다. 그래서 사건 계획은 에이전트에게 절대
 보여주지 않고, 시각이 되면 그때 당사자에게만 "지각"으로 전달한다.
 
-- 하루 계획(plan_day): 그날 처음 돌 때 LLM이 오늘 일어날 사건 3~6개를 시각별로 정해 둔다
-  (에이전트 각자에게 최소 하나, 회사 전체/동네 사건 섞어서, 좋은 일/나쁜 일/소소한 일 골고루).
+- 하루 계획(plan_day): 그날 처음 돌 때 LLM이 오늘 일어날 사건 4~8개를 시각별로 정해 둔다
+  (회사 전체/동네 사건으로 여러 명에게 닿게, 좋은 일/나쁜 일/소소한 일 골고루).
   실제 바깥 신호(날씨/화제/날짜)와 어긋나지 않게 한다.
 - 발생(release): 시각이 된 사건을 터뜨린다.
   · 당사자 에이전트에게 전달할 목록을 돌려준다 (agents.py가 받은편지함에 넣음)
@@ -33,7 +33,8 @@ PLAN_FROM_HOUR = 6          # 이 시각 이후 그날 처음 돌 때 계획을 
 LAST_EVENT_HOUR = 23
 RUMOR_CONFIRM_AFTER_H = 2
 MAX_LOG = 60
-PLAN_TIMEOUT_SEC = 90
+PLAN_TIMEOUT_SEC = 120
+DETAILED_AGENTS = 12        # 계획 프롬프트에 루틴/기억까지 자세히 넣는 에이전트 수 (agents.json 앞에서부터)
 TOWN = "동네"
 
 
@@ -62,15 +63,21 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         return []
     companies = sorted({c["company"] for c in roster})
     agent_lines = []
-    for a in agents:
+    for i, a in enumerate(agents):
         st = life.get(a["name"])
-        mems = memory.recall(a["name"], k=3)
-        agent_lines.append(
-            f"- {a['name']} ({a.get('company', '')}): {a.get('profile', '')}\n"
-            f"  평소 루틴: {a.get('routine', '')}\n"
-            f"  요즘 목표: {', '.join(st.get('goals') or [])}\n"
-            f"  최근 기억: {' / '.join(m['text'] for m in mems) or '없음'}"
-        )
+        if i < DETAILED_AGENTS:
+            mems = memory.recall(a["name"], k=3)
+            agent_lines.append(
+                f"- {a['name']} ({a.get('company', '')}): {a.get('profile', '')}\n"
+                f"  평소 루틴: {a.get('routine', '')}\n"
+                f"  요즘 목표: {', '.join(st.get('goals') or [])}\n"
+                f"  최근 기억: {' / '.join(m['text'] for m in mems) or '없음'}"
+            )
+        else:
+            # 인원이 많으면 프롬프트가 너무 길어진다 - 뒤쪽 사람은 한 줄 요약만
+            goals = ", ".join((st.get("goals") or [])[:2])
+            agent_lines.append(f"- {a['name']} ({a.get('company', '')}): {a.get('profile', '')[:70]}"
+                               + (f" / 목표: {goals}" if goals else ""))
     npc_sample = [f"{c['name']}({c['company'].split(' ')[0]} {c['dept']} {c['rank']})"
                   for c in roster if c["name"] not in {a["name"] for a in agents}][:30]
     system = (
@@ -85,8 +92,9 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         f"[배경 인물 일부] {', '.join(npc_sample)}\n\n"
         f"{signals_block}\n\n"
         "[최근에 세상에서 있었던 일]\n" + ("\n".join(f"- {e.get('date', '')} {e.get('hour', '')}시 {e.get('title', '')}" for e in recent_log[-8:]) or "- 없음") + "\n\n"
-        "오늘 일어날 사건 3~6개를 정해라:\n"
-        "- 에이전트 각자에게 직접 닿는 사건이 최소 하나씩 있어야 한다. 회사 전체/동네 사건도 섞어라.\n"
+        "오늘 일어날 사건 4~8개를 정해라:\n"
+        "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 회사 전체/동네 사건으로 여러 명에게 닿게 하고,"
+        " 개인 사건은 최근에 사건이 없던 사람 위주로.\n"
         "- 좋은 일, 나쁜 일, 소소한 일을 골고루. 매일 큰 사건이 터지면 안 된다(큰 사건은 가끔).\n"
         "- 실제 날씨/날짜/화제와 어긋나지 않게. 최근 사건과 똑같은 걸 반복하지 마라.\n"
         "- 회사 내부의 불확실한 일(구조조정, 인사, 감사 등)은 visibility를 rumor로 - 먼저 소문으로 돈다.\n"
@@ -126,7 +134,7 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
             "private": all(t in {a["name"] for a in agents} for t in targets),
         })
     events.sort(key=lambda x: x["hour"])
-    return events[:6]
+    return events[:8]
 
 
 # ===================================================================== 발생
