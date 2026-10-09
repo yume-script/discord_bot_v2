@@ -38,7 +38,7 @@ AGENTS_PATH = os.path.join(DATA_DIR, "agents.json")
 STATE_PATH = os.path.join(STATE_DIR, "agents_state.json")
 DIALOGUES_PATH = os.path.join(STATE_DIR, "dialogues.jsonl")  # story.py와 같은 파일 (조회 도구가 같이 읽는다)
 
-MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "20"))
+MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "40"))
 MAX_INBOX = 20
 MAX_LOG = 24
 MAX_TURNS = int(os.getenv("PORING_AGENT_MAX_TURNS", "6"))                  # 대화 한 번의 최대 발언 수
@@ -759,14 +759,25 @@ def _post_digest(now, items: list[tuple[dict, dict]]) -> None:
         thought = d.get("thought", "")
         thought = (thought[:45] + "…") if len(thought) > 45 else thought
         lines.append(f"• **{agent['name']}** · {d['location']} — {d['activity']}" + (f" *({thought})*" if thought else ""))
-    text = "\n".join(lines)[:1900]
+    # 사람이 많은 시간엔 한 메시지(2000자)를 넘는다 - 줄 단위로 나눠 보낸다
+    chunks, cur = [], ""
+    for line in lines:
+        line = line[:300]
+        if cur and len(cur) + len(line) + 1 > 1900:
+            chunks.append(cur)
+            cur = ""
+        cur = f"{cur}\n{line}" if cur else line
+    if cur:
+        chunks.append(cur)
     if not runtime.has_agent_sender():
-        print(f"[에이전트] (채널 미설정) 근황\n{text}")
+        print("[에이전트] (채널 미설정) 근황\n" + "\n".join(chunks))
         return
-    try:
-        runtime.send_as("", "동네 소식", text, "")
-    except Exception as e:  # noqa: BLE001
-        print(f"[경고] 근황 전송 실패: {e}")
+    for text in chunks:
+        try:
+            runtime.send_as("", "동네 소식", text, "")
+        except Exception as e:  # noqa: BLE001
+            print(f"[경고] 근황 전송 실패: {e}")
+            return
 
 
 # ===================================================================== 다른 곳에서 쓰는 요약
