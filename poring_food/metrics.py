@@ -5,6 +5,7 @@
 |---------------------|----------------------------------------------|-------------------------------------|
 | 생산량(신규 입고)     | 오늘 Plex 신규 등록 + 북오아시스 신규 권 수      | plex get_recently_added,            |
 |                     | (서재별 전체 권 수 - 어제 마지막 전체 권 수)     | bookoasis get_library_stats         |
+|  └ 담당 라인         | books=일반/웹툰 서재(애순이), books_adult=성인/화보 서재, plex=영상     |                                     |
 | 판매량(출하)         | 오늘 Plex 재생 수, 지금 시청 중인 수(매장 손님)  | tautulli plays_by_date / activity   |
 | 주문·고객 문의        | 오늘 사람이 봇에게 보낸 메시지 수               | 대화 로그 DB (예전 "생산량")         |
 
@@ -29,7 +30,7 @@ from . import runtime
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .bookoasis import _parse_tool_result, _root_cause
 from .config import (
-    BOOKOASIS_ENABLED, BOOKOASIS_MCP_SERVER, BOOKOASIS_STORY_DB_TYPES, BOOKOASIS_TIMEOUT_SEC,
+    BOOKOASIS_ADULT_DB_TYPES, BOOKOASIS_ENABLED, BOOKOASIS_MCP_SERVER, BOOKOASIS_STORY_DB_TYPES, BOOKOASIS_TIMEOUT_SEC,
     DISCORD_BOT_V2_DB_PATH, STATE_DIR,
 )
 
@@ -112,7 +113,7 @@ async def _books_async() -> dict:
     from ai.mcp_manager import server_session
     totals: dict[str, int] = {}
     async with server_session(BOOKOASIS_MCP_SERVER) as session:
-        for db_type in BOOKOASIS_STORY_DB_TYPES:
+        for db_type in dict.fromkeys(BOOKOASIS_STORY_DB_TYPES + BOOKOASIS_ADULT_DB_TYPES):
             res = await session.call_tool("get_library_stats", {"db_type": db_type})
             if getattr(res, "isError", False):
                 continue
@@ -131,11 +132,10 @@ def _books_today(totals: dict, book_totals: dict, today: str) -> int:
     삭제로 줄어든 서재는 0으로 본다.
     """
     prev_days = sorted(d for d in book_totals if not d.startswith("_") and d < today)
-    if prev_days:
-        base = book_totals[prev_days[-1]]
-    else:
-        base = book_totals.get("_first_" + today) or totals
-    return sum(max(0, n - base.get(db, n)) for db, n in totals.items())
+    first = book_totals.get("_first_" + today) or totals
+    base = book_totals[prev_days[-1]] if prev_days else first
+    # 어제 기록에 없는 서재(새로 세기 시작한 서재)는 오늘 처음 잰 값을 기준으로
+    return sum(max(0, n - base.get(db, first.get(db, n))) for db, n in totals.items())
 
 
 # ---------------------------------------------------------------- 판매 (Tautulli)
@@ -244,16 +244,24 @@ def refresh() -> None:
                    if d.removeprefix("_first_") >= past[-1]}
     if "books" in fetched:
         totals = fetched["books"]
-        book_totals.setdefault("_first_" + today, totals)
-        count = _books_today(totals, book_totals, today)
+        first = book_totals.setdefault("_first_" + today, {})
+        for db, n in totals.items():
+            first.setdefault(db, n)
+        adult = set(BOOKOASIS_ADULT_DB_TYPES)
+        general = {db: n for db, n in totals.items() if db not in adult}
+        adult_totals = {db: n for db, n in totals.items() if db in adult}
         book_totals[today] = totals
         # 아래 공통 처리에 맞춰 {날짜: 개수} 형태로 - 지난 날짜 값은 history에 쌓아 둔 걸 쓴다
-        fetched["books"] = ({today: count}, today)
+        del fetched["books"]
+        if general:
+            fetched["books"] = ({today: _books_today(general, book_totals, today)}, today)
+        if adult_totals:
+            fetched["books_adult"] = ({today: _books_today(adult_totals, book_totals, today)}, today)
     data["book_totals"] = book_totals
 
     # 생산: Plex + 북오아시스. 못 받은 쪽은 오늘 직전 값 유지.
     parts = {}
-    for key in ("plex", "books"):
+    for key in PART_KEYS:
         if key in fetched:
             counts, complete_from = fetched[key]
             # 받아온 게 전부 오늘 것이면 한도에 걸린 것 - 오늘 실제 개수는 이보다 많을 수 있다
@@ -303,7 +311,17 @@ def _today() -> dict:
     return data if data.get("date") == datetime.now(KST).strftime("%Y-%m-%d") else {}
 
 
-_PART_LABELS = {"plex": "영상", "books": "자료실 신간(권)"}
+PART_KEYS = ("plex", "books", "books_adult")
+_PART_LABELS = {"plex": "영상", "books": "자료실 신간(권)", "books_adult": "스페셜 라인(권)"}
+
+
+def part(key: str) -> dict | None:
+    """[담당 업무] 생산 부문 하나의 오늘 값 {today, avg, saturated, pace, label}. 집계 전이면 None."""
+    x = _today().get("production", {}).get("parts", {}).get(key)
+    if not x:
+        return None
+    return {**x, "label": _PART_LABELS.get(key, key),
+            "pace": "" if x.get("saturated") else pace(x["today"], x.get("avg"))}
 
 
 def production() -> tuple[int, float]:
