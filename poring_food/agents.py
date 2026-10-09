@@ -27,7 +27,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, life, memory, runtime, signals, world
+from . import characters, life, memory, metrics, runtime, signals, world
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import DATA_DIR, DISCORD_BOT_V2_DB_PATH, STATE_DIR
@@ -66,6 +66,10 @@ GOSSIP_P_SAME_PLACE = 0.6     # 직접 만난 대화를 같은 곳에 있던 사
 GOSSIP_P_COLLEAGUE = 0.25     # 같은 회사 동료에게 말이 돎
 GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/포장마차 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
 GOSSIP_P_OTHER = 0.05
+# 담당 업무(agents.json "duty") - 실제 서비스 수치(metrics.part)가 그 사람의 실적이다
+DUTY_BIG_RATIO = 2.0      # 오늘 입고가 평소 하루 평균의 이만큼 이상이면 회사 사건 (하루 한 번)
+DUTY_BIG_MIN = 10         # 평균이 작을 때 몇 건만으로 "대량"이 되지 않게
+DUTY_SLOW_FROM_HOUR = 18  # 이 시각 이후에도 한산하면 담당자가 신경 쓴다 (하루 한 번)
 GOSSIP_MESSENGER_FACTOR = 0.4  # 메신저 대화는 잘 안 샌다
 
 
@@ -107,11 +111,13 @@ def _save_state(data: dict) -> None:
     os.replace(tmp, STATE_PATH)
 
 
-def _push_inbox(data: dict, name: str, text: str, kind: str, urgent: bool = False) -> None:
+def _push_inbox(data: dict, name: str, text: str, kind: str, urgent: bool = False, quiet: bool = False) -> None:
     st = data.setdefault(name, {})
     item = {"at": now_kst().isoformat(timespec="minutes"), "kind": kind, "text": text[:300]}
     if urgent:
         item["urgent"] = True  # 이번 시간에 이미 판단했어도 다시 판단한다 (관리자 사건/메시지)
+    if quiet:
+        item["quiet"] = True  # 다음 판단 때 읽기만 한다 - 이것 때문에 깨우지는 않는다 (담당 실적 갱신)
     st.setdefault("inbox", []).append(item)
     st["inbox"] = st["inbox"][-MAX_INBOX:]
 
@@ -275,6 +281,64 @@ def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dic
     print(f"[에이전트] {group} {agent['name']}: {text}")
 
 
+# ===================================================================== 담당 업무 (실제 서비스 수치)
+def _duty_text(x: dict) -> str:
+    line = f"오늘 입고 {x['today']}건{'+' if x.get('saturated') else ''}"
+    extra = [f"최근 7일 하루 평균 {x['avg']:g}건" if x.get("avg") is not None else "", x.get("pace", "")]
+    extra = [e for e in extra if e]
+    return line + (f" ({', '.join(extra)})" if extra else "")
+
+
+def _duty_block(agent: dict) -> str:
+    duty = agent.get("duty") or {}
+    if not duty.get("metric"):
+        return ""
+    x = metrics.part(duty["metric"])
+    body = _duty_text(x) if x else "오늘 집계 전"
+    return (f"[내 담당 업무 - {duty.get('line', duty['metric'])}] {body}\n"
+            "이게 내 실적이다. 회사 사람들도 이 숫자를 안다.")
+
+
+def _duty_updates(agents: list[dict], data: dict, now) -> None:
+    """
+    담당 라인 수치가 바뀌면 담당자 받은편지함에 알린다 (깨우지는 않음). 평소의 몇 배가 들어온 날은
+    회사 사건으로 터뜨리고(하루 한 번, 동료들도 앎), 저녁까지 한산하면 담당자에게만 알린다(하루 한 번).
+    LLM 호출 없음 - 수치는 metrics.refresh()가 회차 맨 앞에서 MCP로 받아 둔 값.
+    """
+    today = now.strftime("%Y-%m-%d")
+    for agent in agents:
+        duty = agent.get("duty") or {}
+        x = metrics.part(duty.get("metric", "")) if duty.get("metric") else None
+        if not x:
+            continue
+        name, line = agent["name"], duty.get("line", duty["metric"])
+        st = data.setdefault(name, {})
+        ds = st.get("duty_seen") or {}
+        if ds.get("date") != today:
+            ds = {"date": today, "seen": 0, "big": False, "slow": False}
+        n, avg = int(x["today"]), x.get("avg")
+        if n > ds["seen"]:
+            _push_inbox(data, name, f"담당 {line}에 새로 {n - ds['seen']}건 입고 - {_duty_text(x)}", "업무", quiet=True)
+            ds["seen"] = n
+        big = x.get("saturated") or (avg and n >= max(DUTY_BIG_MIN, avg * DUTY_BIG_RATIO))
+        if big and not ds["big"]:
+            ds["big"] = True
+            company = agent.get("company", "")
+            detail = (f"{company.split(' ')[0]} {line}에 오늘 {n}건{'+' if x.get('saturated') else ''}이 한꺼번에 들어왔다"
+                      + (f" (평소 하루 {avg:g}건)" if avg else "") + f". 담당 {name}의 일이 몰렸다.")
+            out = world.inject(f"{line} 대량 입고", detail, [company] if company else [name], agents,
+                               characters.load_roster(), effects={"stress": 0.05})
+            if name not in {w for w, _, _ in out}:
+                out.append((name, detail, "사건"))
+            for who, text, kind in out:
+                _push_inbox(data, who, text, kind)
+            print(f"[에이전트] 담당 업무 사건: {name} {line} {n}건")
+        elif (now.hour >= DUTY_SLOW_FROM_HOUR and not ds["slow"] and x.get("pace") == "평소보다 한산함"):
+            ds["slow"] = True
+            _push_inbox(data, name, f"담당 {line}가 오늘 한산하다 - {_duty_text(x)}", "업무")
+        st["duty_seen"] = ds
+
+
 # ===================================================================== 지각
 def _kakao_digest(agent: dict, since: str) -> tuple[list[str], str]:
     """애순이처럼 카톡에서 실제 사람과 대화하는 에이전트: 지난 회차 이후 그 대화들 (방별 최근 줄)."""
@@ -317,6 +381,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         f"[지금] {now.strftime('%Y-%m-%d %H:%M')} ({'월화수목금토일'[now.weekday()]}요일)",
         f"[평소 이 시간 루틴] {routine_hint or agent.get('routine', '')}",
         life.prompt_block(name),
+        _duty_block(agent),
         memory.prompt_block(name, terms, k=5),
         "[받은 소식/메시지 - 지난번 이후 새로 알게 된 것]\n" + ("\n".join(inbox_lines) or "- 없음"),
     ]
@@ -584,6 +649,10 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         print(f"[에러] 세계 엔진 실패: {e}")
 
     data = _load_state()
+    try:
+        _duty_updates(agents, data, now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 담당 업무 갱신 실패: {e}")
     decisions: dict[str, dict] = {}
     fresh: list[str] = []  # 이번 시간 새로 판단한 사람 (근황 요약용)
     pushed: set[str] = set()  # 관리자 사건/메시지로 다시 판단한 사람 - 이번 시간 대화를 이미 했어도 한 번 더 허용
@@ -596,7 +665,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
             decisions[name] = st["decision"]
             continue
         # 몇 시간마다 판단하는 에이전트: 차례가 아니고 새 소식도 없으면 이전 판단을 이어간다 (LLM 호출 절약)
-        if not _due(agent, now.hour) and not st.get("inbox"):
+        if not _due(agent, now.hour) and not any(not m.get("quiet") for m in st.get("inbox", [])):
             continue
         if urgent:
             pushed.add(name)

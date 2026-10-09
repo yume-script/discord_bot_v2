@@ -79,4 +79,8 @@ BOOKOASIS_TIMEOUT_SEC = int(os.getenv("BOOKOASIS_TIMEOUT_SEC", "90"))  # SSH+doc
 BOOKOASIS_STORY_DB_TYPES = [
     t.strip() for t in os.getenv("BOOKOASIS_STORY_DB_TYPES", "general,audiobook").split(",") if t.strip()
 ]
+# 담당 업무용으로 "오늘 들어온 권 수"만 세는 서재 (제목은 절대 안 읽음 - 개수만 이야기에 들어간다)
+BOOKOASIS_ADULT_DB_TYPES = [
+    t.strip() for t in os.getenv("BOOKOASIS_ADULT_DB_TYPES", "adult").split(",") if t.strip()
+]
 BOOKOASIS_STATE_PATH = os.path.join(STATE_DIR, "bookoasis_state.json")

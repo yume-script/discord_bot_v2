@@ -18,7 +18,12 @@
       ],
       "groups": [
         "동네 단톡방"
-      ]
+      ],
+      "duty": {
+        "metric": "books",
+        "line": "일반/웹툰 라인",
+        "source": "북오아시스 general 서재 오늘 입고 권 수"
+      }
     },
     {
       "name": "소라",
@@ -53,7 +58,12 @@
       "decide_every": 3,
       "hangouts": [
         "포장마차 단밤"
-      ]
+      ],
+      "duty": {
+        "metric": "books_adult",
+        "line": "스페셜 라인",
+        "source": "북오아시스 adult(성인/화보) 서재 오늘 입고 권 수 - 이야기에는 '스페셜 라인'으로만"
+      }
     },
     {
       "name": "오상식",
@@ -105,7 +115,12 @@
       "decide_every": 3,
       "hangouts": [
         "카페 오후세시"
-      ]
+      ],
+      "duty": {
+        "metric": "plex",
+        "line": "영상 라인",
+        "source": "Plex 오늘 신규 등록 영상 수"
+      }
     },
     {
       "name": "권민우",
