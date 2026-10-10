@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 
 from . import characters, chronicle, life, memory, metrics, projects, runtime, signals, world
 from .clock import now_kst
+from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import DATA_DIR, DISCORD_BOT_V2_DB_PATH, STATE_DIR
 from .llm import llm_json
@@ -280,7 +281,7 @@ def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dic
                             "text": text}, ensure_ascii=False) + "\n")
     for other in agents:
         if other is not agent and group in _groups_of(other) and other["name"] in text:
-            _push_inbox(data, other["name"], f"{group}에서 {agent['name']}가 나를 언급함: {text}", "단톡방")
+            _push_inbox(data, other["name"], f"{group}에서 {j(agent['name'], '가')} 나를 언급함: {text}", "단톡방")
     print(f"[에이전트] {group} {agent['name']}: {text}")
 
 
@@ -568,7 +569,7 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
             f"[{other['name']}와의 관계] 친밀도 {rel.get('affinity', 0)} / 최근: "
             + (" / ".join(m["event"] for m in (rel.get("memories") or [])[-3:]) or "특별한 일 없음"),
         ) if b) + "\n\n"
-        f"지금 {other['name']}와 {'메신저로' if how == '메신저' else place + '에서 직접'} 대화 중이다.\n"
+        f"지금 {j(other['name'], '와')} {'메신저로' if how == '메신저' else place + '에서 직접'} 대화 중이다.\n"
         f"[지금까지 대화]\n{lines}\n\n"
         f"{name}로서 다음 한마디를 해라. 상대 속마음은 모른다 - 말과 분위기로만 짐작해라. "
         "지금 하고 있는 일은 '지금' 일로 말하고, 기억 속 일은 날짜를 오늘과 비교해 오늘/어제/며칠 전을 정확히 말해라. "
@@ -620,13 +621,13 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
             continue
         od = active(other["name"]) or {}
         if how != "메신저" and _same_place(od.get("location", ""), place):
-            p, text = GOSSIP_P_SAME_PLACE, f"{place}에서 {a['name']}와 {b['name']}가 하는 얘기를 우연히 들었다 - {line['speaker']}: \"{quote}\""
+            p, text = GOSSIP_P_SAME_PLACE, f"{place}에서 {j(a['name'], '와')} {j(b['name'], '가')} 하는 얘기를 우연히 들었다 - {line['speaker']}: \"{quote}\""
         elif other.get("company") in (a.get("company"), b.get("company")):
-            p, text = GOSSIP_P_COLLEAGUE, f"{a['name']}랑 {b['name']}가 얘기하던데, \"{quote}\" 이런 말이 나왔다더라"
+            p, text = GOSSIP_P_COLLEAGUE, f"{j(a['name'], '랑')} {j(b['name'], '가')} 얘기하던데, \"{quote}\" 이런 말이 나왔다더라"
         elif shared := _shared_hangout(other, a, b, place):
-            p, text = GOSSIP_P_REGULAR, f"{shared}에서 들었는데, {a['name']}랑 {b['name']}가 \"{quote}\" 이런 얘기를 했다더라"
+            p, text = GOSSIP_P_REGULAR, f"{shared}에서 들었는데, {j(a['name'], '랑')} {j(b['name'], '가')} \"{quote}\" 이런 얘기를 했다더라"
         else:
-            p, text = GOSSIP_P_OTHER, f"동네에서 {a['name']}와 {b['name']} 얘기를 들었다 - \"{quote}\" 그랬다던데"
+            p, text = GOSSIP_P_OTHER, f"동네에서 {j(a['name'], '와')} {b['name']} 얘기를 들었다 - \"{quote}\" 그랬다던데"
         if rnd.random() < min(0.9, p * weight):
             picked.append((other["name"], text))
     rnd.shuffle(picked)
@@ -655,7 +656,7 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str) -> dict:
         if out.get("end"):
             break
 
-    summary = f"{a['name']}와 {b['name']}의 {'메신저' if how == '메신저' else place} 대화: " + transcript[0]["line"][:60]
+    summary = f"{j(a['name'], '와')} {b['name']}의 {'메신저' if how == '메신저' else place} 대화: " + transcript[0]["line"][:60]
     # 각자의 마음/기억/관계에 반영
     roster = characters.load_roster()
     ids = {c["name"]: c["id"] for c in roster}
@@ -664,7 +665,7 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str) -> dict:
     rel = rels.get(key, {"affinity": 0, "summary": "", "count": 0})
     for ag, oth in ((a, b), (b, a)):
         out = outs.get(ag["name"], {})
-        life.apply_feedback(ag["name"], out, f"{oth['name']}와 대화")
+        life.apply_feedback(ag["name"], out, f"{j(oth['name'], '와')} 대화")
         if isinstance(out.get("memory"), dict) and out["memory"].get("text"):
             memory.apply_feedback(ag["name"], out, "대화", [oth["name"]])
         else:
@@ -1045,7 +1046,7 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
         for other in members:
             if other != name:
                 # 깨우지는 않는다 (인원이 많아서) - 각자 다음 판단 때 보고 찬성할지 정한다
-                _push_inbox(data, other, f"{name}가 '{m['topic']}' 모임을 제안했다 ({m['why']}) - 오늘 {m['hour']}시 {place}",
+                _push_inbox(data, other, f"{j(name, '가')} '{m['topic']}' 모임을 제안했다 ({m['why']}) - 오늘 {m['hour']}시 {place}",
                             "모임제안", quiet=True)
         print(f"[에이전트] 모임 제안: {name} '{m['topic']}' ({m['scope']}, {m['hour']}시)")
     # 찬성이 모인 제안은 모임으로 확정
@@ -1058,9 +1059,13 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
             continue
         when = datetime.fromisoformat(at)
         by = by_name.get(p["by"])
+        merged = next((x["resolution"] for x in chronicle.all_threads()
+                       if x["title"] == t["title"] and x["status"] == "resolved"), "")
         if by:
-            _announce(by, p["scope"], f"📅 '{t['title']}' 모임 확정 - 오늘 {when.hour}시 {p['place']} "
-                                      f"(찬성: {', '.join(p['supporters'])})", data, agents)
+            text = (f"📅 '{t['title']}' - {merged}, {when.hour}시로 당겨서 같이 모여요 (찬성: {', '.join(p['supporters'])})"
+                    if merged else f"📅 '{t['title']}' 모임 확정 - 오늘 {when.hour}시 {p['place']} "
+                                   f"(찬성: {', '.join(p['supporters'])})")
+            _announce(by, p["scope"], text, data, agents)
         print(f"[에이전트] 모임 확정: {t['title']} {when.strftime('%H시')} ({', '.join(p['supporters'])})")
     for p in chronicle.expire_proposals(now):
         print(f"[에이전트] 모임 제안 흐지부지: {p['title']} (찬성 {len(p['supporters'])}명)")
@@ -1338,7 +1343,7 @@ def diary_block(name: str) -> str:
     d = latest(name, _every(agent)) if agent else current(name)
     if not d:
         return ""
-    lines = [f"[이번 시간 {name}가 실제로 한 일과 생각 - 이걸 바탕으로 써라]",
+    lines = [f"[이번 시간 {j(name, '가')} 실제로 한 일과 생각 - 이걸 바탕으로 써라]",
              f"- {d['location']}에서 {d['activity']} ({d['state']})", f"- 속마음: {d['thought']}"]
     if d.get("plan"):
         lines.append(f"- 다음 계획: {d['plan']}")

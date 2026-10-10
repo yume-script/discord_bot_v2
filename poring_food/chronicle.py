@@ -24,6 +24,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from .clock import now_kst
+from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
 from .llm import llm_json
@@ -118,6 +119,26 @@ def _save_threads(threads: list[dict]) -> None:
 def _same(a: str, b: str) -> bool:
     a, b = (a or "").replace(" ", ""), (b or "").replace(" ", "")
     return bool(a and b) and (a in b or b in a)
+
+
+_STOP = ("우리", "동네", "마을", "최종", "토론", "모임", "회의", "논의", "관련", "문제", "다시", "결정")
+
+
+def _bigrams(text: str) -> set[str]:
+    t = (text or "").replace(" ", "")
+    for w in _STOP:
+        t = t.replace(w, "|")
+    return {t[i:i + 2] for i in range(len(t) - 1) if "|" not in t[i:i + 2]}
+
+
+def similar(a: str, b: str) -> bool:
+    """같은 일을 다르게 부른 것인지 ("마을 이름 짓기" ~ "우리 동네 이름 짓기 최종 토론")."""
+    if _same(a, b):
+        return True
+    x, y = _bigrams(a), _bigrams(b)
+    if not x or not y:
+        return False
+    return len(x & y) / min(len(x), len(y)) >= 0.6
 
 
 def open_thread(title: str, note: str = "") -> dict:
@@ -240,13 +261,15 @@ def propose_meeting(topic: str, by: str, scope: str, members: list[str], hour: i
     if _today_count("proposed_at", now) >= PROPOSALS_PER_DAY:
         return "오늘 제안이 너무 많음"
     for t in _load_threads():
-        if not _same(t["title"], topic):
+        if not similar(t["title"], topic):
             continue
         if t["status"] == "open" and (t.get("proposal") or t.get("meeting_next")):
-            return "이미 제안됐거나 모이기로 한 일"
+            return f"이미 제안됐거나 모이기로 한 일 ('{t['title']}')"
         if t["status"] == "resolved" and t.get("permanent"):
-            return "이미 정해진 일"
-    open_thread(topic, f"{by}가 모임을 제안함 - {why}")
+            return f"이미 정해진 일 ('{t['title']}')"
+        if t["status"] == "open":
+            topic = t["title"]  # 같은 일을 다르게 부른 것 - 이미 있는 진행 중인 일에 제안을 붙인다
+    open_thread(topic, f"{j(by, '가')} 모임을 제안함 - {why}")
     threads = _load_threads()
     for t in threads:
         if t["status"] == "open" and _same(t["title"], topic):
@@ -284,6 +307,24 @@ def confirm_proposal(topic: str, now: datetime) -> str:
     for t in threads:
         p = t.get("proposal")
         if t["status"] == "open" and p and _same(t["title"], topic):
+            twin = next((o for o in threads if o is not t and o["status"] == "open" and o.get("meeting_next")
+                         and similar(o["title"], t["title"])), None)
+            if twin:
+                # 같은 일로 이미 잡힌 모임이 있다 - 따로 모이지 않고 그 모임을 제안한 시각으로 당긴다
+                at = now.replace(hour=max(0, min(23, int(p.get("hour") or 20))), minute=0, second=0, microsecond=0)
+                if at <= now:
+                    at = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+                stamp = at.isoformat(timespec="minutes")
+                twin["meeting_next"] = min(twin["meeting_next"], stamp)
+                twin.setdefault("updates", []).append({"at": now.isoformat(timespec="minutes"),
+                                                       "note": f"'{t['title']}' 제안과 합침 ({', '.join(p['supporters'])} 찬성)"})
+                t["status"] = "resolved"
+                t["resolution"] = f"'{twin['title']}' 모임으로 합침"
+                t["resolved_at"] = now.isoformat(timespec="minutes")
+                t["confirmed_at"] = now.isoformat(timespec="minutes")
+                t.pop("proposal", None)
+                _save_threads(threads)
+                return twin["meeting_next"]
             at = now.replace(hour=max(0, min(23, int(p.get("hour") or 20))), minute=0, second=0, microsecond=0)
             if at <= now:
                 at = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
@@ -308,7 +349,7 @@ def expire_proposals(now: datetime) -> list[dict]:
     for t in threads:
         p = t.get("proposal")
         if t["status"] == "open" and p and p.get("expires", "") <= stamp:
-            t.setdefault("updates", []).append({"at": stamp, "note": f"{p['by']}의 모임 제안은 호응이 적어 흐지부지됨"})
+            t.setdefault("updates", []).append({"at": stamp, "note": f"{p['by']}의 모임 제안은 찬성이 모자라 흐지부지됨"})
             t.pop("proposal", None)
             gone.append({**p, "title": t["title"]})
     if gone:
