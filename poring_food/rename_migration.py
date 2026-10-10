@@ -49,6 +49,76 @@ def _replacements() -> list[tuple[str, str]]:
 
 
 def migrate() -> None:
+    _migrate_v2()
+    _migrate_v3()
+
+
+# ===================================================================== v3: 동네 사람들 -> 드라마 인물
+# 동네(광주 동네 상가) 인물을 「폭싹 속았수다」/「갯마을 차차차」 인물로 새로 꾸렸다. 성향이 완전히 달라져서 옛 동네
+# 사람들의 기록을 새 사람에게 옮기지는 않는다 (옛 이름 기록은 그대로 남고, 더 이상 등장하지 않는다).
+# (응답하라 쪽 배경 인물로 돌아온 성보라/김정환/김정봉/성나정/김재준은 이름만 같은 새 인물 - 예전 교체 프로필은 버린다)
+# 단 에린 로지스틱스의 "홍두식"은 동네 홍반장과 이름이 겹쳐서 "고동만"으로 바꾸고 기록도 옮긴다.
+MARKER_V3 = os.path.join(STATE_DIR, ".names_v3_migrated")
+OLD_TOWN = {"박새로이", "길라임", "서달미", "김정봉", "강정희", "고애신", "최무성", "안정원", "김정환", "성보라",
+            "박동훈", "송삼동", "진상필", "하명희", "강동희", "곽덕순", "장만옥", "홍자영", "박상훈", "윤명주",
+            "백승수", "박기훈", "최향미", "고혜미", "성나정", "김재준", "장만복"}
+REDRAWN = {"오춘재", "오윤", "장영국"}  # 이름은 그대로지만 성향이 드라마를 따라 바뀐 사람 (예전에 써 둔 교체 프로필은 버린다)
+
+
+def _migrate_v3() -> None:
+    import json
+    if os.path.exists(MARKER_V3) or not os.path.isdir(STATE_DIR):
+        return
+    files = (glob.glob(os.path.join(STATE_DIR, "*.json")) + glob.glob(os.path.join(STATE_DIR, "*.jsonl"))
+             + glob.glob(os.path.join(STATE_DIR, "archive", "*.jsonl")))
+    changed = 0
+    for path in files:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        new = text.replace(f"{ERINN_COMPANY}|홍두식", f"{ERINN_COMPANY}|고동만").replace("홍두식", "고동만")
+        if new != text:
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(new)
+            os.replace(tmp, path)
+            changed += 1
+    # 교체 상태: 사라진 동네 사람/성향이 바뀐 사람의 프로필과 등장 기록을 정리
+    rot = os.path.join(STATE_DIR, "rotation.json")
+    try:
+        with open(rot, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        gone = OLD_TOWN | REDRAWN
+        data["benched"] = [n for n in data.get("benched", []) if n not in gone]
+        data["promoted"] = {n: e for n, e in (data.get("promoted") or {}).items() if n not in gone}
+        data["profiles"] = {n: e for n, e in (data.get("profiles") or {}).items() if n not in gone}
+        with open(rot + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(rot + ".tmp", rot)
+    except (OSError, ValueError):
+        pass
+    # 진행 중인 마을 프로젝트: 담당자가 사라진 사람이면 통장에게
+    proj = os.path.join(STATE_DIR, "projects.json")
+    try:
+        with open(proj, "r", encoding="utf-8") as f:
+            items = json.load(f)
+        for p in items:
+            if p.get("stage") != "완료" and p.get("owner") in OLD_TOWN:
+                p["owner"] = "여화정"
+            p["helpers"] = [h for h in p.get("helpers", []) if h not in OLD_TOWN]
+        with open(proj + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False, indent=2)
+        os.replace(proj + ".tmp", proj)
+    except (OSError, ValueError):
+        pass
+    with open(MARKER_V3, "w", encoding="utf-8") as f:
+        f.write("ok\n")
+    print(f"[이름 변경] 동네 사람들을 드라마 인물로 - 에린 홍두식 -> 고동만 ({changed}개 파일), 교체/프로젝트 정리")
+
+
+def _migrate_v2() -> None:
     if os.path.exists(MARKER) or not os.path.isdir(STATE_DIR):
         return
     files = glob.glob(os.path.join(STATE_DIR, "*.json")) + glob.glob(os.path.join(STATE_DIR, "*.jsonl"))
