@@ -280,7 +280,7 @@ class PoringFood(commands.Cog):
                 out.append(app_commands.Choice(name=value[:100], value=value[:100]))
         return out[:25]
 
-    @app_commands.command(name="포링푸드모임", description="[관리자] 에이전트들이 한자리에 모여 토론하고 결론을 냅니다")
+    @app_commands.command(name="포링푸드모임", description="[관리자] 에이전트들이 모여 토론합니다 (결론 없으면 5차까지 자동 소집 후 투표)")
     @app_commands.describe(주제="모임 주제 (예: 우리 동네 이름 짓기)", 참가자="에이전트 이름 쉼표로 (비우면 깨어 있는 동네 단톡방 멤버)",
                            장소="모임 장소 (비우면 동네 주민센터 회의실)", 발언수="전체 발언 수 4~30 (기본 12)")
     @app_commands.autocomplete(참가자=_agents_csv_autocomplete)
@@ -305,7 +305,8 @@ class PoringFood(commands.Cog):
         if len(res["participants"]) < 2:
             msg = "⚠️ 모일 수 있는 사람이 2명보다 적어요." + (f" (자는 중: {', '.join(res['asleep'])})" if res["asleep"] else "")
         else:
-            msg = (f"🏛️ 모임 끝 ({res['lines']}마디) - {'✅ 결정' if res['decided'] else '⏸️ 미결'}: {res['conclusion']}"
+            msg = (f"🏛️ {res['round']}차 모임 끝 ({res['lines']}마디) - {'✅ 결정' if res['decided'] else '⏸️ 미결'}: {res['conclusion']}"
+                   + (f"\n📅 다음 모임: {res['next_at'][5:16].replace('T', ' ')} (자동 소집)" if res.get("next_at") else "")
                    + (f"\n자는 중이라 빠짐: {', '.join(res['asleep'])}" if res["asleep"] else ""))
         await interaction.followup.send(msg, ephemeral=True)
 
