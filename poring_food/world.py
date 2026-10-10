@@ -22,7 +22,7 @@ import json
 import os
 import uuid
 
-from . import chronicle, life, memory
+from . import chronicle, life, memory, projects
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -91,7 +91,8 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         f"[회사/장소] {', '.join(companies)}, {TOWN}(광주 동네 전체)\n"
         f"[배경 인물 일부] {', '.join(npc_sample)}\n\n"
         f"{signals_block}\n\n"
-        + (chronicle.prompt_block() + "\n\n" if chronicle.prompt_block() else "") +
+        + (chronicle.prompt_block() + "\n\n" if chronicle.prompt_block() else "")
+        + (projects.public_block() + "\n\n" if projects.public_block() else "") +
         "[최근에 세상에서 있었던 일]\n" + ("\n".join(f"- {e.get('date', '')} {e.get('hour', '')}시 {e.get('title', '')}" for e in recent_log[-8:]) or "- 없음") + "\n\n"
         "오늘 일어날 사건 4~8개를 정해라:\n"
         "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 회사 전체/동네 사건으로 여러 명에게 닿게 하고,"
