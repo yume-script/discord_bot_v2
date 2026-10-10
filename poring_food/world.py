@@ -22,7 +22,7 @@ import json
 import os
 import uuid
 
-from . import life, memory
+from . import chronicle, life, memory
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -91,6 +91,7 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         f"[회사/장소] {', '.join(companies)}, {TOWN}(광주 동네 전체)\n"
         f"[배경 인물 일부] {', '.join(npc_sample)}\n\n"
         f"{signals_block}\n\n"
+        + (chronicle.prompt_block() + "\n\n" if chronicle.prompt_block() else "") +
         "[최근에 세상에서 있었던 일]\n" + ("\n".join(f"- {e.get('date', '')} {e.get('hour', '')}시 {e.get('title', '')}" for e in recent_log[-8:]) or "- 없음") + "\n\n"
         "오늘 일어날 사건 4~8개를 정해라:\n"
         "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 회사 전체/동네 사건으로 여러 명에게 닿게 하고,"
@@ -186,11 +187,14 @@ def tick(agents: list[dict], roster: list[dict], signals_block: str = "") -> lis
             kind, text = ("소문", e["rumor"]) if e["visibility"] == "rumor" else ("사건", e["detail"])
             for name in _recipients(e, agents):
                 deliveries.append((name, text, kind))
+            chronicle.record_event("소문" if kind == "소문" else "세계", e["title"], text, e["targets"],
+                                   private=e.get("private", False))
             print(f"[세계] 사건 발생 {e['hour']}시: {e['title']} ({kind})")
         elif e.get("released") and not e.get("confirmed") and now.hour >= e["hour"] + RUMOR_CONFIRM_AFTER_H:
             e["confirmed"] = True
             for name in _recipients(e, agents):
                 deliveries.append((name, f"(소문이 사실로 확인됨) {e['detail']}", "사건"))
+            chronicle.record_event("세계", f"{e['title']} (소문 확인)", e["detail"], e["targets"])
             print(f"[세계] 소문 확인: {e['title']}")
     data["log"] = data.get("log", [])[-MAX_LOG:]
     _save(data)
@@ -203,7 +207,7 @@ def targets(agents: list[dict], roster: list[dict]) -> list[str]:
 
 
 def inject(title: str, detail: str, target_list: list[str], agents: list[dict], roster: list[dict],
-           effects: dict | None = None) -> list[tuple[str, str, str]]:
+           effects: dict | None = None, kind: str = "관리자") -> list[tuple[str, str, str]]:
     """
     [관리자 사건] 지금 바로 사건 하나를 일으킨다. 하루 계획과 같은 방식으로 기록/전달된다
     (에이전트에게는 그냥 세상에서 생긴 일로 보인다). 반환: 전달할 지각 [(이름, 글, "사건"), ...]
@@ -232,7 +236,8 @@ def inject(title: str, detail: str, target_list: list[str], agents: list[dict], 
     data["log"] = data["log"][-MAX_LOG:]
     _save(data)
     _apply_npc_effects(e, roster, agent_names)
-    print(f"[세계] 관리자 사건 {e['hour']}시: {e['title']} -> {target_list}")
+    chronicle.record_event(kind, e["title"], e["detail"], target_list, private=e["private"])
+    print(f"[세계] {kind} 사건 {e['hour']}시: {e['title']} -> {target_list}")
     return [(name, e["detail"], "사건") for name in _recipients(e, agents)]
 
 

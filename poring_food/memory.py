@@ -8,6 +8,8 @@
 - 떠올리기(recall): 최근일수록 + 중요할수록 + 지금 상황(같이 있는 사람, 화제 키워드)과 관련 있을수록
   점수가 높다. 프롬프트에는 상위 몇 개만 넣는다 (임베딩 없이 키워드로 충분한 규모).
 - 정리(prune): 파일이 커지면 인물별 최근 MAX_PER_PERSON개 + 중요도 8 이상(60일 이내)만 남긴다.
+  빠진 기억은 지우지 않고 연대기 보관함(archive/memories.jsonl)으로 옮기고, 지금 상황과 관련 있으면
+  (화제 키워드가 겹치면) 떠올리기에서 다시 꺼내 쓴다.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import json
 import os
 from datetime import datetime, timedelta
 
+from . import chronicle
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -77,6 +80,10 @@ def recall(name: str, terms: list[str] | None = None, k: int = 4) -> list[dict]:
     now = now_kst()
     terms = [t for t in (terms or []) if t and t != name]
     mems = _load(name)
+    if terms:
+        # 정리돼서 보관함으로 간 오래된 기억도 지금 화제와 겹치면 떠올린다
+        mems += [m for m in chronicle.archived_memories(name)
+                 if any(t in m.get("text", "") + " " + " ".join(m.get("with", [])) for t in terms)]
     top = sorted(mems, key=lambda m: _score(m, now, terms), reverse=True)[:k]
     return sorted(top, key=lambda m: m.get("at", ""))
 
@@ -113,6 +120,8 @@ def prune() -> None:
         important = [m for m in items[:-MAX_PER_PERSON] if m.get("importance", 0) >= 8 and m.get("at", "") >= cutoff]
         keep.extend(important + recent)
     keep.sort(key=lambda m: m.get("at", ""))
+    kept = {id(m) for m in keep}
+    chronicle.archive_memories([m for m in mems if id(m) not in kept])
     tmp = MEMORY_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         for m in keep:
