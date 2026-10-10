@@ -391,6 +391,12 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
     if kakao:
         parts.append("[카톡에서 실제 사람들과 나눈 대화 - 내가 직접 한 대화다]\n" + "\n".join(kakao[-20:]))
     parts.append(_group_block(agent, st))
+    props = [t for t in chronicle.pending_proposals() if agent["name"] in t["proposal"]["members"]]
+    if props:
+        parts.append("[모임 제안 - 내가 낄 수 있는 모임]\n" + "\n".join(
+            f"- {t['proposal']['by']}: '{t['title']}' - {t['proposal']['why']} (오늘 {t['proposal']['hour']}시, "
+            f"찬성: {', '.join(t['proposal']['supporters'])}"
+            + (" - 나도 찬성함" if agent["name"] in t["proposal"]["supporters"] else "") + ")" for t in props))
     parts += [
         chronicle.prompt_block(),
         "[최근 내 행동]\n" + ("\n".join(recent) or "- 없음"),
@@ -434,18 +440,32 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
     )
     group_spec = (f', "group_post": null 또는 {{"group": "{"|".join(groups)}", "text": "단톡방에 올릴 말(1~2문장)"}}'
                   if groups else "")
+    scopes = _meeting_scopes(agent)
+    pending = [t for t in chronicle.pending_proposals() if agent["name"] in t["proposal"]["members"]
+               and agent["name"] not in t["proposal"]["supporters"]]
+    meeting_rule = (
+        "- 여러 사람이 모여서 정해야 할 공동의 일(아직 끝나지 않은 일, 의견이 갈리는 문제, 동네/회사에 닥친 일)이 있고 "
+        "내가 나설 만한 성격/처지라면 meeting으로 모임을 제안할 수 있다. 정말 필요할 때만 - 대부분은 null.\n"
+        + ("- 누가 제안한 모임에 참석/찬성하고 싶으면 meeting_support에 그 주제를 그대로 써라 (내키지 않으면 null).\n"
+           if pending else "")
+    ) if scopes else ""
+    meeting_spec = (
+        (f', "meeting": null 또는 {{"topic": "모임 주제", "why": "왜 모여야 하는지 한 줄", '
+         f'"scope": "{"|".join(scopes)}", "hour": 오늘 모일 시각(정수, 보통 저녁 19~21)}}')
+        + (', "meeting_support": null 또는 "찬성하는 모임 주제"' if pending else "")
+    ) if scopes else ""
     user = (
         _perception(agent, st, routine_hint, kakao, others) + "\n\n"
         "이번 한 시간 동안 무엇을 할지 정해라.\n"
         "- 다른 사람에게 연락할 이유가 있으면(전할 말, 걱정, 반가움, 부탁, 그냥 수다) contact를 써라. "
         "억지로 매번 연락하지는 마라. 같은 장소에 있을 법하면 how를 '직접', 아니면 '메신저'.\n"
         "- 카톡 대화나 받은 소식으로 마음이 바뀌었으면 state_change에, 오래 기억할 일이면 memory에 적어라.\n"
-        + group_rule +
+        + group_rule + meeting_rule +
         "반드시 JSON으로만 응답:\n"
         '{"location": "지금 있는 곳", "activity": "하는 일(짧게)", '
         f'"state": "{"|".join(VALID_STATES)} 중 하나", '
         '"thought": "지금 속마음 1~2문장", "plan": "다음에 할 일 한 줄", '
-        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "메신저|직접", "opening": "첫 마디"}}{group_spec}, '
+        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "메신저|직접", "opening": "첫 마디"}}{group_spec}{meeting_spec}, '
         f"{life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
     )
     out = llm_json(_system(agent), user, temperature=0.85, timeout=DECIDE_TIMEOUT_SEC, tag=f"에이전트 {agent['name']}")
@@ -466,7 +486,24 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "plan": str(out.get("plan") or "").strip()[:120],
         "contact": contact, "raw": out,
         "group_post": _parse_group_post(out.get("group_post"), groups),
+        "meeting": _parse_meeting(out.get("meeting"), scopes),
+        "meeting_support": str(out.get("meeting_support") or "").strip()[:80] if pending else "",
     }
+
+
+def _parse_meeting(raw, scopes: list[str]) -> dict | None:
+    if not isinstance(raw, dict) or not scopes:
+        return None
+    topic = str(raw.get("topic") or "").strip()[:60]
+    if not topic:
+        return None
+    try:
+        hour = int(raw.get("hour"))
+    except (TypeError, ValueError):
+        hour = MEETING_AUTO_HOUR
+    scope = raw.get("scope") if raw.get("scope") in scopes else scopes[0]
+    return {"topic": topic, "why": str(raw.get("why") or "").strip()[:120], "scope": scope,
+            "hour": max(9, min(22, hour))}
 
 
 # ===================================================================== 대화
@@ -913,6 +950,86 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
     return result
 
 
+COMPANY_SCOPE = "회사"
+TOWN_SCOPE = "동네"
+
+
+def _meeting_scopes(agent: dict) -> list[str]:
+    """이 사람이 모임을 제안할 수 있는 범위 - 동네 단톡방 멤버면 동네, 회사(에이전트가 여럿인 곳) 사람이면 회사."""
+    out = []
+    if TOWN_GROUP in (agent.get("groups") or []):
+        out.append(TOWN_SCOPE)
+    if agent.get("company") in (GROUP_COMPANY, "에린 로지스틱스 (Erinn Logistics)"):
+        out.append(COMPANY_SCOPE)
+    return out
+
+
+def _scope_members(agent: dict, scope: str, agents: list[dict]) -> list[str]:
+    if scope == TOWN_SCOPE:
+        return [a["name"] for a in agents if TOWN_GROUP in (a.get("groups") or [])]
+    return [a["name"] for a in agents if a.get("company") == agent.get("company")]
+
+
+def _announce(agent: dict, scope: str, text: str, data: dict, agents: list[dict]) -> None:
+    """모임 제안/확정을 그 범위 사람들이 보는 곳에 올린다 (동네 단톡방 / 회사 단톡방 / 대화 채널)."""
+    if scope == TOWN_SCOPE and TOWN_GROUP in _groups_of(agent):
+        _post_group(agent, TOWN_GROUP, text, data, agents)
+    elif scope == COMPANY_SCOPE and GROUP_NAME in _groups_of(agent):
+        _post_group(agent, GROUP_NAME, text, data, agents)
+    else:
+        _post(agent, f"-# 📣 {agent.get('company', '').split(' ')[0]}\n{text}")
+
+
+def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dict, agents: list[dict],
+                      data: dict, now) -> None:
+    """
+    에이전트가 직접 제안한 모임: 제안 → 범위(동네/회사) 사람들에게 알림(깨움) → 찬성이 SUPPORT_NEEDED명 모이면
+    모임 확정(오늘 그 시각, 하루 상한) → 시각이 되면 run_due_meetings가 연다. 호응이 없으면 흐지부지.
+    """
+    for name in fresh:
+        d = decisions.get(name) or {}
+        sup = d.get("meeting_support")
+        if sup:
+            p = chronicle.support_proposal(sup, name)
+            if p:
+                print(f"[에이전트] 모임 찬성: {name} -> {p['title']} ({len(p['supporters'])}명)")
+        m = d.get("meeting")
+        if not m or d.get("meeting_done"):
+            continue
+        agent = by_name[name]
+        members = _scope_members(agent, m["scope"], agents)
+        place = MEETING_PLACE if m["scope"] == TOWN_SCOPE else f"{agent.get('company', '').split(' ')[0]} 회의실"
+        why_not = chronicle.propose_meeting(m["topic"], name, m["scope"], members, m["hour"], place, m["why"], now)
+        d["meeting_done"] = True
+        data.setdefault(name, {}).setdefault("decision", d)["meeting_done"] = True
+        if why_not:
+            print(f"[에이전트] 모임 제안 안 받음: {name} '{m['topic']}' ({why_not})")
+            continue
+        _announce(agent, m["scope"], f"[모임 제안] '{m['topic']}' - {m['why']} 오늘 {m['hour']}시 {place}에서 모여서 얘기해 볼까요?",
+                  data, agents)
+        for other in members:
+            if other != name:
+                _push_inbox(data, other, f"{name}가 '{m['topic']}' 모임을 제안했다 ({m['why']}) - 오늘 {m['hour']}시 {place}",
+                            "모임제안")
+        print(f"[에이전트] 모임 제안: {name} '{m['topic']}' ({m['scope']}, {m['hour']}시)")
+    # 찬성이 모인 제안은 모임으로 확정
+    for t in chronicle.pending_proposals():
+        p = t["proposal"]
+        if len(p["supporters"]) < chronicle.SUPPORT_NEEDED:
+            continue
+        at = chronicle.confirm_proposal(t["title"], now)
+        if not at:
+            continue
+        when = datetime.fromisoformat(at)
+        by = by_name.get(p["by"])
+        if by:
+            _announce(by, p["scope"], f"📅 '{t['title']}' 모임 확정 - 오늘 {when.hour}시 {p['place']} "
+                                      f"(찬성: {', '.join(p['supporters'])})", data, agents)
+        print(f"[에이전트] 모임 확정: {t['title']} {when.strftime('%H시')} ({', '.join(p['supporters'])})")
+    for p in chronicle.expire_proposals(now):
+        print(f"[에이전트] 모임 제안 흐지부지: {p['title']} (찬성 {len(p['supporters'])}명)")
+
+
 def run_due_meetings() -> None:
     """[매시 회차] 다시 모일 시각이 된 모임을 연다 (한 회차에 하나). 모일 사람이 없으면 한 시간 미룬다."""
     now = now_kst()
@@ -1051,6 +1168,11 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         data.setdefault(name, {}).setdefault("decision", d)["group_done"] = True
         counts[gp["group"]] = counts.get(gp["group"], 0) + 1
         posted += 1
+    # 3.5) 에이전트가 직접 제안한 모임 - 제안/찬성/확정/흐지부지
+    try:
+        _handle_proposals(decisions, fresh, by_name, agents, data, now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 모임 제안 처리 실패: {e}")
     _save_state(data)
 
     # 4) 다시 모이기로 한 모임 (결론 안 난 모임 자동 소집, 최대 MEETING_MAX_ROUNDS차)

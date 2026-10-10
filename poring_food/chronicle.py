@@ -221,6 +221,99 @@ def postpone_meeting(title: str, next_at: str) -> None:
     _save_threads(threads)
 
 
+# ---------------------------------------------------------------- 에이전트가 직접 제안한 모임
+PROPOSALS_PER_DAY = 3      # 하루에 받을 수 있는 모임 제안 수
+AUTO_MEETINGS_PER_DAY = 2  # 제안이 호응을 얻어 실제로 잡히는 모임 수 (하루)
+SUPPORT_NEEDED = 3         # 제안한 사람 포함 이만큼 찬성하면 모임이 잡힌다
+PROPOSAL_TTL_H = 6         # 이 시간 안에 호응이 없으면 흐지부지
+
+
+def _today_count(key: str, now: datetime) -> int:
+    day = now.strftime("%Y-%m-%d")
+    return sum(1 for t in _load_threads() if str(t.get(key, "")).startswith(day))
+
+
+def propose_meeting(topic: str, by: str, scope: str, members: list[str], hour: int, place: str, why: str,
+                    now: datetime) -> str:
+    """모임 제안을 받는다. 반환: "" (받음) 또는 거절 이유."""
+    if _today_count("proposed_at", now) >= PROPOSALS_PER_DAY:
+        return "오늘 제안이 너무 많음"
+    for t in _load_threads():
+        if not _same(t["title"], topic):
+            continue
+        if t["status"] == "open" and (t.get("proposal") or t.get("meeting_next")):
+            return "이미 제안됐거나 모이기로 한 일"
+        if t["status"] == "resolved" and t.get("permanent"):
+            return "이미 정해진 일"
+    open_thread(topic, f"{by}가 모임을 제안함 - {why}")
+    threads = _load_threads()
+    for t in threads:
+        if t["status"] == "open" and _same(t["title"], topic):
+            t["proposal"] = {"by": by, "scope": scope, "members": members, "hour": hour, "place": place, "why": why,
+                             "supporters": [by],
+                             "expires": (now + timedelta(hours=PROPOSAL_TTL_H)).isoformat(timespec="minutes")}
+            t["proposed_at"] = now.isoformat(timespec="minutes")
+            break
+    _save_threads(threads)
+    return ""
+
+
+def pending_proposals() -> list[dict]:
+    return [t for t in _load_threads() if t["status"] == "open" and t.get("proposal")]
+
+
+def support_proposal(topic: str, name: str) -> dict | None:
+    """찬성 한 표. 반환: 갱신된 제안(그 사람이 멤버가 아니거나 제안이 없으면 None)."""
+    threads = _load_threads()
+    for t in threads:
+        p = t.get("proposal")
+        if t["status"] == "open" and p and _same(t["title"], topic) and name in p["members"]:
+            if name not in p["supporters"]:
+                p["supporters"].append(name)
+                _save_threads(threads)
+            return {**p, "title": t["title"]}
+    return None
+
+
+def confirm_proposal(topic: str, now: datetime) -> str:
+    """찬성이 모인 제안을 실제 모임으로 잡는다. 반환: 모임 시각(iso) 또는 "" (오늘 자동 모임 상한)."""
+    if _today_count("confirmed_at", now) >= AUTO_MEETINGS_PER_DAY:
+        return ""
+    threads = _load_threads()
+    for t in threads:
+        p = t.get("proposal")
+        if t["status"] == "open" and p and _same(t["title"], topic):
+            at = now.replace(hour=max(0, min(23, int(p.get("hour") or 20))), minute=0, second=0, microsecond=0)
+            if at <= now:
+                at = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+            t["meeting"] = {"round": 0, "place": p.get("place", ""), "participants": p["supporters"]
+                            + [m for m in p["members"] if m not in p["supporters"]], "turns": 0}
+            t["meeting_next"] = at.isoformat(timespec="minutes")
+            t["confirmed_at"] = now.isoformat(timespec="minutes")
+            t.setdefault("updates", []).append({"at": now.isoformat(timespec="minutes"),
+                                                "note": f"모임 확정 ({', '.join(p['supporters'])} 찬성) - {at.hour}시"})
+            t.pop("proposal", None)
+            _save_threads(threads)
+            return t["meeting_next"]
+    return ""
+
+
+def expire_proposals(now: datetime) -> list[dict]:
+    """호응 없이 시간이 지난 제안을 거둔다 (진행 중인 일 자체는 남는다). 반환: 거둔 제안들."""
+    threads = _load_threads()
+    stamp = now.isoformat(timespec="minutes")
+    gone = []
+    for t in threads:
+        p = t.get("proposal")
+        if t["status"] == "open" and p and p.get("expires", "") <= stamp:
+            t.setdefault("updates", []).append({"at": stamp, "note": f"{p['by']}의 모임 제안은 호응이 적어 흐지부지됨"})
+            t.pop("proposal", None)
+            gone.append({**p, "title": t["title"]})
+    if gone:
+        _save_threads(threads)
+    return gone
+
+
 def facts() -> list[dict]:
     """영구히 정해진 것들 (모임/투표 결론) - 지워지지 않는다."""
     return [t for t in _load_threads() if t["status"] == "resolved" and t.get("permanent")]
