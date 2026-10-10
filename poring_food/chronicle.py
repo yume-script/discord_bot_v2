@@ -171,13 +171,14 @@ def meeting_state(title: str) -> dict | None:
 
 
 def schedule_meeting(title: str, round_done: int, place: str, participants: list[str], turns: int,
-                     next_at: str, note: str) -> None:
+                     next_at: str, note: str, scope: str = "") -> None:
     """결론 없이 끝난 모임: 진행 중인 일에 경과를 남기고 다음 모임 시각을 잡는다."""
     open_thread(title, note)
     threads = _load_threads()
     for t in threads:
         if t["status"] == "open" and _same(t["title"], title):
-            t["meeting"] = {"round": round_done, "place": place, "participants": participants, "turns": turns}
+            t["meeting"] = {"round": round_done, "place": place, "participants": participants, "turns": turns,
+                            "scope": scope or t.get("meeting", {}).get("scope", "")}
             if next_at:
                 t["meeting_next"] = next_at
             else:
@@ -224,8 +225,8 @@ def postpone_meeting(title: str, next_at: str) -> None:
 # ---------------------------------------------------------------- 에이전트가 직접 제안한 모임
 PROPOSALS_PER_DAY = 3      # 하루에 받을 수 있는 모임 제안 수
 AUTO_MEETINGS_PER_DAY = 2  # 제안이 호응을 얻어 실제로 잡히는 모임 수 (하루)
-SUPPORT_NEEDED = 3         # 제안한 사람 포함 이만큼 찬성하면 모임이 잡힌다
-PROPOSAL_TTL_H = 6         # 이 시간 안에 호응이 없으면 흐지부지
+SUPPORT_NEEDED = 10        # 제안한 사람 포함 이만큼 찬성하면 모임이 잡힌다 (범위 인원이 더 적으면 그 인원)
+PROPOSAL_TTL_H = 8         # 이 시간 안에 찬성이 모이지 않으면 흐지부지
 
 
 def _today_count(key: str, now: datetime) -> int:
@@ -287,7 +288,8 @@ def confirm_proposal(topic: str, now: datetime) -> str:
             if at <= now:
                 at = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
             t["meeting"] = {"round": 0, "place": p.get("place", ""), "participants": p["supporters"]
-                            + [m for m in p["members"] if m not in p["supporters"]], "turns": 0}
+                            + [m for m in p["members"] if m not in p["supporters"]], "turns": 0,
+                            "scope": p.get("scope", "")}
             t["meeting_next"] = at.isoformat(timespec="minutes")
             t["confirmed_at"] = now.isoformat(timespec="minutes")
             t.setdefault("updates", []).append({"at": now.isoformat(timespec="minutes"),
@@ -516,6 +518,13 @@ def lookup(date: str) -> str:
     done = [t for t in all_threads() if t["status"] == "resolved" and str(t.get("resolved_at", "")).startswith(date)]
     if done:
         parts.append("**이날 해결된 일**\n" + "\n".join(f"• {t['title']} → {t['resolution']}" for t in done))
+    from . import projects  # projects는 chronicle을 쓰지 않는다 - 조회 때만
+    if projects.active():
+        parts.append("**진행 중인 마을 프로젝트**\n" + "\n".join(
+            f"• {p['title']} {p['progress']}% (지금: {projects.current_step(p)}, 담당 {p['owner']})" for p in projects.active()))
+    fin = [p for p in projects.done() if str(p.get("done_at", "")).startswith(date)]
+    if fin:
+        parts.append("**이날 완료된 프로젝트**\n" + "\n".join(f"• {p['title']}: {p['goal']}" for p in fin))
     return "\n\n".join(parts)[:1900]
 
 

@@ -27,7 +27,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, chronicle, life, memory, metrics, runtime, signals, world
+from . import characters, chronicle, life, memory, metrics, projects, runtime, signals, world
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import DATA_DIR, DISCORD_BOT_V2_DB_PATH, STATE_DIR
@@ -391,6 +391,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
     if kakao:
         parts.append("[카톡에서 실제 사람들과 나눈 대화 - 내가 직접 한 대화다]\n" + "\n".join(kakao[-20:]))
     parts.append(_group_block(agent, st))
+    parts.append(projects.prompt_block(name))
     props = [t for t in chronicle.pending_proposals() if agent["name"] in t["proposal"]["members"]]
     if props:
         parts.append("[모임 제안 - 내가 낄 수 있는 모임]\n" + "\n".join(
@@ -457,11 +458,18 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         meeting_rule += (
             "- 나는 통장이다. 아직 끝나지 않은 동네 일이나 주민들 사이에서 나온 불편/아이디어를 챙겨서, 필요하면 모임을 열어 "
             "의견을 모으고, 정해진 일은 실제로 되도록 챙긴다.\n")
+    my_projects = [p for p in projects.active() if not p.get("members") or agent["name"] in p["members"]]
+    if my_projects:
+        meeting_rule += ("- 진행 중인 마을 프로젝트에 이번 시간 실제로 손을 보탰으면(맡은 일, 도울 일, 지나가다 거든 일) "
+                         "project_work에 써라. 안 했으면 null - 지어내지 마라.\n")
     meeting_spec = (
         (f', "meeting": null 또는 {{"topic": "모임 주제", "why": "왜 모여야 하는지 한 줄", '
          f'"scope": "{"|".join(scopes)}", "hour": 오늘 모일 시각(정수, 보통 저녁 19~21)}}')
         + (', "meeting_support": null 또는 "찬성하는 모임 주제"' if pending else "")
     ) if scopes else ""
+    if my_projects:
+        meeting_spec += (f', "project_work": null 또는 {{"project": "{"|".join(p["title"] for p in my_projects)}", '
+                         '"did": "이번 시간에 실제로 한 일 한 줄"}')
     user = (
         _perception(agent, st, routine_hint, kakao, others) + "\n\n"
         "이번 한 시간 동안 무엇을 할지 정해라.\n"
@@ -496,7 +504,18 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "group_post": _parse_group_post(out.get("group_post"), groups),
         "meeting": _parse_meeting(out.get("meeting"), scopes),
         "meeting_support": str(out.get("meeting_support") or "").strip()[:80] if pending else "",
+        "project_work": _parse_project_work(out.get("project_work"), my_projects),
     }
+
+
+def _parse_project_work(raw, my_projects: list[dict]) -> dict | None:
+    if not isinstance(raw, dict) or not my_projects:
+        return None
+    did = str(raw.get("did") or "").strip()[:150]
+    title = str(raw.get("project") or "").strip()
+    if not did or not any(projects._same(p["title"], title) for p in my_projects):
+        return None
+    return {"project": title, "did": did}
 
 
 def _parse_meeting(raw, scopes: list[str]) -> dict | None:
@@ -844,6 +863,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
         more, _ = _meeting_people(None, agents, now)
         people += [p for p in more if p not in people][:MEETING_MAX_PEOPLE - len(people)]
     place = (place or "").strip() or MEETING_PLACE
+    scope = (prev or {}).get("scope") or TOWN_SCOPE
     turns = max(4, min(30, int(turns or (prev or {}).get("turns") or MEETING_DEFAULT_TURNS)))
     result = {"participants": [p["name"] for p in people], "asleep": asleep, "lines": 0, "conclusion": "",
               "decided": False, "round": round_no, "vote": None, "next_at": ""}
@@ -943,11 +963,16 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
             memory.remember(a["name"], text, 9, [n for n in names_in if n != a["name"]] if here else [], "모임", permanent=True)
             if not here:
                 deliver(a["name"], f"'{topic}' 결정 소식: {resolution}", "소식", quiet=True)
+        # 정해진 일 중 실제로 해 나갈 일이 있으면 마을 프로젝트로
+        try:
+            result["project"] = _start_project(topic, resolution, talk, people, scope, agents)
+        except Exception as e:  # noqa: BLE001
+            print(f"[경고] 마을 프로젝트 만들기 실패: {e}")
     else:
         chronicle.schedule_meeting(
             topic, round_no, place, names_in, turns, result["next_at"],
             f"{round_no}차 모임 결론 없음 - {conclusion}" + (f" / 후보: {', '.join(candidates)}" if candidates else "")
-            + (f" / 다음: {nxt}" if nxt else ""))
+            + (f" / 다음: {nxt}" if nxt else ""), scope=scope)
         for p in people:
             memory.remember(p["name"], f"{place}에서 '{topic}' {round_no}차 모임에 참석했다 - {conclusion}", 6,
                             [n for n in names_in if n != p["name"]], "모임")
@@ -974,7 +999,7 @@ def _meeting_scopes(agent: dict) -> list[str]:
 
 def _scope_members(agent: dict, scope: str, agents: list[dict]) -> list[str]:
     if scope == TOWN_SCOPE:
-        return [a["name"] for a in agents if TOWN_GROUP in (a.get("groups") or [])]
+        return [a["name"] for a in agents]  # 동네 일은 이 동네에서 살고 일하는 사람 전부의 일
     return [a["name"] for a in agents if a.get("company") == agent.get("company")]
 
 
@@ -1007,8 +1032,8 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
         agent = by_name[name]
         members = _scope_members(agent, m["scope"], agents)
         place = MEETING_PLACE if m["scope"] == TOWN_SCOPE else f"{agent.get('company', '').split(' ')[0]} 회의실"
-        # 통장처럼 동네 일을 맡은 사람의 제안은 찬성 2명(본인 포함)이면 잡힌다
-        needed = 2 if agent.get("role") == "통장" else chronicle.SUPPORT_NEEDED
+        # 찬성 10명(본인 포함)이면 잡힌다 - 범위 인원이 그보다 적으면(작은 회사) 그 인원 전원
+        needed = min(chronicle.SUPPORT_NEEDED, len(members))
         why_not = chronicle.propose_meeting(m["topic"], name, m["scope"], members, m["hour"], place, m["why"], now, needed)
         d["meeting_done"] = True
         data.setdefault(name, {}).setdefault("decision", d)["meeting_done"] = True
@@ -1019,8 +1044,9 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
                   data, agents)
         for other in members:
             if other != name:
+                # 깨우지는 않는다 (인원이 많아서) - 각자 다음 판단 때 보고 찬성할지 정한다
                 _push_inbox(data, other, f"{name}가 '{m['topic']}' 모임을 제안했다 ({m['why']}) - 오늘 {m['hour']}시 {place}",
-                            "모임제안")
+                            "모임제안", quiet=True)
         print(f"[에이전트] 모임 제안: {name} '{m['topic']}' ({m['scope']}, {m['hour']}시)")
     # 찬성이 모인 제안은 모임으로 확정
     for t in chronicle.pending_proposals():
@@ -1038,6 +1064,82 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
         print(f"[에이전트] 모임 확정: {t['title']} {when.strftime('%H시')} ({', '.join(p['supporters'])})")
     for p in chronicle.expire_proposals(now):
         print(f"[에이전트] 모임 제안 흐지부지: {p['title']} (찬성 {len(p['supporters'])}명)")
+
+
+# ===================================================================== 마을 프로젝트
+def _project_scope_members(scope: str, people: list[dict], agents: list[dict]) -> list[str]:
+    if scope == COMPANY_SCOPE and people:
+        return [a["name"] for a in agents if a.get("company") == people[0].get("company")]
+    return [a["name"] for a in agents]
+
+
+def _start_project(topic: str, decision: str, talk: str, people: list[dict], scope: str, agents: list[dict]) -> str:
+    """모임 결정에 실제로 해 나갈 일이 있으면 프로젝트로 만든다 (LLM 1회). 반환: 프로젝트 이름 또는 ""."""
+    names = [p["name"] for p in people]
+    out = llm_json(
+        "너는 동네 모임 기록 담당이다. 모임에서 정해진 일을 실제로 해 나갈 계획으로 바꾼다. 지어내지 말고 정해진 내용 안에서.",
+        f"[주제] {topic}\n[결정] {decision}\n[참석자] {', '.join(names)}\n[오간 말 일부]\n{talk[-2500:]}\n\n"
+        "이 결정에 사람들이 실제로 손을 움직여 해 나갈 일(만들기, 꾸미기, 행사 열기, 바꾸기 등)이 있으면 프로젝트로 정리해라. "
+        "이름 짓기처럼 정하는 것으로 끝나는 일이면 그것을 알리고 반영하는 일(현판, 안내문 등)이 있을 때만.\n"
+        "반드시 JSON으로만 응답:\n"
+        '{"is_project": true/false, "title": "프로젝트 이름(짧게)", "goal": "다 되면 동네가 어떻게 바뀌는지 한 줄", '
+        '"steps": ["단계 3~5개, 각각 짧게"], "owner": "참석자 중 맡을 사람(성격/처지에 맞게)", "helpers": ["도울 참석자 1~4명"]}',
+        temperature=0.4, timeout=DECIDE_TIMEOUT_SEC, tag="마을 프로젝트")
+    if not out or not out.get("is_project") or not str(out.get("title") or "").strip():
+        return ""
+    owner = out.get("owner") if out.get("owner") in names else names[0]
+    helpers = [h for h in (out.get("helpers") or []) if h in names and h != owner]
+    p = projects.create(str(out["title"]), str(out.get("goal") or decision), [str(x) for x in (out.get("steps") or [])],
+                        owner, helpers, scope, _project_scope_members(scope, people, agents), topic)
+    if not p:
+        return ""
+    _post_as("🛠️ 마을 프로젝트", f"-# 🛠️ 새 마을 프로젝트\n**{p['title']}** - {p['goal']}\n"
+                            f"-# 단계: {' → '.join(p['steps'])} · 담당 {p['owner']}"
+                            + (f" · 도움 {', '.join(p['helpers'])}" if p["helpers"] else ""))
+    chronicle.record_event("프로젝트", f"{p['title']} 시작", p["goal"], [p["owner"]] + p["helpers"])
+    deliver(p["owner"], f"'{p['title']}' 프로젝트를 맡게 됐다 - 첫 단계: {p['steps'][0]}", "프로젝트")
+    for h in p["helpers"]:
+        deliver(h, f"'{p['title']}' 프로젝트를 돕기로 했다 (담당 {p['owner']}) - 첫 단계: {p['steps'][0]}", "프로젝트")
+    return p["title"]
+
+
+def _handle_projects(decisions: dict[str, dict], fresh: list[str], by_name: dict, agents: list[dict],
+                     data: dict, now) -> None:
+    """이번 시간 project_work를 쓴 사람의 일을 반영하고, 단계/완료 소식을 올리고, 멈춘 프로젝트는 담당자를 깨운다."""
+    for name in fresh:
+        w = (decisions.get(name) or {}).get("project_work")
+        if not w:
+            continue
+        res = projects.contribute(w["project"], name, w["did"])
+        if not res or not res["gain"]:
+            continue
+        p = res["project"]
+        print(f"[에이전트] 프로젝트 참여: {name} -> {p['title']} +{res['gain']} ({p['progress']}%) - {w['did']}")
+        if res["completed"]:
+            crew = list(dict.fromkeys([p["owner"]] + p["helpers"]))
+            _post_as("🛠️ 마을 프로젝트", f"-# 🎉 마을 프로젝트 완료\n**{p['title']}** - {p['goal']}\n"
+                                    f"-# 함께한 사람: {', '.join(crew)}")
+            chronicle.record_event("프로젝트", f"{p['title']} 완료", p["goal"], crew)
+            for a in agents:
+                if p.get("members") and a["name"] not in p["members"]:
+                    continue
+                here = a["name"] in crew
+                memory.remember(a["name"], (f"'{p['title']}'을(를) 다 같이 해냈다 - {p['goal']}" if here
+                                            else f"동네에 '{p['title']}'이(가) 생겼다 - {p['goal']}"),
+                                9, [c for c in crew if c != a["name"]][:5] if here else [], "프로젝트", permanent=True)
+                _push_inbox(data, a["name"], f"마을 프로젝트 '{p['title']}' 완료 - {p['goal']}", "소식", quiet=True)
+        elif res["step_done"]:
+            nxt = projects.current_step(p)
+            _post_as("🛠️ 마을 프로젝트", f"-# 🛠️ {p['title']} · {p['step']}/{len(p['steps'])} 단계 '{res['step_done']}' 끝 "
+                                    f"({p['progress']}%) - 다음: {nxt}\n{name}: {w['did']}")
+            chronicle.record_event("프로젝트", f"{p['title']} - {res['step_done']} 끝", w["did"], [name])
+            for who in [p["owner"]] + p["helpers"]:
+                if who != name:
+                    _push_inbox(data, who, f"'{p['title']}' {res['step_done']} 단계 끝 - 다음: {nxt}", "프로젝트", quiet=True)
+    for p in projects.stalled(now):
+        _push_inbox(data, p["owner"], f"내가 맡은 '{p['title']}'가 며칠째 멈춰 있다 - 지금 단계: {projects.current_step(p)}",
+                    "프로젝트")
+        print(f"[에이전트] 프로젝트 멈춤 알림: {p['title']} -> {p['owner']}")
 
 
 def run_due_meetings() -> None:
@@ -1183,6 +1285,11 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         _handle_proposals(decisions, fresh, by_name, agents, data, now)
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 모임 제안 처리 실패: {e}")
+    # 3.6) 마을 프로젝트 - 손을 보탠 일 반영, 단계/완료 소식, 멈춘 프로젝트 챙기기
+    try:
+        _handle_projects(decisions, fresh, by_name, agents, data, now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 마을 프로젝트 처리 실패: {e}")
     _save_state(data)
 
     # 4) 다시 모이기로 한 모임 (결론 안 난 모임 자동 소집, 최대 MEETING_MAX_ROUNDS차)
