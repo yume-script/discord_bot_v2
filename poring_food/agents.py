@@ -449,6 +449,14 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         + ("- 누가 제안한 모임에 참석/찬성하고 싶으면 meeting_support에 그 주제를 그대로 써라 (내키지 않으면 null).\n"
            if pending else "")
     ) if scopes else ""
+    if TOWN_GROUP in (agent.get("groups") or []):
+        meeting_rule += (
+            "- 나도 이 동네 주민이다. 동네를 더 살기 좋은 곳으로 만들 작은 일(이웃 챙기기, 불편한 점 고치기, 같이 할 행사나 "
+            "골목 가꾸기 아이디어, 이미 정해진 일 실천하기)이 떠오르면 행동/단톡방 글/연락/모임 제안으로 옮겨도 된다. 억지로는 말고.\n")
+    if agent.get("role") == "통장":
+        meeting_rule += (
+            "- 나는 통장이다. 아직 끝나지 않은 동네 일이나 주민들 사이에서 나온 불편/아이디어를 챙겨서, 필요하면 모임을 열어 "
+            "의견을 모으고, 정해진 일은 실제로 되도록 챙긴다.\n")
     meeting_spec = (
         (f', "meeting": null 또는 {{"topic": "모임 주제", "why": "왜 모여야 하는지 한 줄", '
          f'"scope": "{"|".join(scopes)}", "hour": 오늘 모일 시각(정수, 보통 저녁 19~21)}}')
@@ -999,7 +1007,9 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
         agent = by_name[name]
         members = _scope_members(agent, m["scope"], agents)
         place = MEETING_PLACE if m["scope"] == TOWN_SCOPE else f"{agent.get('company', '').split(' ')[0]} 회의실"
-        why_not = chronicle.propose_meeting(m["topic"], name, m["scope"], members, m["hour"], place, m["why"], now)
+        # 통장처럼 동네 일을 맡은 사람의 제안은 찬성 2명(본인 포함)이면 잡힌다
+        needed = 2 if agent.get("role") == "통장" else chronicle.SUPPORT_NEEDED
+        why_not = chronicle.propose_meeting(m["topic"], name, m["scope"], members, m["hour"], place, m["why"], now, needed)
         d["meeting_done"] = True
         data.setdefault(name, {}).setdefault("decision", d)["meeting_done"] = True
         if why_not:
@@ -1015,7 +1025,7 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
     # 찬성이 모인 제안은 모임으로 확정
     for t in chronicle.pending_proposals():
         p = t["proposal"]
-        if len(p["supporters"]) < chronicle.SUPPORT_NEEDED:
+        if len(p["supporters"]) < p.get("needed", chronicle.SUPPORT_NEEDED):
             continue
         at = chronicle.confirm_proposal(t["title"], now)
         if not at:

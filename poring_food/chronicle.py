@@ -234,7 +234,7 @@ def _today_count(key: str, now: datetime) -> int:
 
 
 def propose_meeting(topic: str, by: str, scope: str, members: list[str], hour: int, place: str, why: str,
-                    now: datetime) -> str:
+                    now: datetime, needed: int = SUPPORT_NEEDED) -> str:
     """모임 제안을 받는다. 반환: "" (받음) 또는 거절 이유."""
     if _today_count("proposed_at", now) >= PROPOSALS_PER_DAY:
         return "오늘 제안이 너무 많음"
@@ -250,7 +250,7 @@ def propose_meeting(topic: str, by: str, scope: str, members: list[str], hour: i
     for t in threads:
         if t["status"] == "open" and _same(t["title"], topic):
             t["proposal"] = {"by": by, "scope": scope, "members": members, "hour": hour, "place": place, "why": why,
-                             "supporters": [by],
+                             "supporters": [by], "needed": needed,
                              "expires": (now + timedelta(hours=PROPOSAL_TTL_H)).isoformat(timespec="minutes")}
             t["proposed_at"] = now.isoformat(timespec="minutes")
             break
