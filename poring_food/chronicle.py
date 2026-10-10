@@ -42,6 +42,7 @@ RECENT_DAYS = 3            # 지각에 넣는 최근 하루 요약 수
 RAW_BUDGET = 14000         # 하루 요약에 넣는 원본 글자 수 상한
 SUMMARY_TIMEOUT_SEC = 120
 MAX_OPEN_THREADS = 8       # 지각에 넣는 진행 중인 일 수
+MAX_FACTS = 12             # 지각에 넣는 "정해진 것"(모임/투표 결론, 영구) 수
 
 
 def _append(path: str, entry: dict) -> None:
@@ -137,7 +138,9 @@ def open_thread(title: str, note: str = "") -> dict:
     return t
 
 
-def update_thread(title: str, note: str = "", resolved: bool = False, resolution: str = "") -> bool:
+def update_thread(title: str, note: str = "", resolved: bool = False, resolution: str = "",
+                  permanent: bool = False) -> bool:
+    """permanent=True면 "이 동네에서 정해진 것"으로 영구히 모두의 지각에 남는다 (모임/투표 결론)."""
     threads = _load_threads()
     now = now_kst().isoformat(timespec="minutes")
     for t in threads:
@@ -148,10 +151,79 @@ def update_thread(title: str, note: str = "", resolved: bool = False, resolution
                 t["status"] = "resolved"
                 t["resolution"] = (resolution or note)[:300]
                 t["resolved_at"] = now
+                t.pop("meeting_next", None)
+                if permanent:
+                    t["permanent"] = True
                 print(f"[연대기] 진행 중인 일 해결: {t['title']} - {t['resolution']}")
             _save_threads(threads)
             return True
     return False
+
+
+# ---------------------------------------------------------------- 모임 자동 소집 (결론 안 난 모임)
+def meeting_state(title: str) -> dict | None:
+    """열려 있는 그 일의 모임 경과 {"round", "place", "participants", "turns", "next_at", "notes"} (없으면 None)."""
+    for t in _load_threads():
+        if t["status"] == "open" and _same(t["title"], title) and t.get("meeting"):
+            return {**t["meeting"], "next_at": t.get("meeting_next", ""), "title": t["title"],
+                    "notes": [u["note"] for u in t.get("updates", [])]}
+    return None
+
+
+def schedule_meeting(title: str, round_done: int, place: str, participants: list[str], turns: int,
+                     next_at: str, note: str) -> None:
+    """결론 없이 끝난 모임: 진행 중인 일에 경과를 남기고 다음 모임 시각을 잡는다."""
+    open_thread(title, note)
+    threads = _load_threads()
+    for t in threads:
+        if t["status"] == "open" and _same(t["title"], title):
+            t["meeting"] = {"round": round_done, "place": place, "participants": participants, "turns": turns}
+            if next_at:
+                t["meeting_next"] = next_at
+            else:
+                t.pop("meeting_next", None)
+            break
+    _save_threads(threads)
+
+
+def _adopt_legacy_meetings(now: datetime) -> None:
+    """[1회성] 자동 소집 기능 전에 결론 없이 끝난 모임 - 1차로 보고 다음 날 저녁 2차 모임을 잡는다."""
+    threads = _load_threads()
+    changed = False
+    for t in threads:
+        if t["status"] != "open" or t.get("meeting"):
+            continue
+        if any(str(u.get("note", "")).startswith("모임에서 결론 없음") for u in t.get("updates", [])):
+            nxt = now.replace(hour=20, minute=0, second=0, microsecond=0)
+            if nxt <= now:
+                nxt += timedelta(days=1)
+            t["meeting"] = {"round": 1, "place": "", "participants": [], "turns": 0}
+            t["meeting_next"] = nxt.isoformat(timespec="minutes")
+            changed = True
+            print(f"[연대기] 이전 모임 이어서 자동 소집: {t['title']} -> {t['meeting_next']}")
+    if changed:
+        _save_threads(threads)
+
+
+def due_meetings(now: datetime) -> list[dict]:
+    """다시 모일 시각이 된 일들."""
+    _adopt_legacy_meetings(now)
+    stamp = now.isoformat(timespec="minutes")
+    return [t for t in _load_threads()
+            if t["status"] == "open" and t.get("meeting_next") and t["meeting_next"] <= stamp]
+
+
+def postpone_meeting(title: str, next_at: str) -> None:
+    threads = _load_threads()
+    for t in threads:
+        if t["status"] == "open" and _same(t["title"], title):
+            t["meeting_next"] = next_at
+    _save_threads(threads)
+
+
+def facts() -> list[dict]:
+    """영구히 정해진 것들 (모임/투표 결론) - 지워지지 않는다."""
+    return [t for t in _load_threads() if t["status"] == "resolved" and t.get("permanent")]
 
 
 def open_threads() -> list[dict]:
@@ -309,14 +381,21 @@ def prompt_block() -> str:
         lines.append(f"- {c['key'][5:].replace('-', '/')}: {c['public'][:400]}")
     threads = open_threads()[-MAX_OPEN_THREADS:]
     since = (now_kst() - timedelta(days=RECENT_DAYS)).isoformat()
-    done = [t for t in all_threads() if t["status"] == "resolved" and t.get("resolved_at", "") >= since]
+    done = [t for t in all_threads() if t["status"] == "resolved" and t.get("resolved_at", "") >= since
+            and not t.get("permanent")]
+    fixed = facts()[-MAX_FACTS:]
     out = []
     if lines:
         out.append("[최근 이 도시에서 있었던 일 - 연대기]\n" + "\n".join(lines))
     if threads:
         out.append("[아직 끝나지 않은 일 - 모두가 알고 있다]\n" + "\n".join(
             f"- {t['title']} ({t['since'][5:10].replace('-', '/')}부터)"
-            + (f": {t['updates'][-1]['note']}" if t.get("updates") else "") for t in threads))
+            + (f": {t['updates'][-1]['note']}" if t.get("updates") else "")
+            + (f" [{t['meeting']['round']}차 모임까지 결론 없음 - 다시 모이기로 함]" if t.get("meeting_next") else "")
+            for t in threads))
+    if fixed:
+        out.append("[이 동네에서 정해진 것 - 모임/투표로 정했고 모두가 받아들였다. 잊지 마라]\n" + "\n".join(
+            f"- {t['title']} → {t['resolution']} ({t.get('resolved_at', '')[:10]})" for t in fixed))
     if done:
         out.append("[최근에 정해진 일]\n" + "\n".join(f"- {t['title']} → {t['resolution']}" for t in done[-5:]))
     return "\n\n".join(out)

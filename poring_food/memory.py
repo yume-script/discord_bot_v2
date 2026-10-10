@@ -7,7 +7,8 @@
 - 만드는 곳: 일지/장면 LLM이 JSON으로 같이 돌려준 memory(추가 LLM 호출 없음), 월급날 같은 규칙 사건
 - 떠올리기(recall): 최근일수록 + 중요할수록 + 지금 상황(같이 있는 사람, 화제 키워드)과 관련 있을수록
   점수가 높다. 프롬프트에는 상위 몇 개만 넣는다 (임베딩 없이 키워드로 충분한 규모).
-- 정리(prune): 파일이 커지면 인물별 최근 MAX_PER_PERSON개 + 중요도 8 이상(60일 이내)만 남긴다.
+- 정리(prune): 파일이 커지면 인물별 최근 MAX_PER_PERSON개 + 중요도 8 이상(60일 이내) + 영구 기억(permanent,
+  투표/모임 결론)만 남긴다.
   빠진 기억은 지우지 않고 연대기 보관함(archive/memories.jsonl)으로 옮기고, 지금 상황과 관련 있으면
   (화제 키워드가 겹치면) 떠올리기에서 다시 꺼내 쓴다.
 """
@@ -29,7 +30,9 @@ KEEP_IMPORTANT_DAYS = 60
 RECENCY_HALF_LIFE_H = 72
 
 
-def remember(name: str, text: str, importance: int = 5, with_: list[str] | None = None, source: str = "") -> None:
+def remember(name: str, text: str, importance: int = 5, with_: list[str] | None = None, source: str = "",
+             permanent: bool = False) -> None:
+    """permanent=True(투표/모임 결론 같은 공동체 결정)는 정리(prune)해도 절대 빠지지 않는다."""
     text = str(text or "").strip()
     if not name or not text:
         return
@@ -41,6 +44,8 @@ def remember(name: str, text: str, importance: int = 5, with_: list[str] | None 
         "name": name, "at": now_kst().isoformat(timespec="minutes"), "text": text[:200],
         "importance": importance, "with": [w for w in (with_ or []) if w and w != name][:5], "source": source,
     }
+    if permanent:
+        entry["permanent"] = True
     try:
         with open(MEMORY_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -72,7 +77,7 @@ def _score(m: dict, now: datetime, terms: list[str]) -> float:
     importance = m.get("importance", 5) / 10
     hay = m.get("text", "") + " " + " ".join(m.get("with", []))
     relevance = (sum(1 for t in terms if t and t in hay) / len(terms)) if terms else 0
-    return 0.45 * recency + 0.35 * importance + 0.2 * relevance
+    return 0.45 * recency + 0.35 * importance + 0.2 * relevance + (0.3 if m.get("permanent") else 0)
 
 
 def recall(name: str, terms: list[str] | None = None, k: int = 4) -> list[dict]:
@@ -117,7 +122,9 @@ def prune() -> None:
     keep = []
     for items in by_name.values():
         recent = items[-MAX_PER_PERSON:]
-        important = [m for m in items[:-MAX_PER_PERSON] if m.get("importance", 0) >= 8 and m.get("at", "") >= cutoff]
+        older = items[:-MAX_PER_PERSON]
+        important = [m for m in older if m.get("permanent")
+                     or (m.get("importance", 0) >= 8 and m.get("at", "") >= cutoff)]
         keep.extend(important + recent)
     keep.sort(key=lambda m: m.get("at", ""))
     kept = {id(m) for m in keep}

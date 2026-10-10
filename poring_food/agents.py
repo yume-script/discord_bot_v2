@@ -654,7 +654,7 @@ def _meeting_people(names: list[str] | None, agents: list[dict], now) -> tuple[l
 
 
 def _meeting_turn(agent: dict, topic: str, place: str, people: list[dict], transcript: list[dict],
-                  last_turn: bool) -> dict | None:
+                  last_turn: bool, context: str = "") -> dict | None:
     name = agent["name"]
     lines = "\n".join(f"{t['speaker']}: {t['line']}" for t in transcript[-16:]) or "(아직 아무도 말하지 않음)"
     spoken = {t["speaker"] for t in transcript}
@@ -666,7 +666,7 @@ def _meeting_turn(agent: dict, topic: str, place: str, people: list[dict], trans
             memory.prompt_block(name, [p["name"] for p in people] + topic.split()[:4], k=4),
             chronicle.prompt_block(),
         ) if b) + "\n\n"
-        f"[모임 주제] {topic}\n[같이 온 사람] {others}\n[지금까지 오간 말]\n{lines}\n\n"
+        f"[모임 주제] {topic}\n" + (f"{context}\n" if context else "") + f"[같이 온 사람] {others}\n[지금까지 오간 말]\n{lines}\n\n"
         f"{name}로서 이 모임에서 다음 발언을 해라. 내 성격/처지/기억대로 - 구체적인 안을 내거나, 남의 안에 찬성/반대하거나, "
         "질문하거나, 이야기를 정리해도 된다. 다른 사람 이름을 불러 의견을 물어도 된다. "
         + ("아직 말 안 한 사람이 있으면 그 사람 의견도 궁금해할 수 있다. " if len(spoken) < len(people) else "")
@@ -706,23 +706,114 @@ def _post_as(name: str, text: str) -> None:
         print(f"[경고] {name} 메시지 전송 실패: {e}")
 
 
+MEETING_MAX_ROUNDS = 5     # 결론이 안 나면 이만큼 다시 모이고, 마지막 모임 끝에 투표로 정한다
+MEETING_AUTO_HOUR = 20     # 다시 모이는 시각 (다음 날 저녁 - 깨어 있는 사람이 가장 많을 때)
+
+
+def _next_meeting_at(now) -> str:
+    nxt = (now + timedelta(days=1)).replace(hour=MEETING_AUTO_HOUR, minute=0, second=0, microsecond=0)
+    return nxt.isoformat(timespec="minutes")
+
+
+def _match_candidate(vote: str, candidates: list[str]) -> str | None:
+    v = (vote or "").strip().strip("'\"")
+    for c in candidates:
+        if v == c:
+            return c
+    for c in candidates:
+        if _same_place(v, c):  # 공백/따옴표 차이, 부분 일치
+            return c
+    return None
+
+
+def _vote_once(people: list[dict], topic: str, candidates: list[str], talk: str, runoff: bool) -> list[tuple[str, str, str]]:
+    """참가자 각자가 자기 LLM으로 한 표씩. 반환: [(이름, 후보, 이유)] (무효표는 빠짐)."""
+    out = []
+    numbered = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(candidates))
+    for p in people:
+        user = (
+            "\n\n".join(b for b in (life.prompt_block(p["name"]),
+                                     memory.prompt_block(p["name"], topic.split()[:4], k=3)) if b) + "\n\n"
+            f"[주제] {topic}\n[지금까지 모임에서 오간 이야기]\n{talk[-3000:]}\n\n"
+            f"{'동률이라 결선 투표다. ' if runoff else ''}여러 차례 모였는데도 결론이 안 나서 투표로 정하기로 했다. "
+            f"아래 후보 중 하나에 내 생각대로 한 표를 던져라 (후보 이름을 그대로 써라).\n{numbered}\n"
+            '반드시 JSON으로만 응답: {"vote": "후보 이름 그대로", "reason": "고른 이유 한 줄"}'
+        )
+        res = llm_json(_system(p), user, temperature=0.7, timeout=DECIDE_TIMEOUT_SEC, tag=f"투표 {p['name']}")
+        choice = _match_candidate(str((res or {}).get("vote") or ""), candidates)
+        if not choice:
+            print(f"[에이전트] 투표 무효: {p['name']} ({(res or {}).get('vote')})")
+            continue
+        reason = str((res or {}).get("reason") or "").strip()[:120]
+        out.append((p["name"], choice, reason))
+        _post(p, f"🗳️ **{choice}**" + (f" - {reason}" if reason else ""))
+        _pause()
+    return out
+
+
+def _vote(people: list[dict], topic: str, candidates: list[str], talk: str) -> tuple[str, dict, str]:
+    """투표로 마무리. 동률이면 결선 한 번, 그래도 동률이면 먼저 나온 안. 반환: (결정, {후보: 표}, 설명)."""
+    _post_as("🏛️ 동네 모임", f"-# 🗳️ 투표 - 후보: {' / '.join(candidates)}")
+    ballots = _vote_once(people, topic, candidates, talk, runoff=False)
+    tally = {c: 0 for c in candidates}
+    for _, c, _r in ballots:
+        tally[c] += 1
+    note = ""
+    top = max(tally.values()) if tally else 0
+    tied = [c for c in candidates if tally[c] == top]
+    if len(tied) > 1 and top > 0:
+        _post_as("🏛️ 동네 모임", f"-# 🗳️ 동률 ({' / '.join(tied)}) - 결선 투표")
+        runoff = _vote_once(people, topic, tied, talk, runoff=True)
+        rt = {c: 0 for c in tied}
+        for _, c, _r in runoff:
+            rt[c] += 1
+        rtop = max(rt.values()) if rt else 0
+        rtied = [c for c in tied if rt[c] == rtop]
+        winner = rtied[0]
+        note = "결선 투표 " + ", ".join(f"{c} {n}표" for c, n in rt.items())
+        if len(rtied) > 1:
+            note += " - 그래도 동률이라 먼저 나온 안으로"
+    else:
+        winner = tied[0] if tied else candidates[0]
+    return winner, tally, note
+
+
 def run_meeting(topic: str, names: list[str] | None = None, place: str = "", turns: int = MEETING_DEFAULT_TURNS) -> dict:
     """
-    [관리자 모임] 여러 에이전트가 한자리에 모여 돌아가며 말한다 (각자 자기 LLM, 자기 상태/기억만 본다).
-    끝나면 결론을 정리해서 채널/연대기(진행 중인 일)/참가자 기억/나머지 사람 받은편지함에 남긴다.
-    반환: {"participants", "asleep", "lines", "conclusion", "decided"}
+    [모임] 여러 에이전트가 한자리에 모여 돌아가며 말한다 (각자 자기 LLM, 자기 상태/기억만 본다).
+    끝나면 결론을 정리해서 채널/연대기/참가자 기억/나머지 사람 받은편지함에 남긴다.
+    결론이 안 나면 다음 날 저녁 같은 주제로 다시 모이고(최대 MEETING_MAX_ROUNDS차), 마지막 모임에서도 안 나면
+    참가자 투표로 정한다. 결정된 내용(모임 결론/투표 결과)은 영구 기억 + "이 동네에서 정해진 것"으로 남는다.
+    반환: {"participants", "asleep", "lines", "conclusion", "decided", "round", "vote", "next_at"}
     """
     now = now_kst()
     agents = load_agents()
+    prev = chronicle.meeting_state(topic)
+    round_no = (prev["round"] if prev else 0) + 1
+    if prev:
+        topic = prev["title"]
+        names = names or prev.get("participants")
+        place = place or prev.get("place", "")
     people, asleep = _meeting_people(names, agents, now)
+    if prev and len(people) < 3:  # 지난번 사람들이 많이 자고 있으면 깨어 있는 동네 사람으로 채운다
+        more, _ = _meeting_people(None, agents, now)
+        people += [p for p in more if p not in people][:MEETING_MAX_PEOPLE - len(people)]
     place = (place or "").strip() or MEETING_PLACE
-    turns = max(4, min(30, int(turns or MEETING_DEFAULT_TURNS)))
-    result = {"participants": [p["name"] for p in people], "asleep": asleep, "lines": 0, "conclusion": "", "decided": False}
+    turns = max(4, min(30, int(turns or (prev or {}).get("turns") or MEETING_DEFAULT_TURNS)))
+    result = {"participants": [p["name"] for p in people], "asleep": asleep, "lines": 0, "conclusion": "",
+              "decided": False, "round": round_no, "vote": None, "next_at": ""}
     if len(people) < 2:
         return result
-    _post_as("🏛️ 동네 모임", f"-# 🏛️ {place} · {now.strftime('%H:%M')}\n**{topic}**\n"
-                          f"-# 참석: {', '.join(result['participants'])}")
-    print(f"[에이전트] 모임 시작: {topic} ({', '.join(result['participants'])})")
+    final = round_no >= MEETING_MAX_ROUNDS
+    history = ""
+    if prev and prev.get("notes"):
+        history = "[지난 모임 경과]\n" + "\n".join(f"- {n}" for n in prev["notes"][-6:])
+    context = (f"[{round_no}차 모임] " + ("이번이 마지막 모임이다 - 이번에도 결론이 안 나면 끝에 투표로 정한다." if final
+                                       else f"최대 {MEETING_MAX_ROUNDS}차까지 모이고, 그래도 안 되면 투표로 정한다.")
+               + (f"\n{history}" if history else ""))
+    _post_as("🏛️ 동네 모임", f"-# 🏛️ {place} · {now.strftime('%H:%M')}" + (f" · {round_no}차 모임" if round_no > 1 else "")
+             + f"\n**{topic}**\n-# 참석: {', '.join(result['participants'])}")
+    print(f"[에이전트] 모임 시작({round_no}차): {topic} ({', '.join(result['participants'])})")
     rnd = random.Random()
     transcript: list[dict] = []
     proposals: list[str] = []
@@ -730,7 +821,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
         sp = _next_speaker(people, transcript, rnd)
         if transcript:
             _pause()
-        out = _meeting_turn(sp, topic, place, people, transcript, last_turn=(i == turns - 1))
+        out = _meeting_turn(sp, topic, place, people, transcript, last_turn=(i == turns - 1), context=context)
         if not out:
             continue
         line = str(out["say"]).strip()[:300]
@@ -745,44 +836,94 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
     talk = "\n".join(f"{t['speaker']}({t['stance']}): {t['line']}" for t in transcript)
     out = llm_json(
         "너는 모임 기록 담당이다. 실제로 오간 말만 보고 결론을 정리한다. 합의되지 않았으면 결론이 났다고 하지 마라.",
-        f"[주제] {topic}\n[장소] {place}\n[나온 안] {' / '.join(proposals) or '없음'}\n[오간 말]\n{talk}\n\n"
+        f"[주제] {topic}\n[장소] {place}\n" + (f"{history}\n" if history else "")
+        + f"[이번 모임에서 나온 안] {' / '.join(proposals) or '없음'}\n[오간 말]\n{talk}\n\n"
         "반드시 JSON으로만 응답:\n"
         '{"decided": true/false, "conclusion": "결론 한 줄 (결정됐으면 무엇으로 정했는지, 아니면 어디까지 왔는지)", '
-        '"detail": "누가 어떤 안을 냈고 찬반이 어땠는지 1~2문장", "next": "결론이 안 났으면 다음에 할 일, 났으면 빈 문자열"}',
+        '"detail": "누가 어떤 안을 냈고 찬반이 어땠는지 1~2문장", "next": "결론이 안 났으면 다음에 할 일, 났으면 빈 문자열", '
+        '"candidates": ["결론이 안 났으면 지금까지 나온 유력한 후보안들 2~5개 (짧은 이름 그대로)"]}',
         temperature=0.3, timeout=DECIDE_TIMEOUT_SEC, tag="모임 결론")
     decided = bool(out and out.get("decided"))
     conclusion = str((out or {}).get("conclusion") or "결론 없이 끝남").strip()[:200]
     detail = str((out or {}).get("detail") or "").strip()[:300]
     nxt = str((out or {}).get("next") or "").strip()[:200]
+    candidates = [str(c).strip()[:40] for c in ((out or {}).get("candidates") or []) if str(c).strip()]
+    candidates = list(dict.fromkeys(candidates))[:5]
+    if len(candidates) < 2:
+        candidates = list(dict.fromkeys(p.split(": ", 1)[-1] for p in proposals))[:5]
+
+    vote_line = ""
+    if not decided and final and len(candidates) >= 2:
+        _post_as("🏛️ 동네 모임", f"-# 🏛️ {round_no}차 모임에서도 결론이 안 나서 투표로 정합니다")
+        winner, tally, note = _vote(people, topic, candidates, talk)
+        vote_line = ", ".join(f"{c} {n}표" for c, n in sorted(tally.items(), key=lambda x: -x[1]))
+        decided = True
+        conclusion = f"투표로 '{winner}'(으)로 결정"
+        detail = f"투표 결과: {vote_line}" + (f" / {note}" if note else "")
+        nxt = ""
+        result["vote"] = {"winner": winner, "tally": tally, "note": note}
     result.update({"conclusion": conclusion, "decided": decided})
-    _post_as("🏛️ 동네 모임", f"-# 🏛️ 모임 {'결론' if decided else '정리 (아직 결론 없음)'}\n**{conclusion}**"
-                          + (f"\n{detail}" if detail else "") + (f"\n-# 다음: {nxt}" if nxt else ""))
+    if decided:
+        _post_as("🏛️ 동네 모임", f"-# 🏛️ {'투표 결과' if vote_line else '모임 결론'}\n**{conclusion}**" + (f"\n{detail}" if detail else ""))
+    else:
+        result["next_at"] = _next_meeting_at(now)
+        when = datetime.fromisoformat(result["next_at"])
+        _post_as("🏛️ 동네 모임", f"-# 🏛️ {round_no}차 모임 정리 (아직 결론 없음)\n**{conclusion}**"
+                 + (f"\n{detail}" if detail else "") + (f"\n-# 다음: {nxt}" if nxt else "")
+                 + f"\n-# 📅 {when.month}/{when.day} {when.hour}시에 {round_no + 1}차 모임"
+                 + (" (마지막 - 결론이 안 나면 투표)" if round_no + 1 >= MEETING_MAX_ROUNDS else ""))
 
     # 영구 기록: 대화 원문 / 세계 사건 / 진행 중인 일
-    summary = f"{place} 모임 '{topic}': {conclusion}"
+    summary = f"{place} {round_no}차 모임 '{topic}': {conclusion}"
     with open(DIALOGUES_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps({"id": uuid.uuid4().hex[:12], "ts": now.isoformat(timespec="seconds"), "hour": now.hour,
                             "location": place, "participants": result["participants"], "arc_id": None,
                             "lines": [{"speaker": t["speaker"], "line": t["line"]} for t in transcript],
-                            "narration": "", "summary": summary, "agents": True, "meeting": True},
+                            "narration": "", "summary": summary, "agents": True, "meeting": True,
+                            "round": round_no, "vote": result["vote"]},
                            ensure_ascii=False) + "\n")
-    chronicle.record_event("모임", topic, f"{conclusion} {detail}".strip(), result["participants"],
-                           decided=decided, place=place)
+    chronicle.record_event("투표" if vote_line else "모임", f"{topic} ({round_no}차)", f"{conclusion} {detail}".strip(),
+                           result["participants"], decided=decided, place=place, round=round_no, vote=result["vote"])
+    names_in = result["participants"]
     if decided:
         chronicle.open_thread(topic)  # 진행 중인 일이 없었어도 해결 기록을 남긴다
-        chronicle.update_thread(topic, conclusion, resolved=True, resolution=conclusion)
+        vnote = (result["vote"] or {}).get("note", "")
+        resolution = conclusion + (f" ({vote_line}" + (f" / {vnote}" if vnote else "") + ")" if vote_line else "")
+        chronicle.update_thread(topic, f"{round_no}차 모임: {conclusion}", resolved=True, resolution=resolution, permanent=True)
+        # 정해진 일은 모두의 영구 기억 - 기억 정리(prune)로도 지워지지 않는다
+        for a in agents:
+            here = a["name"] in names_in
+            text = (f"{place}에서 '{topic}' {round_no}차 모임에 참석했다 - {resolution}" if here
+                    else f"동네에서 '{topic}'이(가) 정해졌다 - {resolution}")
+            memory.remember(a["name"], text, 9, [n for n in names_in if n != a["name"]] if here else [], "모임", permanent=True)
+            if not here:
+                deliver(a["name"], f"'{topic}' 결정 소식: {resolution}", "소식", quiet=True)
     else:
-        chronicle.open_thread(topic, f"모임에서 결론 없음 - {conclusion}" + (f" / 다음: {nxt}" if nxt else ""))
-    # 참가자 기억, 나머지 사람은 소식으로 (깨우지는 않는다 - 다음 판단 때 읽음)
-    names_in = result["participants"]
-    for p in people:
-        memory.remember(p["name"], f"{place}에서 '{topic}' 모임에 참석했다 - {conclusion}", 6,
-                        [n for n in names_in if n != p["name"]], "모임")
-    for a in agents:
-        if a["name"] not in names_in:
-            deliver(a["name"], f"'{topic}' 모임 소식: {conclusion}", "소식", quiet=True)
-    print(f"[에이전트] 모임 끝: {topic} -> {conclusion} ({'결정' if decided else '미결'})")
+        chronicle.schedule_meeting(
+            topic, round_no, place, names_in, turns, result["next_at"],
+            f"{round_no}차 모임 결론 없음 - {conclusion}" + (f" / 후보: {', '.join(candidates)}" if candidates else "")
+            + (f" / 다음: {nxt}" if nxt else ""))
+        for p in people:
+            memory.remember(p["name"], f"{place}에서 '{topic}' {round_no}차 모임에 참석했다 - {conclusion}", 6,
+                            [n for n in names_in if n != p["name"]], "모임")
+        for a in agents:
+            if a["name"] not in names_in:
+                deliver(a["name"], f"'{topic}' {round_no}차 모임 소식: {conclusion}", "소식", quiet=True)
+    print(f"[에이전트] 모임 끝({round_no}차): {topic} -> {conclusion} ({'결정' if decided else '미결'})")
     return result
+
+
+def run_due_meetings() -> None:
+    """[매시 회차] 다시 모일 시각이 된 모임을 연다 (한 회차에 하나). 모일 사람이 없으면 한 시간 미룬다."""
+    now = now_kst()
+    for t in chronicle.due_meetings(now)[:1]:
+        res = run_meeting(t["title"])
+        if len(res["participants"]) < 2:
+            later = now + timedelta(hours=1)
+            if later.hour >= 23 or later.hour < 9:
+                later = (now + timedelta(days=1)).replace(hour=MEETING_AUTO_HOUR, minute=0)
+            chronicle.postpone_meeting(t["title"], later.isoformat(timespec="minutes"))
+            print(f"[에이전트] 모임 연기: {t['title']} -> {later.strftime('%m/%d %H시')} (모일 사람 부족)")
 
 
 # ===================================================================== 매시 회차
@@ -912,7 +1053,13 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         posted += 1
     _save_state(data)
 
-    # 4) 근황 - 이번 시간 새로 판단한 사람들이 어디서 뭘 하는지 한 메시지로 (대화 채널)
+    # 4) 다시 모이기로 한 모임 (결론 안 난 모임 자동 소집, 최대 MEETING_MAX_ROUNDS차)
+    try:
+        run_due_meetings()
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 자동 모임 실패: {e}")
+
+    # 5) 근황 - 이번 시간 새로 판단한 사람들이 어디서 뭘 하는지 한 메시지로 (대화 채널)
     if STATUS_DIGEST and fresh:
         _post_digest(now, [(by_name[n], decisions[n]) for n in fresh if n in decisions])
     return decisions
