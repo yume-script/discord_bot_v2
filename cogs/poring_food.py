@@ -13,6 +13,7 @@
   둘 다 "바로반영"(기본 켬)이면 일지/방송 없이 에이전트 회차만 바로 돌아서 받은 사람이 지금 반응한다.
   · /포링푸드모임 주제 [참가자] [장소] [발언수] - 여러 에이전트가 한자리에 모여 돌아가며 말하고 결론을 낸다
   · /포링푸드연대기 [날짜] - 그날 세계에서 있었던 일(하루 요약/원본 사건)과 진행 중인 일을 본다
+  · /포링푸드이웃 [드라마] - 드라마 인물들을 지금 바로 동네로 이사 오게 한다 (원래는 주 1회 자동)
 """
 from __future__ import annotations
 
@@ -323,6 +324,31 @@ class PoringFood(commands.Cog):
             return
         text = await asyncio.to_thread(chronicle.lookup, date)
         await interaction.response.send_message(text, ephemeral=True)
+
+    @app_commands.command(name="포링푸드이웃", description="[관리자] 드라마 인물들을 지금 동네로 이사 오게 합니다 (원래 주 1회 자동)")
+    @app_commands.describe(드라마="드라마 제목 (비우면 후보 목록에서 아직 안 쓴 것)")
+    async def newcomers_now(self, interaction: Interaction, 드라마: str = ""):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
+            return
+        if self._lock.locked():
+            await interaction.response.send_message("⏳ 다른 회차가 도는 중이에요. 잠시 뒤에 다시 해 주세요.", ephemeral=True)
+            return
+        await interaction.response.send_message("🚚 새 이웃을 찾는 중이에요...", ephemeral=True)
+        from poring_food import agents
+        async with self._lock:
+            try:
+                res = await asyncio.to_thread(agents.move_in_newcomers, 드라마)
+            except Exception:
+                log.exception("새 이웃 이사 실패")
+                await interaction.followup.send("⚠️ 이사 중 오류가 났어요. 로그를 확인해 주세요.", ephemeral=True)
+                return
+        if res["added"]:
+            msg = f"🚚 「{res['drama']}」 {', '.join(r['name'] for r in res['added'])} 이사 완료" + (
+                f" / 이사 감: {', '.join(res['moved_out'])}" if res.get("moved_out") else "")
+        else:
+            msg = f"⚠️ 이사 온 사람이 없어요 ({res.get('reason', '')})"
+        await interaction.followup.send(msg, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

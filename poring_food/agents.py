@@ -27,7 +27,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, chronicle, life, memory, metrics, projects, rotation, runtime, signals, world
+from . import characters, chronicle, life, memory, metrics, newcomers, projects, rotation, runtime, signals, world
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -97,6 +97,41 @@ def _rotate(now) -> None:
         chronicle.record_event("교체", f"{in_name} 등장 / {out_name} 휴식", company, [in_name, out_name])
         memory.remember(in_name, "요즘 들어 동네 일과 사람들에게 마음이 더 쓰인다. 내 하루를 내가 정해 보기로 했다.", 4, [], "교체")
     _post_as("동네 소식", "\n".join(lines))
+
+
+def move_in_newcomers(drama: str = "") -> dict:
+    """[주 1회 / 관리자] 드라마 인물들이 동네로 이사 온다. 채널/연대기/모두의 받은편지함(깨우지 않음)에 알린다.
+    동네 배경 인물이 상한을 넘으면 먼저 온 새 이웃이 이사 간다. 반환: newcomers.move_in 결과 + moved_out."""
+    try:
+        with open(AGENTS_PATH, "r", encoding="utf-8") as f:
+            reserve = {a.get("name") for a in json.load(f).get("reserve", [])}
+    except (OSError, json.JSONDecodeError):
+        reserve = set()
+    agents = load_agents()
+    active = {a["name"] for a in agents}
+    existing = {c["name"] for c in characters.load_roster()} | active | {a["name"] for a in _base_agents()} | reserve
+    res = newcomers.move_in(existing, drama)
+    if not res["added"]:
+        return res
+    roster = characters.load_roster()
+    town_npc = [c for c in roster if c.get("company") == newcomers.COMPANY and c["name"] not in active]
+    res["moved_out"] = newcomers.trim(len(town_npc), active)
+    now = now_kst()
+    lines = [f"-# 🚚 {now.month}/{now.day} 새 이웃이 이사 왔어요 (「{res['drama']}」)"]
+    lines += [f"• **{r['name']}** - {r['rank']}, {r['outer_persona']}" for r in res["added"]]
+    if res["moved_out"]:
+        lines.append(f"-# 📦 {', '.join(res['moved_out'])} 씨는 정든 동네를 떠나 이사 갔어요")
+    _post_as("동네 소식", "\n".join(lines))
+    names = [r["name"] for r in res["added"]]
+    chronicle.record_event("이사", f"새 이웃 {', '.join(names)}", f"「{res['drama']}」 사람들이 동네로 이사 옴", names)
+    if res["moved_out"]:
+        chronicle.record_event("이사", f"{', '.join(res['moved_out'])} 이사 감", "동네를 떠남", res["moved_out"])
+    news = "동네에 새 이웃이 이사 왔다: " + ", ".join(f"{r['name']}({r['rank']})" for r in res["added"])
+    data = _load_state()
+    for a in agents:
+        _push_inbox(data, a["name"], news, "소식", quiet=True)
+    _save_state(data)
+    return res
 
 
 def load_agents() -> list[dict]:
@@ -1204,6 +1239,14 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         chronicle.tick()
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 연대기 요약 실패: {e}")
+    # 0.4) 새 이웃 - 주 1회(월요일 아침) 드라마 인물들이 동네로 이사 온다
+    try:
+        if newcomers.due(now):
+            res = move_in_newcomers()
+            if res.get("reason") != "LLM 응답 없음":
+                newcomers.mark_week(now)  # LLM이 실패하면 다음 회차에 다시
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 새 이웃 이사 실패: {e}")
     # 0.5) 교체 - 하루 한 번 소속별로 에이전트와 배경 인물이 자리를 바꾼다
     try:
         _rotate(now)
