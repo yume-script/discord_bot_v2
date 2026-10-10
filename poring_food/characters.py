@@ -4,7 +4,7 @@
 다루고(주인공이라 손으로 짠 디테일이 있음), 나머지 인물들은 이 파일이 데이터 기반(직무/
 성격 텍스트를 그대로 활용)으로 가볍게(LLM 호출 없이) 스케줄을 굴린다.
 
-로스터는 ORGANIZATION_GLOB("*_organization.json")에 걸리는 파일을 전부 자동으로 읽어서
+로스터는 ORGANIZATION_GLOB("*_organization.json")에 걸리는 파일(+ 주 1회 이사 온 새 이웃, newcomers.py)을 전부 자동으로 읽어서
 만든다 - poring_food_organization.json, erinn_logistics_organization.json은 물론,
 나중에 라이벌 회사가 늘어나도 같은 패턴의 파일만 이 폴더에 추가하면 코드 수정 없이
 자동으로 인식된다.
@@ -98,6 +98,18 @@ def load_roster() -> list[dict]:
                     "inner_truth": m.get("inner_truth", ""),
                     "key_behavior": m.get("key_behavior", ""),
                 })
+    # 주 1회 이사 온 드라마 인물들 (newcomers.py) - 동네 배경 인물로
+    from . import newcomers
+    have = {c["name"] for c in roster}
+    for m in newcomers.residents():
+        if m["name"] in have:
+            continue
+        roster.append({
+            "id": _make_id(newcomers.COMPANY, m["name"]), "name": m["name"], "rank": m.get("rank", ""), "prefix": "",
+            "dept": f"{newcomers.DEPT} ({m.get('drama', '')})", "company": newcomers.COMPANY,
+            "outer_persona": m.get("outer_persona", ""), "inner_truth": m.get("inner_truth", ""),
+            "key_behavior": m.get("key_behavior", ""),
+        })
     return roster
 
 
