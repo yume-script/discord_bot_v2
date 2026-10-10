@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 
 from . import characters, chronicle, projects
 from .clock import now_kst
@@ -141,6 +142,7 @@ def tick(base: list[dict], max_agents: int) -> list[tuple[str, str, str]]:
     roster = characters.load_roster()
     since = data.setdefault("since", {})
     busy = _busy()
+    rnd = random.Random(today)
     swaps = []
     for company in COMPANIES:
         for _ in range(SWAPS_PER_COMPANY):
@@ -149,8 +151,9 @@ def tick(base: list[dict], max_agents: int) -> list[tuple[str, str, str]]:
             if not outs or not ins:
                 break
             # 가장 오래 에이전트였던 사람이 쉬고, 가장 오래 쉰(한 번도 안 나선) 배경 인물이 나선다
-            leaving = min(outs, key=lambda a: since.get(a["name"], "0000"))
-            coming = min(ins, key=lambda c: since.get(c["name"], "0000"))
+            # 같은 날짜끼리는 무작위 (목록 맨 앞 사람만 계속 빠지지 않게)
+            leaving = min(outs, key=lambda a: (since.get(a["name"], "0000"), rnd.random()))
+            coming = min(ins, key=lambda c: (since.get(c["name"], "0000"), rnd.random()))
             base_entry = next((a for a in base if a["name"] == coming["name"]), None)
             if base_entry:
                 # 원래 agents.json 사람(쉬러 갔던 사람)이 돌아온다 - 원래 프로필 그대로
