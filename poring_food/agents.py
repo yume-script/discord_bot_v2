@@ -27,7 +27,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, life, memory, metrics, runtime, signals, world
+from . import characters, chronicle, life, memory, metrics, runtime, signals, world
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import DATA_DIR, DISCORD_BOT_V2_DB_PATH, STATE_DIR
@@ -122,10 +122,10 @@ def _push_inbox(data: dict, name: str, text: str, kind: str, urgent: bool = Fals
     st["inbox"] = st["inbox"][-MAX_INBOX:]
 
 
-def deliver(name: str, text: str, kind: str, urgent: bool = False) -> None:
+def deliver(name: str, text: str, kind: str, urgent: bool = False, quiet: bool = False) -> None:
     """에이전트 받은편지함에 지각 하나를 넣는다 (사건/소문/메시지). 다음 판단 때 읽는다."""
     data = _load_state()
-    _push_inbox(data, name, text, kind, urgent)
+    _push_inbox(data, name, text, kind, urgent, quiet)
     _save_state(data)
 
 
@@ -146,6 +146,9 @@ def inject_event(target_list: list[str], detail: str, title: str = "") -> list[s
     out = world.inject(title or detail, detail, target_list, load_agents(), characters.load_roster())
     for name, text, kind in out:
         deliver(name, text, kind, urgent=True)
+    if out and len(out) > 1:
+        # 여러 사람에게 닿은 일은 끝날 때까지 "아직 끝나지 않은 일"로 모두의 지각에 남긴다 (날짜가 바뀌어도)
+        chronicle.open_thread(title or detail[:40], detail)
     return [name for name, _, _ in out]
 
 
@@ -327,7 +330,7 @@ def _duty_updates(agents: list[dict], data: dict, now) -> None:
             detail = (f"{company.split(' ')[0]} {line}에 오늘 {n}건{'+' if x.get('saturated') else ''}이 한꺼번에 들어왔다"
                       + (f" (평소 하루 {avg:g}건)" if avg else "") + f". 담당 {name}의 일이 몰렸다.")
             out = world.inject(f"{line} 대량 입고", detail, [company] if company else [name], agents,
-                               characters.load_roster(), effects={"stress": 0.05})
+                               characters.load_roster(), effects={"stress": 0.05}, kind="업무")
             if name not in {w for w, _, _ in out}:
                 out.append((name, detail, "사건"))
             for who, text, kind in out:
@@ -389,6 +392,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         parts.append("[카톡에서 실제 사람들과 나눈 대화 - 내가 직접 한 대화다]\n" + "\n".join(kakao[-20:]))
     parts.append(_group_block(agent, st))
     parts += [
+        chronicle.prompt_block(),
         "[최근 내 행동]\n" + ("\n".join(recent) or "- 없음"),
         f"[연락할 수 있는 사람(스스로 사는 사람들)] {others_line}",
         signals.format_block(signals.for_company(signals.collect(include_factory=False), agent.get("company", ""))),
@@ -627,6 +631,160 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str) -> dict:
     return scene
 
 
+# ===================================================================== 모임 (여러 명이 한자리에서)
+MEETING_MAX_PEOPLE = 10
+MEETING_DEFAULT_TURNS = 12
+MEETING_PLACE = "동네 주민센터 회의실"
+
+
+def _meeting_people(names: list[str] | None, agents: list[dict], now) -> tuple[list[dict], list[str]]:
+    """참가자 (지정 안 하면 깨어 있는 동네 단톡방 멤버). 반환: (참가자, 자는 중이라 빠진 이름)."""
+    by_name = {a["name"]: a for a in agents}
+    if names:
+        picked = [by_name[n] for n in dict.fromkeys(names) if n in by_name]
+    else:
+        picked = [a for a in agents if TOWN_GROUP in (a.get("groups") or [])]
+    asleep = [a["name"] for a in picked if _asleep(a, now.hour)]
+    people = [a for a in picked if not _asleep(a, now.hour)][:MEETING_MAX_PEOPLE]
+    if not names and len(people) < 3:
+        extra = [a for a in agents if a not in people and not _asleep(a, now.hour)]
+        random.shuffle(extra)
+        people += extra[:3 - len(people)]
+    return people, asleep
+
+
+def _meeting_turn(agent: dict, topic: str, place: str, people: list[dict], transcript: list[dict],
+                  last_turn: bool) -> dict | None:
+    name = agent["name"]
+    lines = "\n".join(f"{t['speaker']}: {t['line']}" for t in transcript[-16:]) or "(아직 아무도 말하지 않음)"
+    spoken = {t["speaker"] for t in transcript}
+    others = ", ".join(p["name"] for p in people if p is not agent)
+    user = (
+        "\n\n".join(b for b in (
+            f"[지금] {now_kst().strftime('%m월 %d일 %H:%M')} {place}에서 열린 모임에 와 있다.",
+            life.prompt_block(name),
+            memory.prompt_block(name, [p["name"] for p in people] + topic.split()[:4], k=4),
+            chronicle.prompt_block(),
+        ) if b) + "\n\n"
+        f"[모임 주제] {topic}\n[같이 온 사람] {others}\n[지금까지 오간 말]\n{lines}\n\n"
+        f"{name}로서 이 모임에서 다음 발언을 해라. 내 성격/처지/기억대로 - 구체적인 안을 내거나, 남의 안에 찬성/반대하거나, "
+        "질문하거나, 이야기를 정리해도 된다. 다른 사람 이름을 불러 의견을 물어도 된다. "
+        + ("아직 말 안 한 사람이 있으면 그 사람 의견도 궁금해할 수 있다. " if len(spoken) < len(people) else "")
+        + ("이번이 마지막 발언이니 결론 쪽으로 정리해라. " if last_turn else "")
+        + "\n반드시 JSON으로만 응답:\n"
+        '{"say": "할 말(1~3문장)", "stance": "제안/찬성/반대/질문/보충/정리 중 하나", '
+        '"proposal": "새로 낸 구체적인 안이 있으면 짧게, 없으면 빈 문자열"}'
+    )
+    out = llm_json(_system(agent), user, temperature=0.9, timeout=DECIDE_TIMEOUT_SEC, tag=f"모임 {name}")
+    if not out or not str(out.get("say") or "").strip():
+        return None
+    return out
+
+
+def _next_speaker(people: list[dict], transcript: list[dict], rnd: random.Random) -> dict:
+    last = transcript[-1] if transcript else None
+    if last:
+        named = [p for p in people if p["name"] != last["speaker"] and p["name"] in last["line"]]
+        if named:
+            return named[0]
+    counts = {p["name"]: 0 for p in people}
+    for t in transcript:
+        if t["speaker"] in counts:
+            counts[t["speaker"]] += 1
+    pool = [p for p in people if not last or p["name"] != last["speaker"]] or people
+    least = min(counts[p["name"]] for p in pool)
+    return rnd.choice([p for p in pool if counts[p["name"]] == least])
+
+
+def _post_as(name: str, text: str) -> None:
+    if not runtime.has_agent_sender():
+        print(f"[에이전트] (채널 미설정) {name}: {text}")
+        return
+    try:
+        runtime.send_as("", name, text, "")
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] {name} 메시지 전송 실패: {e}")
+
+
+def run_meeting(topic: str, names: list[str] | None = None, place: str = "", turns: int = MEETING_DEFAULT_TURNS) -> dict:
+    """
+    [관리자 모임] 여러 에이전트가 한자리에 모여 돌아가며 말한다 (각자 자기 LLM, 자기 상태/기억만 본다).
+    끝나면 결론을 정리해서 채널/연대기(진행 중인 일)/참가자 기억/나머지 사람 받은편지함에 남긴다.
+    반환: {"participants", "asleep", "lines", "conclusion", "decided"}
+    """
+    now = now_kst()
+    agents = load_agents()
+    people, asleep = _meeting_people(names, agents, now)
+    place = (place or "").strip() or MEETING_PLACE
+    turns = max(4, min(30, int(turns or MEETING_DEFAULT_TURNS)))
+    result = {"participants": [p["name"] for p in people], "asleep": asleep, "lines": 0, "conclusion": "", "decided": False}
+    if len(people) < 2:
+        return result
+    _post_as("🏛️ 동네 모임", f"-# 🏛️ {place} · {now.strftime('%H:%M')}\n**{topic}**\n"
+                          f"-# 참석: {', '.join(result['participants'])}")
+    print(f"[에이전트] 모임 시작: {topic} ({', '.join(result['participants'])})")
+    rnd = random.Random()
+    transcript: list[dict] = []
+    proposals: list[str] = []
+    for i in range(turns):
+        sp = _next_speaker(people, transcript, rnd)
+        if transcript:
+            _pause()
+        out = _meeting_turn(sp, topic, place, people, transcript, last_turn=(i == turns - 1))
+        if not out:
+            continue
+        line = str(out["say"]).strip()[:300]
+        transcript.append({"speaker": sp["name"], "line": line, "stance": str(out.get("stance") or "")[:10]})
+        if str(out.get("proposal") or "").strip():
+            proposals.append(f"{sp['name']}: {str(out['proposal']).strip()[:80]}")
+        _post(sp, line)
+    result["lines"] = len(transcript)
+    if not transcript:
+        return result
+
+    talk = "\n".join(f"{t['speaker']}({t['stance']}): {t['line']}" for t in transcript)
+    out = llm_json(
+        "너는 모임 기록 담당이다. 실제로 오간 말만 보고 결론을 정리한다. 합의되지 않았으면 결론이 났다고 하지 마라.",
+        f"[주제] {topic}\n[장소] {place}\n[나온 안] {' / '.join(proposals) or '없음'}\n[오간 말]\n{talk}\n\n"
+        "반드시 JSON으로만 응답:\n"
+        '{"decided": true/false, "conclusion": "결론 한 줄 (결정됐으면 무엇으로 정했는지, 아니면 어디까지 왔는지)", '
+        '"detail": "누가 어떤 안을 냈고 찬반이 어땠는지 1~2문장", "next": "결론이 안 났으면 다음에 할 일, 났으면 빈 문자열"}',
+        temperature=0.3, timeout=DECIDE_TIMEOUT_SEC, tag="모임 결론")
+    decided = bool(out and out.get("decided"))
+    conclusion = str((out or {}).get("conclusion") or "결론 없이 끝남").strip()[:200]
+    detail = str((out or {}).get("detail") or "").strip()[:300]
+    nxt = str((out or {}).get("next") or "").strip()[:200]
+    result.update({"conclusion": conclusion, "decided": decided})
+    _post_as("🏛️ 동네 모임", f"-# 🏛️ 모임 {'결론' if decided else '정리 (아직 결론 없음)'}\n**{conclusion}**"
+                          + (f"\n{detail}" if detail else "") + (f"\n-# 다음: {nxt}" if nxt else ""))
+
+    # 영구 기록: 대화 원문 / 세계 사건 / 진행 중인 일
+    summary = f"{place} 모임 '{topic}': {conclusion}"
+    with open(DIALOGUES_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"id": uuid.uuid4().hex[:12], "ts": now.isoformat(timespec="seconds"), "hour": now.hour,
+                            "location": place, "participants": result["participants"], "arc_id": None,
+                            "lines": [{"speaker": t["speaker"], "line": t["line"]} for t in transcript],
+                            "narration": "", "summary": summary, "agents": True, "meeting": True},
+                           ensure_ascii=False) + "\n")
+    chronicle.record_event("모임", topic, f"{conclusion} {detail}".strip(), result["participants"],
+                           decided=decided, place=place)
+    if decided:
+        chronicle.open_thread(topic)  # 진행 중인 일이 없었어도 해결 기록을 남긴다
+        chronicle.update_thread(topic, conclusion, resolved=True, resolution=conclusion)
+    else:
+        chronicle.open_thread(topic, f"모임에서 결론 없음 - {conclusion}" + (f" / 다음: {nxt}" if nxt else ""))
+    # 참가자 기억, 나머지 사람은 소식으로 (깨우지는 않는다 - 다음 판단 때 읽음)
+    names_in = result["participants"]
+    for p in people:
+        memory.remember(p["name"], f"{place}에서 '{topic}' 모임에 참석했다 - {conclusion}", 6,
+                        [n for n in names_in if n != p["name"]], "모임")
+    for a in agents:
+        if a["name"] not in names_in:
+            deliver(a["name"], f"'{topic}' 모임 소식: {conclusion}", "소식", quiet=True)
+    print(f"[에이전트] 모임 끝: {topic} -> {conclusion} ({'결정' if decided else '미결'})")
+    return result
+
+
 # ===================================================================== 매시 회차
 def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dict[str, dict]:
     """
@@ -640,6 +798,12 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     hk = _hour_key(now)
     routine_hints = routine_hints or {}
     by_name = {a["name"]: a for a in agents}
+
+    # 0) 연대기 - 새벽이 지났으면 어제 하루를 요약 (하루 한 번)
+    try:
+        chronicle.tick()
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 연대기 요약 실패: {e}")
 
     # 1) 세계 엔진 - 사건 계획/발생 (에이전트에게는 발생한 것만 전달)
     try:
@@ -683,7 +847,8 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         st["inbox"] = []  # 읽은 소식은 비운다 (기억/판단에 이미 반영)
         st["decision"] = d
         st.setdefault("log", []).append({k: d[k] for k in ("hour", "location", "activity", "state", "thought")})
-        st["log"] = st["log"][-MAX_LOG:]
+        st["log"] = st["log"][-MAX_LOG:]  # 최근 것만 지각용으로 - 전체는 연대기 보관함에 영구 보관
+        chronicle.record_action(name, d)
         decisions[name] = d
         fresh.append(name)
         print(f"[에이전트] {name}: {d['location']}에서 {d['activity']} ({d['state']}) - {d['thought']}")

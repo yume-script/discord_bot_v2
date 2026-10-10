@@ -11,6 +11,8 @@
   · /포링푸드사건 대상 내용 - 세계 엔진에 지금 사건을 넣는다 (대상: 에이전트/회사/동네, 쉼표로 여럿)
   · /포링푸드메시지 대상 내용 [보낸사람] - 에이전트 받은편지함에 메시지(귓속말)를 넣는다
   둘 다 "바로반영"(기본 켬)이면 일지/방송 없이 에이전트 회차만 바로 돌아서 받은 사람이 지금 반응한다.
+  · /포링푸드모임 주제 [참가자] [장소] [발언수] - 여러 에이전트가 한자리에 모여 돌아가며 말하고 결론을 낸다
+  · /포링푸드연대기 [날짜] - 그날 세계에서 있었던 일(하루 요약/원본 사건)과 진행 중인 일을 본다
 """
 from __future__ import annotations
 
@@ -158,9 +160,9 @@ class PoringFood(commands.Cog):
             return None
         return discord.Object(id=channel.id) if isinstance(channel, discord.Thread) else None
 
-    async def _run_once(self) -> bool:
-        """한 회차 실행. 이미 도는 중이면 False."""
-        if self._lock.locked():
+    async def _run_once(self, wait: bool = False) -> bool:
+        """한 회차 실행. 이미 도는 중이면 False (wait=True면 모임/관리자 개입이 끝날 때까지 기다렸다가 돈다)."""
+        if self._lock.locked() and not wait:
             return False
         async with self._lock:
             from poring_food import main as poring_main
@@ -176,8 +178,9 @@ class PoringFood(commands.Cog):
 
     @tasks.loop(time=RUN_TIMES)
     async def hourly(self) -> None:
-        if not await self._run_once():
-            log.warning("이전 포링푸드 회차가 아직 실행 중이라 이번 회차는 건너뜀")
+        if self._lock.locked():
+            log.info("모임/관리자 개입이 진행 중 - 끝나면 이번 회차를 이어서 실행")
+        await self._run_once(wait=True)
 
     @hourly.before_loop
     async def _before_hourly(self) -> None:
@@ -264,6 +267,61 @@ class PoringFood(commands.Cog):
             ephemeral=True)
         if 바로반영 and not asleep and not await self._agents_now():
             await interaction.followup.send("⏳ 다른 회차가 도는 중이라 다음 회차에 반응해요.", ephemeral=True)
+
+    async def _agents_csv_autocomplete(self, interaction: Interaction, current: str) -> list[app_commands.Choice[str]]:
+        from poring_food import agents
+        names = await asyncio.to_thread(lambda: [a["name"] for a in agents.load_agents()])
+        last = current.split(",")[-1].strip()
+        head = ",".join(p.strip() for p in current.split(",")[:-1] if p.strip())
+        out = []
+        for n in names:
+            if last in n and n not in head.split(","):
+                value = f"{head},{n}" if head else n
+                out.append(app_commands.Choice(name=value[:100], value=value[:100]))
+        return out[:25]
+
+    @app_commands.command(name="포링푸드모임", description="[관리자] 에이전트들이 한자리에 모여 토론하고 결론을 냅니다")
+    @app_commands.describe(주제="모임 주제 (예: 우리 동네 이름 짓기)", 참가자="에이전트 이름 쉼표로 (비우면 깨어 있는 동네 단톡방 멤버)",
+                           장소="모임 장소 (비우면 동네 주민센터 회의실)", 발언수="전체 발언 수 4~30 (기본 12)")
+    @app_commands.autocomplete(참가자=_agents_csv_autocomplete)
+    async def meeting(self, interaction: Interaction, 주제: str, 참가자: str = "", 장소: str = "",
+                      발언수: app_commands.Range[int, 4, 30] = 12):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
+            return
+        if self._lock.locked():
+            await interaction.response.send_message("⏳ 다른 회차가 도는 중이에요. 잠시 뒤에 다시 해 주세요.", ephemeral=True)
+            return
+        await interaction.response.send_message(f"🏛️ '{주제}' 모임을 엽니다. 대화 채널에서 진행돼요.", ephemeral=True)
+        from poring_food import agents
+        names = [n.strip() for n in 참가자.split(",") if n.strip()] or None
+        async with self._lock:
+            try:
+                res = await asyncio.to_thread(agents.run_meeting, 주제, names, 장소, 발언수)
+            except Exception:
+                log.exception("모임 실행 실패")
+                await interaction.followup.send("⚠️ 모임 진행 중 오류가 났어요. 로그를 확인해 주세요.", ephemeral=True)
+                return
+        if len(res["participants"]) < 2:
+            msg = "⚠️ 모일 수 있는 사람이 2명보다 적어요." + (f" (자는 중: {', '.join(res['asleep'])})" if res["asleep"] else "")
+        else:
+            msg = (f"🏛️ 모임 끝 ({res['lines']}마디) - {'✅ 결정' if res['decided'] else '⏸️ 미결'}: {res['conclusion']}"
+                   + (f"\n자는 중이라 빠짐: {', '.join(res['asleep'])}" if res["asleep"] else ""))
+        await interaction.followup.send(msg, ephemeral=True)
+
+    @app_commands.command(name="포링푸드연대기", description="[관리자] 그날 가상 세계에서 있었던 일과 진행 중인 일을 봅니다")
+    @app_commands.describe(날짜="2026-10-09, 10/09, 오늘, 어제 (비우면 어제)")
+    async def chronicle_view(self, interaction: Interaction, 날짜: str = ""):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
+            return
+        from poring_food import chronicle
+        date = chronicle.parse_date(날짜)
+        if not date:
+            await interaction.response.send_message("⚠️ 날짜 형식을 모르겠어요. 예: 2026-10-09, 10/09, 오늘, 어제", ephemeral=True)
+            return
+        text = await asyncio.to_thread(chronicle.lookup, date)
+        await interaction.response.send_message(text, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
