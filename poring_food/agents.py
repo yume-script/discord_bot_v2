@@ -27,7 +27,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, chronicle, life, memory, metrics, projects, runtime, signals, world
+from . import characters, chronicle, life, memory, metrics, projects, rotation, runtime, signals, world
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -75,6 +75,30 @@ GOSSIP_MESSENGER_FACTOR = 0.4  # 메신저 대화는 잘 안 샌다
 
 
 # ===================================================================== 목록/저장
+def _base_agents() -> list[dict]:
+    """agents.json 그대로 (교체 반영 전)."""
+    try:
+        with open(AGENTS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [a for a in data.get("agents", []) if isinstance(a, dict) and a.get("name")]
+
+
+def _rotate(now) -> None:
+    """[하루 한 번] 소속별로 에이전트 한 명 <-> 배경 인물 한 명 교체, 채널/연대기/당사자 기억에 남긴다."""
+    swaps = rotation.tick(_base_agents(), MAX_AGENTS)
+    if not swaps:
+        return
+    lines = [f"-# 🔄 {now.month}/{now.day} 오늘의 얼굴들"]
+    for company, out_name, in_name in swaps:
+        label = "동네" if company == rotation.TOWN_COMPANY else company.split(" ")[0]
+        lines.append(f"• {label}: **{in_name}** 씨가 나서고, {out_name} 씨는 한동안 조용히 지내요")
+        chronicle.record_event("교체", f"{in_name} 등장 / {out_name} 휴식", company, [in_name, out_name])
+        memory.remember(in_name, "요즘 들어 동네 일과 사람들에게 마음이 더 쓰인다. 내 하루를 내가 정해 보기로 했다.", 4, [], "교체")
+    _post_as("동네 소식", "\n".join(lines))
+
+
 def load_agents() -> list[dict]:
     try:
         with open(AGENTS_PATH, "r", encoding="utf-8") as f:
@@ -83,6 +107,7 @@ def load_agents() -> list[dict]:
         print(f"[경고] 에이전트 목록을 못 읽음: {e}")
         return []
     agents = [a for a in data.get("agents", []) if isinstance(a, dict) and a.get("name")]
+    agents = rotation.apply(agents)  # 하루 한 번 배경 인물과 자리를 바꾼 것 반영
     if len(agents) > MAX_AGENTS:
         print(f"[경고] 에이전트는 최대 {MAX_AGENTS}명 - 앞의 {MAX_AGENTS}명만 쓴다.")
     return agents[:MAX_AGENTS]
@@ -1179,6 +1204,13 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         chronicle.tick()
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 연대기 요약 실패: {e}")
+    # 0.5) 교체 - 하루 한 번 소속별로 에이전트와 배경 인물이 자리를 바꾼다
+    try:
+        _rotate(now)
+        agents = load_agents()
+        by_name = {a["name"]: a for a in agents}
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 에이전트 교체 실패: {e}")
 
     # 1) 세계 엔진 - 사건 계획/발생 (에이전트에게는 발생한 것만 전달)
     try:
