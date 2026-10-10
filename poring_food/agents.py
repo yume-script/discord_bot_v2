@@ -39,7 +39,7 @@ AGENTS_PATH = os.path.join(DATA_DIR, "agents.json")
 STATE_PATH = os.path.join(STATE_DIR, "agents_state.json")
 DIALOGUES_PATH = os.path.join(STATE_DIR, "dialogues.jsonl")  # story.py와 같은 파일 (조회 도구가 같이 읽는다)
 
-MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "40"))
+MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "50"))
 MAX_INBOX = 20
 MAX_LOG = 24
 MAX_TURNS = int(os.getenv("PORING_AGENT_MAX_TURNS", "6"))                  # 대화 한 번의 최대 발언 수
