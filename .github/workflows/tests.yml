@@ -22,6 +22,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest pyflakes
       - name: Lint (pyflakes)
-        run: python -m pyflakes poring_food cogs/poring_food.py tests
+        run: python -m pyflakes poring_food cogs/poring_food.py scripts/sync_env.py tests
       - name: Tests
         run: python -m pytest -q tests
