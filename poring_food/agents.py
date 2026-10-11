@@ -573,9 +573,22 @@ def _system(agent: dict) -> str:
         f"너는 '{agent['name']}'이다. 가상의 도시에서 실제로 살아가는 사람이며, 지금 이 순간 무엇을 할지 "
         "스스로 정한다. 너는 미래를 모른다 - 오늘 무슨 일이 생길지는 겪어 봐야 안다.\n"
         f"[나] {agent.get('profile', '')}\n[말투] {agent.get('speech', '')}\n"
+        "[연기 원칙]\n"
+        "- 너는 착하고 무난한 AI가 아니라 이 사람 자체다. 성격의 좋은 면만이 아니라 약점, 고집, 욕심, 질투, 귀찮음, "
+        "말버릇까지 그대로 드러내라. 모두가 서로 친절하고 맞장구치는 대화는 가짜다.\n"
+        "- 말할 때는 [말투]를 그대로 쓴다 - 사투리, 반말/존댓말, 입버릇, 말끝, 감탄사까지. 표준어 존댓말로 다듬거나 "
+        "상담원처럼 공손하게 바꾸지 마라. 설명하거나 요약하는 말투도 금지.\n"
+        "- 무엇을 하고 누구에게 연락하고 어떤 편을 들지도 이 사람의 성격과 처지대로 고른다.\n"
         "평소 루틴을 따르는 게 기본이지만, 지금 상태(피곤함/스트레스/설렘 등)와 새로 알게 된 일에 따라 "
         "충분히 벗어날 수 있다. 사람처럼 일관되게, 그러나 기계처럼 똑같지 않게 행동해라."
     )
+
+
+def _voice(agent: dict, other: str = "") -> str:
+    """말하는 프롬프트 맨 끝에 붙이는 말투 다짐 - 긴 지각 뒤에서 성격/말투가 묻히지 않게 (LLM은 끝에 있는 지시를 더 따른다)."""
+    target = f" 상대가 {other}이니 나와 {other}의 관계(나이/직급/친한 정도)에 맞는 반말/존댓말로." if other else ""
+    return (f"[말투 지키기] 나는 {agent['name']}: {agent.get('speech', '')}{target} "
+            "무난한 표준어 존댓말이나 착한 AI 말투로 바꾸지 말고, 내 성격(약점/고집/속마음 포함)이 말에 묻어나게.")
 
 
 # ===================================================================== 판단
@@ -637,7 +650,8 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "- 다른 사람에게 연락할 이유가 있으면(전할 말, 걱정, 반가움, 부탁, 그냥 수다) contact를 써라. "
         "억지로 매번 연락하지는 마라. 같은 장소에 있을 법하면 how를 '직접', 아니면 '메신저'.\n"
         "- 카톡 대화나 받은 소식으로 마음이 바뀌었으면 state_change에, 오래 기억할 일이면 memory에 적어라.\n"
-        + group_rule + meeting_rule +
+        + group_rule + meeting_rule
+        + "- contact의 opening과 group_post의 text는 내가 실제로 하는 말이다. " + _voice(agent) + "\n"
         "반드시 JSON으로만 응답:\n"
         '{"location": "지금 있는 곳", "activity": "하는 일(짧게)", '
         f'"state": "{"|".join(VALID_STATES)} 중 하나", '
@@ -763,6 +777,7 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
         "지금 하고 있는 일은 '지금' 일로 말하고, 기억 속 일은 날짜를 오늘과 비교해 오늘/어제/며칠 전을 정확히 말해라. "
         "자기가 직접 겪거나 들은 적 없는 남의 회사 내부 사정은 아는 척하지 마라. "
         + ("이번이 마지막 말이니 자연스럽게 마무리해라. " if last_turn else "대화가 자연스럽게 끝날 때가 됐으면 end를 true로. ")
+        + "\n" + _voice(agent, other["name"])
         + "\n반드시 JSON으로만 응답:\n"
         '{"say": "할 말(1~3문장)", "end": true/false, "affinity": -3~3 정수(이 대화로 상대에게 생긴 호감 변화), '
         f"{life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
@@ -924,6 +939,7 @@ def _meeting_turn(agent: dict, topic: str, place: str, people: list[dict], trans
         "질문하거나, 이야기를 정리해도 된다. 다른 사람 이름을 불러 의견을 물어도 된다. "
         + ("아직 말 안 한 사람이 있으면 그 사람 의견도 궁금해할 수 있다. " if len(spoken) < len(people) else "")
         + ("이번이 마지막 발언이니 결론 쪽으로 정리해라. " if last_turn else "")
+        + "모두가 같은 의견일 필요는 없다 - 내 이익/성격상 반대하거나 딴지 걸 일이면 그렇게 해라.\n" + _voice(agent)
         + "\n반드시 JSON으로만 응답:\n"
         '{"say": "할 말(1~3문장)", "stance": "제안/찬성/반대/질문/보충/정리 중 하나", '
         '"proposal": "새로 낸 구체적인 안이 있으면 짧게, 없으면 빈 문자열"}'
