@@ -1,10 +1,10 @@
 """
 세계 연대기 - 가상 세계에서 일어난 일은 지우지 않고 계속 쌓고, 그 위에 요약을 따로 만든다.
 
-1) 원본 영구 보관 (archive/, 덧붙이기만 하고 지우지 않음)
-   - events.jsonl   : 세계 사건(세계 엔진/관리자/담당 업무/모임 결론) 전부
-   - actions.jsonl  : 에이전트 매시 판단(어디서 무엇을, 속마음)
-   - memories.jsonl : 기억 정리(prune) 때 빠진 기억 - 지우지 않고 여기로 옮긴다
+1) 원본 영구 보관 (SQLite world.db - store.py, 지우지 않음)
+   - events  : 세계 사건(세계 엔진/소문/업무/모임/투표/프로젝트/교체/이사) 전부
+   - actions : 에이전트 매시 판단(어디서 무엇을, 속마음)
+   - 기억 정리(prune) 때 빠진 기억은 지우지 않고 보관 표시만 한다 (memories.archived)
    대화 원문(dialogues.jsonl)과 단톡방(group_chat.jsonl)은 원래 지우지 않는 파일이라 그대로 쓴다.
 2) 요약 (chronicle.jsonl, 영구 보관)
    - 매일 새벽(DAILY_FROM_HOUR 이후 첫 회차) 어제 하루를 LLM이 한 번 요약한다: 주요 사건/누가 무엇을/관계 변화
@@ -23,16 +23,13 @@ import os
 import uuid
 from datetime import datetime, timedelta
 
+from . import store
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
 from .llm import llm_json
 
-ARCHIVE_DIR = os.path.join(STATE_DIR, "archive")
-EVENTS_PATH = os.path.join(ARCHIVE_DIR, "events.jsonl")
-ACTIONS_PATH = os.path.join(ARCHIVE_DIR, "actions.jsonl")
-MEMORY_ARCHIVE_PATH = os.path.join(ARCHIVE_DIR, "memories.jsonl")
 CHRONICLE_PATH = os.path.join(STATE_DIR, "chronicle.jsonl")
 THREADS_PATH = os.path.join(STATE_DIR, "threads.json")
 DIALOGUES_PATH = os.path.join(STATE_DIR, "dialogues.jsonl")
@@ -72,31 +69,22 @@ def _read(path: str, date: str | None = None, key: str = "at") -> list[dict]:
 
 # ===================================================================== 원본 기록
 def record_event(kind: str, title: str, detail: str, targets: list[str] | None = None, **extra) -> None:
-    """세계에서 일어난 일 하나 (종류: 세계/소문/관리자/업무/모임 ...)."""
-    _append(EVENTS_PATH, {"at": now_kst().isoformat(timespec="minutes"), "kind": kind, "title": title,
-                          "detail": detail, "targets": targets or [], **extra})
+    """세계에서 일어난 일 하나 (종류: 세계/소문/업무/모임/투표/프로젝트/교체/이사 ...). SQLite에 영구 보관."""
+    try:
+        store.add_event(now_kst().isoformat(timespec="minutes"), kind, title, detail, targets or [], extra)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 사건 기록 실패: {e}")
 
 
 def record_action(name: str, d: dict) -> None:
-    _append(ACTIONS_PATH, {"at": now_kst().isoformat(timespec="minutes"), "name": name,
-                           **{k: d.get(k, "") for k in ("location", "activity", "state", "thought", "plan")}})
-
-
-def archive_memories(mems: list[dict]) -> None:
-    """기억 정리 때 빠지는 기억들 - 지우지 않고 보관한다."""
-    if not mems:
-        return
     try:
-        os.makedirs(ARCHIVE_DIR, exist_ok=True)
-        with open(MEMORY_ARCHIVE_PATH, "a", encoding="utf-8") as f:
-            for m in mems:
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
-    except OSError as e:
-        print(f"[경고] 기억 보관 실패: {e}")
+        store.add_action(now_kst().isoformat(timespec="minutes"), name, d)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 행동 기록 실패: {e}")
 
 
 def archived_memories(name: str) -> list[dict]:
-    return [m for m in _read(MEMORY_ARCHIVE_PATH) if m.get("name") == name]
+    return store.memories(name, archived=True)
 
 
 # ===================================================================== 진행 중인 일
@@ -383,7 +371,7 @@ def entry(kind: str, key: str) -> dict | None:
 def _raw_day(date: str) -> str:
     """그날 원본을 요약 프롬프트용 글로 (글자 수 상한 안에서 중요한 것부터)."""
     parts = []
-    events = _read(EVENTS_PATH, date)
+    events = store.events_on(date)
     if events:
         parts.append("[사건]\n" + "\n".join(f"- {e['at'][11:16]} ({e.get('kind', '')}) {e['title']}: {e.get('detail', '')}"
                                            f" [{', '.join(e.get('targets') or [])}]" for e in events))
@@ -398,7 +386,7 @@ def _raw_day(date: str) -> str:
     if posts:
         parts.append("[단톡방]\n" + "\n".join(f"- {p['at'][11:16]} [{p.get('group', '')}] {p['name']}: {p['text'][:120]}"
                                              for p in posts))
-    acts = _read(ACTIONS_PATH, date)
+    acts = store.actions_on(date)
     if acts:
         by: dict[str, list[str]] = {}
         for a in acts:
@@ -546,7 +534,7 @@ def lookup(date: str) -> str:
         if c.get("highlights"):
             parts.append("\n".join(f"• {h}" for h in c["highlights"]))
     else:
-        events = _read(EVENTS_PATH, date)
+        events = store.events_on(date)
         scenes = _read(DIALOGUES_PATH, date, key="ts")
         posts = _read(GROUP_PATH, date)
         parts.append("(아직 요약 전 - 원본 기록)")
