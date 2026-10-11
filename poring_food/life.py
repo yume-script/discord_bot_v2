@@ -167,6 +167,19 @@ def apply_changes(name: str, deltas: dict, reason: str = "", rank: str = "") -> 
     return applied
 
 
+def give_money(name: str, amount: int, reason: str = "", rank: str = "") -> int:
+    """규칙으로 정해진 돈 (실적 보너스 등). LLM 출력으로는 부르지 않는다. 반환: 바뀐 뒤 잔액."""
+    data = _load()
+    st = _ensure(data, name, rank)
+    st["money"] = int(st.get("money", 0)) + int(amount)
+    if reason:
+        st.setdefault("recent", []).append({"at": now_kst().isoformat(timespec="minutes"), "reason": reason[:80],
+                                            "deltas": {"money": int(amount)}})
+        st["recent"] = st["recent"][-MAX_RECENT:]
+    _save(data)
+    return st["money"]
+
+
 def apply_feedback(name: str, out: dict, source: str, rank: str = "") -> None:
     """일지/장면 LLM 출력의 state_change를 반영한다 (형식이 틀리면 조용히 무시)."""
     change = out.get("state_change") if isinstance(out, dict) else None

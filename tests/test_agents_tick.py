@@ -26,7 +26,7 @@ def _quiet(monkeypatch):
     monkeypatch.setattr(agents, "TYPING_DELAY", (0, 0))
     monkeypatch.setattr(agents.world, "tick", lambda *a, **k: [])
     monkeypatch.setattr(agents.chronicle, "tick", lambda: None)
-    monkeypatch.setattr(agents.metrics, "part", lambda k: None)
+    monkeypatch.setattr(agents.kpi, "reading", lambda p: None)
     monkeypatch.setattr(agents.rotation, "tick", lambda *a, **k: [])
     monkeypatch.setattr(agents.newcomers, "due", lambda *a, **k: False)
     base = agents.load_agents

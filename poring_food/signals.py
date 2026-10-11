@@ -75,10 +75,30 @@ def refresh_live() -> None:
         return
     cache = _load_cache()
     at = datetime.now(KST).isoformat()
-    for key, text in live.items():
-        cache[f"live_{key}"] = {"text": text, "at": at}
+    for key, value in live.items():
+        if isinstance(value, dict):  # 설비 숫자 (담당 실적용)
+            cache[f"live_{key}"] = {"value": value, "at": at}
+        else:
+            cache[f"live_{key}"] = {"text": value, "at": at}
     _save_cache(cache)
     print(f"[신호] MCP 실측값 갱신: {', '.join(live)}")
+
+
+def live_value(key: str) -> dict:
+    """refresh_live가 받아 둔 숫자 값 (예: "facility_numbers"). 오래됐거나 없으면 {}."""
+    entry = _load_cache().get(f"live_{key}") or {}
+    try:
+        fresh = datetime.now(KST) - datetime.fromisoformat(entry.get("at", "")) <= LIVE_MAX_AGE
+    except (TypeError, ValueError):
+        return {}
+    return (entry.get("value") or {}) if fresh else {}
+
+
+def weather_text() -> str:
+    """지금 날씨 한 줄 (기상청 실측 우선, 없으면 일지가 검색한 날씨). 없으면 빈 문자열."""
+    now, cache = datetime.now(KST), _load_cache()
+    return (_fresh(cache.get("live_weather", {}), now, LIVE_MAX_AGE)
+            or _fresh(cache.get("weather", {}), now, WEATHER_MAX_AGE))
 
 
 def _fresh(entry: dict, now: datetime, max_age: timedelta) -> str:

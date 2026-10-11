@@ -1,5 +1,5 @@
 {
-  "_설명": "포링푸드 LLM 에이전트(스스로 판단하는 인물) 목록. 최대 PORING_AGENT_MAX명(기본 12). account는 디스코드 보조 계정 키(.env SIDE_BOT_KEYS, {KEY}_BOT_TOKEN) - 비우면 봇 토큰 없이 채널 웹훅으로 이름/아바타를 바꿔 말한다. decide_every는 몇 시간마다 판단하는지(사건/메시지를 받으면 바로 깨어남). sleep은 [잠드는 시, 깨는 시]. routine은 평소 루틴(상태/사건에 따라 벗어날 수 있다).",
+  "_설명": "포링푸드 LLM 에이전트(스스로 판단하는 인물) 목록. 최대 PORING_AGENT_MAX명(기본 12). account는 디스코드 보조 계정 키(.env SIDE_BOT_KEYS, {KEY}_BOT_TOKEN) - 비우면 봇 토큰 없이 채널 웹훅으로 이름/아바타를 바꿔 말한다. decide_every는 몇 시간마다 판단하는지(사건/메시지를 받으면 바로 깨어남). sleep은 [잠드는 시, 깨는 시]. routine은 평소 루틴(상태/사건에 따라 벗어날 수 있다). trade(카페/포장마차)는 날씨 장사(kpi.weather_trade). 담당 업무(실적)는 여기가 아니라 kpi.py의 자리(부서)에 붙는다.",
   "agents": [
     {
       "name": "애순이",
@@ -18,17 +18,13 @@
       ],
       "groups": [
         "동네 단톡방"
-      ],
-      "duty": {
-        "metric": "books",
-        "line": "일반/웹툰 라인",
-        "source": "북오아시스 general 서재 오늘 입고 권 수"
-      }
+      ]
     },
     {
       "name": "소라",
       "account": "sora",
       "company": "카페 오후세시",
+      "trade": "카페",
       "sleep": [
         1,
         7
@@ -58,12 +54,7 @@
       "decide_every": 2,
       "hangouts": [
         "포장마차 단밤"
-      ],
-      "duty": {
-        "metric": "books_adult",
-        "line": "스페셜 라인",
-        "source": "북오아시스 adult(성인/화보) 서재 오늘 입고 권 수 - 이야기에는 '스페셜 라인'으로만"
-      }
+      ]
     },
     {
       "name": "오상식",
@@ -115,12 +106,7 @@
       "decide_every": 2,
       "hangouts": [
         "카페 오후세시"
-      ],
-      "duty": {
-        "metric": "plex",
-        "line": "영상 라인",
-        "source": "Plex 오늘 신규 등록 영상 수"
-      }
+      ]
     },
     {
       "name": "권민우",
@@ -609,6 +595,7 @@
     {
       "name": "양관식",
       "company": "광주 동네 상가",
+      "trade": "포장마차",
       "sleep": [
         23,
         5
