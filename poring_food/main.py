@@ -71,6 +71,14 @@ def _npc_only(roster: list, states: dict) -> tuple[list, dict]:
     return npc_roster, {cid: s for cid, s in states.items() if cid in ids}
 
 
+def _post_town_view(states: dict) -> None:
+    """에이전트+배경 인물 전원이 지금 어디서 뭘 하는지 장소별로 대화 채널에 (실패해도 회차는 계속)."""
+    try:
+        agents.post_town_view(states)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 동네 풍경 실패: {e}")
+
+
 def _run_world_tick(aesun_status: dict) -> None:
     """
     [취침 중 전용] 애순이가 자는 시간엔 스포트라이트 로테이션 없이, 상태 갱신과 상호작용만
@@ -93,6 +101,7 @@ def _run_world_tick(aesun_status: dict) -> None:
     }
     states = characters.update_all_states(roster, rnd, aesun_state=aesun_state, overrides=_agent_overrides())
     print(f"[다인물] {len(states)}명 상태 갱신 완료")
+    _post_town_view(states)
     _run_world_tick_common(roster, roster_map, states, rnd)
 
 
@@ -284,6 +293,7 @@ def main():
     aesun_light_state = {"location": location, "activity": activity, "state": state, "updated_at": now_str}
     states = characters.update_all_states(roster, rnd, aesun_state=aesun_light_state,
                                           overrides=_agent_overrides()) if roster else {}
+    _post_town_view(states)
     spotlight = _pick_spotlight(roster, states, rnd, aesun_awake=True) if roster else "애순이"
 
     is_aesun_spotlight = not isinstance(spotlight, dict)

@@ -43,7 +43,8 @@ MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "50"))
 MAX_INBOX = 20
 MAX_LOG = 24
 MAX_TURNS = int(os.getenv("PORING_AGENT_MAX_TURNS", "6"))                  # 대화 한 번의 최대 발언 수
-MAX_CONVOS_PER_DAY = int(os.getenv("PORING_AGENT_MAX_CONVOS_PER_DAY", "12"))
+MAX_CONVOS_PER_DAY = int(os.getenv("PORING_AGENT_MAX_CONVOS_PER_DAY", "48"))
+MAX_CONVOS_PER_HOUR = int(os.getenv("PORING_AGENT_CONVOS_PER_HOUR", "3"))       # 한 시간에 동시에 벌어지는 대화 수
 STATUS_DIGEST = os.getenv("PORING_AGENT_STATUS_DIGEST", "1") not in ("0", "false", "False", "")
 TYPING_DELAY = (float(os.getenv("PORING_AGENT_DELAY_MIN", "3")), float(os.getenv("PORING_AGENT_DELAY_MAX", "8")))
 DECIDE_TIMEOUT_SEC = 45
@@ -227,6 +228,7 @@ def run_agents_only() -> None:
     from . import processor  # 일지 쪽 모듈 - 에이전트 회차만 돌 때만 필요
     location, activity, _focus, state, _sleeping = processor.get_aesun_detailed_schedule()
     tick(characters.load_roster(), {"애순이": f"{location}에서 {activity} ({state})"})
+    post_town_view()
 
 
 def _hour_key(now) -> str:
@@ -1313,34 +1315,45 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         convo.update({"date": today, "count": 0, "hours": []})
     pushed_contacts = [(n, decisions[n]) for n in pushed
                        if n in decisions and (decisions[n].get("contact") or {}).get("to")]
-    if (hk not in convo["hours"] or pushed_contacts) and convo["count"] < MAX_CONVOS_PER_DAY:
-        # 연락하려는 사람이 여럿이면 매번 같은 사람이 먼저 되지 않게 섞는다
-        order = list(decisions.items())
-        random.Random(hk).shuffle(order)
-        if hk in convo["hours"]:
-            order = pushed_contacts  # 이번 시간 대화는 이미 있었다 - 관리자 개입으로 깨어난 사람만
-        for name, d in order:
-            c = d.get("contact")
-            if not c or c.get("done"):
-                continue
-            target = by_name.get(c["to"])
-            if not target:
-                continue
-            if _asleep(target, now.hour):
-                # 자고 있으면 메시지만 남긴다 - 깨어나서 받은편지함에서 본다
-                _post(by_name[name], f"-# 📱 메신저 · {now.strftime('%H:%M')} · {name} → {target['name']}\n{c['opening']}")
-                _push_inbox(data, target["name"], f"{name}에게서 온 메시지: {c['opening']}", "메시지")
-            else:
-                place = d.get("location") or "어딘가"
-                scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place)
-                for who, text in scene.get("gossip", []):
-                    _push_inbox(data, who, text, "소문")
-                    print(f"[에이전트] 소문: {who} <- {text}")
-            c["done"] = True
-            data.setdefault(name, {}).setdefault("decision", d)["contact"] = c
-            convo["count"] += 1
-            convo["hours"].append(hk)
+    per_hour = convo.setdefault("per_hour", {})
+    used = per_hour.get(hk, 0) + convo["hours"].count(hk) * (0 if hk in per_hour else 1)  # 예전 기록 호환
+    # 한 시간에 MAX_CONVOS_PER_HOUR개까지 (한 사람은 한 시간에 한 대화만). 다 찼어도 관리자 개입으로 깨어난 사람은 한 번 더.
+    order = list(decisions.items())
+    random.Random(hk).shuffle(order)  # 연락하려는 사람이 여럿이면 매번 같은 사람이 먼저 되지 않게
+    if used >= MAX_CONVOS_PER_HOUR:
+        order = pushed_contacts
+    busy_now: set[str] = set()
+    for name, d in order:
+        if convo["count"] >= MAX_CONVOS_PER_DAY:
             break
+        if used >= MAX_CONVOS_PER_HOUR and name not in pushed:
+            break
+        c = d.get("contact")
+        if not c or c.get("done"):
+            continue
+        target = by_name.get(c["to"])
+        if not target or name in busy_now or target["name"] in busy_now:
+            continue
+        if _asleep(target, now.hour):
+            # 자고 있으면 메시지만 남긴다 - 깨어나서 받은편지함에서 본다
+            _post(by_name[name], f"-# 📱 메신저 · {now.strftime('%H:%M')} · {name} → {target['name']}\n{c['opening']}")
+            _push_inbox(data, target["name"], f"{name}에게서 온 메시지: {c['opening']}", "메시지")
+        else:
+            place = d.get("location") or "어딘가"
+            scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place)
+            for who, text in scene.get("gossip", []):
+                _push_inbox(data, who, text, "소문")
+                print(f"[에이전트] 소문: {who} <- {text}")
+        busy_now |= {name, target["name"]}
+        c["done"] = True
+        data.setdefault(name, {}).setdefault("decision", d)["contact"] = c
+        convo["count"] += 1
+        convo["hours"].append(hk)
+        used += 1
+        per_hour[hk] = used
+        if name in pushed:
+            pushed.discard(name)
+    convo["per_hour"] = {k: v for k, v in per_hour.items() if k.startswith(today)}
     # 3) 회사 단톡방 - 판단 때 group_post를 쓴 사람이 올린다 (시간당/하루 상한)
     gc = data.setdefault("_group", {})
     if gc.get("date") != today:
@@ -1378,22 +1391,81 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 자동 모임 실패: {e}")
 
-    # 5) 근황 - 이번 시간 새로 판단한 사람들이 어디서 뭘 하는지 한 메시지로 (대화 채널)
-    if STATUS_DIGEST and fresh:
-        _post_digest(now, [(by_name[n], decisions[n]) for n in fresh if n in decisions])
+    # 5) 근황 - 이번 시간 새로 판단한 사람은 "지금 동네는"(post_town_view, 배경 인물 상태 갱신 뒤 main이 올림)에 표시
+    _LAST_FRESH.clear()
+    _LAST_FRESH.update({"hour": hk, "names": list(fresh)})
     return decisions
 
 
-def _post_digest(now, items: list[tuple[dict, dict]]) -> None:
-    lines = [f"-# 🕒 {now.strftime('%H:%M')} 지금 다들 뭐 하나"]
-    for agent, d in items:
-        thought = d.get("thought", "")
-        thought = (thought[:45] + "…") if len(thought) > 45 else thought
-        lines.append(f"• **{agent['name']}** · {d['location']} — {d['activity']}" + (f" *({thought})*" if thought else ""))
-    # 사람이 많은 시간엔 한 메시지(2000자)를 넘는다 - 줄 단위로 나눠 보낸다
+_LAST_FRESH: dict = {}
+_PLACES = [  # 장소 이름이 제각각이라 묶어서 보여 준다 (앞에 있는 게 먼저)
+    (("오후세시", "동네 카페"), "☕ 카페 오후세시"), (("단밤", "포장마차"), "🏮 포장마차 단밤"), (("헬스",), "💪 동네 헬스장"),
+    (("편의점",), "🏪 동네 편의점"), (("남숙반점", "중국집"), "🥟 남숙반점"), (("치과",), "🦷 치과"),
+    (("주민센터",), "🏛️ 주민센터"), (("시장", "반찬가게", "생선가게"), "🧺 시장"), (("횟집",), "🐟 횟집"),
+    (("LP", "엘피"), "🎸 LP바"), (("학원",), "📚 학원"), (("병원", "의원"), "🏥 병원"), (("공원", "산책", "바닷가"), "🌳 공원·산책"),
+    (("포링푸드",), "🏭 포링푸드"), (("에린",), "🚚 에린 로지스틱스"), (("골목",), "🏘️ 골목"),
+    (("집", "자택", "원룸", "자취방", "거실", "방에서", "침대"), "🏠 집"),
+]
+
+
+def _place_label(loc: str) -> str:
+    loc = loc or ""
+    for keys, label in _PLACES:
+        if any(k in loc for k in keys):
+            return label
+    return "📍 " + (loc[:14] or "어딘가")
+
+
+def post_town_view(states: dict | None = None) -> None:
+    """
+    [매시] "지금 동네는" - 에이전트와 배경 인물 전원이 어디서 뭘 하는지 장소별로 (대화 채널, "동네 소식").
+    states: characters.update_all_states 결과 (없으면 저장된 것). 에이전트는 스스로 정한 행동, 배경 인물은 규칙 일정.
+    이번 시간 새로 판단한 에이전트는 🆕, 그중 몇 명은 속마음 한 줄도.
+    """
+    if not STATUS_DIGEST:
+        return
+    states = states if states is not None else characters.load_states()
+    if not states:
+        return
+    now = now_kst()
+    agent_names = names()
+    fresh = set(_LAST_FRESH.get("names", [])) if _LAST_FRESH.get("hour") == _hour_key(now) else set()
+    groups: dict[str, list[str]] = {}
+    asleep = 0
+    seen = set()
+    for info in states.values():
+        name = info.get("name", "")
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        if info.get("state") == "자는 중":
+            asleep += 1
+            continue
+        label = _place_label(info.get("location", ""))
+        act = str(info.get("activity") or "").strip()
+        if name in agent_names:
+            entry = f"**{name}**{'🆕' if name in fresh else ''} {act[:20]}"
+        else:
+            entry = f"{name}" + (f"({act[:10]})" if act and label != "🏠 집" else "")
+        groups.setdefault(label, []).append(entry)
+    awake = sum(len(v) for v in groups.values())
+    lines = [f"-# 🕒 {now.strftime('%H:%M')} 지금 동네는 - 깨어 있는 {awake}명 · 자는 중 {asleep}명"]
+    order = [label for _, label in _PLACES]
+    for label in sorted(groups, key=lambda x: (order.index(x) if x in order else len(order), x)):
+        lines.append(f"{label} — " + ", ".join(groups[label]))
+    thoughts = []
+    picks = sorted(fresh)
+    random.Random(_hour_key(now)).shuffle(picks)  # 매시간 다른 사람 속마음
+    for n in picks:
+        d = current(n) or {}
+        if d.get("thought"):
+            t = d["thought"]
+            thoughts.append(f"💭 {n}: *{(t[:50] + '…') if len(t) > 50 else t}*")
+    lines += thoughts[:6]
+    # 한 메시지(2000자)를 넘으면 줄 단위로 나눠 보낸다 (아주 긴 장소 줄은 자른다)
     chunks, cur = [], ""
     for line in lines:
-        line = line[:300]
+        line = line[:900]
         if cur and len(cur) + len(line) + 1 > 1900:
             chunks.append(cur)
             cur = ""
@@ -1401,13 +1473,13 @@ def _post_digest(now, items: list[tuple[dict, dict]]) -> None:
     if cur:
         chunks.append(cur)
     if not runtime.has_agent_sender():
-        print("[에이전트] (채널 미설정) 근황\n" + "\n".join(chunks))
+        print("[에이전트] (채널 미설정) 지금 동네는\n" + "\n".join(chunks))
         return
     for text in chunks:
         try:
             runtime.send_as("", "동네 소식", text, "")
         except Exception as e:  # noqa: BLE001
-            print(f"[경고] 근황 전송 실패: {e}")
+            print(f"[경고] 동네 풍경 전송 실패: {e}")
             return
 
 
