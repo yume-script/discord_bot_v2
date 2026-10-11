@@ -37,18 +37,6 @@ from .config import (
 # 회사가 다른 인물끼리 같은 장소에 있을 확률은 낮게, 보통은 자기 회사 사람들끼리 마주치게
 # 하고 싶어서 "회사 사무실"은 회사명을 붙여 서로 다른 장소로 취급한다. 아래 개인 활동
 # 장소들은 회사 구분 없이 공용 - 라이벌 회사 인물이라도 카페/영화관 같은 데서는 마주칠 수 있다.
-GENERIC_PERSONAL_ACTIVITIES = [
-    ("영화관", "영화 감상", 2),
-    ("동네 카페", "지인과 커피 타임", 2),
-    ("서점", "책 구경", 1),
-    ("헬스장/공원", "운동", 1),
-    ("맛집", "맛집 탐방", 2),
-    ("집", "휴식", 3),
-    ("소개팅 장소", "소개팅/데이트", 1),
-    ("쇼핑몰", "쇼핑", 1),
-    ("친구 집", "친구 모임", 1),
-    ("포장마차", "퇴근 후 술 한잔", 1),
-]
 
 
 def _weighted_choice(rnd: random.Random, candidates):
@@ -118,30 +106,139 @@ def roster_by_id(roster: list[dict]) -> dict[str, dict]:
 
 
 # ============================================================= 개별 스케줄 (LLM 없이, 가벼움)
+# 배경 인물마다 나이대/직업을 조직도(직책/부서/겉모습/속마음/회사)에서 짐작해서 그에 맞는 하루를 산다.
+# 초등학생은 학교-학원-놀이터, 할머니는 새벽 산책-경로당-시장, 포장마차 사장은 저녁부터 새벽까지 장사,
+# 간호사/순경은 교대 근무... (예전엔 모두가 회사원처럼 7~18시 사무실, 저녁엔 소개팅/술자리였다)
+KID_ACTIVITIES = [("놀이터", "친구들과 놀기", 3), ("집", "숙제", 2), ("집", "만화 보기", 2), ("골목", "자전거 타기", 1),
+                  ("동네 편의점", "군것질", 1), ("학원", "피아노 학원", 1)]
+TEEN_ACTIVITIES = [("동네 편의점", "친구들과 컵라면", 2), ("집", "게임", 2), ("PC방", "게임", 1), ("집", "숙제", 2),
+                   ("골목", "친구들과 수다", 1), ("노래방", "친구들과 노래방", 1)]
+YOUNG_ACTIVITIES = [("동네 카페", "과제/공부", 2), ("집", "유튜브 보기", 2), ("동네 편의점", "야식 사기", 1),
+                    ("포장마차", "친구들과 한잔", 1), ("헬스장/공원", "운동", 1), ("영화관", "영화 감상", 1), ("집", "휴식", 2)]
+ELDER_ACTIVITIES = [("경로당", "화투 치기", 3), ("공원", "산책", 2), ("시장", "장 구경", 2), ("집", "TV 드라마 보기", 3),
+                    ("골목 평상", "이웃과 수다", 2), ("텃밭", "텃밭 가꾸기", 1), ("동네 병원", "물리치료", 1)]
+GENERIC_PERSONAL_ACTIVITIES = [
+    ("영화관", "영화 감상", 2),
+    ("동네 카페", "지인과 커피 타임", 2),
+    ("서점", "책 구경", 1),
+    ("헬스장/공원", "운동", 1),
+    ("맛집", "맛집 탐방", 2),
+    ("집", "휴식", 3),
+    ("소개팅 장소", "소개팅/데이트", 1),
+    ("쇼핑몰", "쇼핑", 1),
+    ("친구 집", "친구 모임", 1),
+    ("포장마차", "퇴근 후 술 한잔", 1),
+]
+PERSONAL_BY_TYPE = {"child": KID_ACTIVITIES, "teen": TEEN_ACTIVITIES, "student": YOUNG_ACTIVITIES,
+                    "elder": ELDER_ACTIVITIES}
+
+# (유형, 찾을 말들) - 앞에 있는 게 먼저
+_TYPE_RULES = [
+    ("child", ("초등학생", "꼬마", "어린이")),
+    ("teen", ("고등학생", "중학생")),
+    ("student", ("대학생", "재수생", "수험생", "장수생", "대학원생", "취준생")),
+    ("elder", ("할머니", "할아버지", "은퇴", "노인", "경로당", "70대", "80대")),
+    ("nurse", ("간호사",)),
+    ("medic", ("의사", "전공의", "원장", "치위생사", "약사")),
+    ("police", ("순경", "경찰")),
+    ("public", ("동장", "통장", "공무원", "주민센터")),
+    ("shop", ("사장", "주방장", "미용실", "반점", "포장마차", "생선가게", "반찬가게", "횟집", "가게")),
+    ("freelance", ("작가", "PD", "화가", "강사", "변호사", "정비공", "택배", "기사", "가수")),
+]
+_WORKPLACES = [  # (찾을 말, 일하는 곳)
+    ("미용실", "골목 미용실"), ("반점", "남숙반점"), ("중국집", "남숙반점"), ("포장마차", "포장마차 단밤"),
+    ("생선", "시장 생선가게"), ("반찬", "시장 반찬가게"), ("횟집", "화정 횟집"), ("LP", "골목 LP바"),
+    ("배달", "배달대행 사무실"), ("치위생사", "동네 치과"), ("치과", "동네 치과"), ("약사", "동네 약국"),
+    ("간호사", "대학병원"), ("전공의", "대학병원"), ("의사", "대학병원"), ("순경", "지구대"), ("동장", "주민센터"),
+    ("통장", "주민센터"), ("방송작가", "방송국 작업실"), ("작가", "작업실"), ("PD", "촬영 현장"), ("화가", "미술학원"),
+    ("강사", "학원"), ("변호사", "법률사무소"), ("정비공", "카센터"), ("택배", "골목 배송 중"), ("기사", "골목 배송 중"),
+    ("가수", "골목 LP바"), ("대학원생", "대학 연구실"), ("대학생", "대학교"), ("고등학생", "고등학교"),
+    ("초등학생", "초등학교"), ("재수생", "독서실"), ("수험생", "독서실"), ("장수생", "독서실"),
+]
+# 유형별 하루: sleep=(잠드는 시각, 일어나는 시각), work=[(시작, 끝)...] (끝 미포함), weekend=주말에도 일하나
+_DAY = {
+    "child":     {"sleep": (21, 7), "work": [(8, 14)], "weekend": False, "after": [(14, 16, "학원", "영어 학원")]},
+    "teen":      {"sleep": (0, 7), "work": [(8, 16)], "weekend": False, "after": [(17, 22, "학원", "학원 수업")]},
+    "student":   {"sleep": (2, 9), "work": [(10, 18)], "weekend": False},
+    "elder":     {"sleep": (21, 5), "work": [], "weekend": False, "after": [(5, 7, "공원", "새벽 산책")]},
+    "nurse":     {"shift": True},
+    "medic":     {"sleep": (0, 7), "work": [(8, 19)], "weekend": False},
+    "police":    {"shift": True},
+    "public":    {"sleep": (0, 7), "work": [(9, 18)], "weekend": False},
+    "freelance": {"sleep": (2, 9), "work": [(11, 20)], "weekend": False},
+    "office":    {"sleep": (0, 7), "work": [(7, 18)], "weekend": False},
+}
+_SHOP_HOURS = {"포장마차 단밤": ([(17, 24), (0, 2)], (3, 11)), "골목 LP바": ([(18, 24), (0, 2)], (3, 11)),
+               "시장 생선가게": ([(5, 18)], (21, 4)), "시장 반찬가게": ([(6, 19)], (21, 5)),
+               "골목 미용실": ([(10, 20)], (0, 8)), "배달대행 사무실": ([(11, 23)], (2, 9)),
+               "남숙반점": ([(10, 22)], (1, 8))}
+_TYPE_CACHE: dict[str, tuple[str, str]] = {}
+
+
+def life_type(character: dict) -> tuple[str, str]:
+    """(유형, 일하는 곳) - 조직도 직책/부서/설정/회사에서 짐작한다."""
+    key = character.get("id") or character.get("name", "")
+    if key in _TYPE_CACHE:
+        return _TYPE_CACHE[key]
+    head = f"{character.get('rank', '')} {character.get('dept', '')}"
+    text = f"{head} {character.get('outer_persona', '')} {character.get('inner_truth', '')}"
+    company = character.get("company", "")
+    kind = next((t for t, words in _TYPE_RULES if any(w in head for w in words)), None)
+    if not kind and company in ("포링푸드 (Poring Food)", "에린 로지스틱스 (Erinn Logistics)"):
+        kind = "office"  # 회사 사람은 설정 문장보다 소속이 먼저 ("화가 나서" 같은 말에 걸리지 않게)
+    kind = kind or next((t for t, words in _TYPE_RULES if any(w in text for w in words)), None) or "freelance"
+    place = next((p for w, p in _WORKPLACES if w in head), None) or next((p for w, p in _WORKPLACES if w in text), None)
+    if kind == "office" or not place:
+        place = {"office": f"{company or '회사'} 사무실", "shop": "골목 가게", "elder": "경로당", "public": "주민센터",
+                 "medic": "동네 병원", "child": "초등학교", "teen": "고등학교", "student": "대학교"}.get(kind, "동네 작업실")
+    _TYPE_CACHE[key] = (kind, place)
+    return kind, place
+
+
+def _in(hour: int, ranges) -> bool:
+    return any(a <= hour < b for a, b in ranges)
+
+
+def _asleep(hour: int, sleep: tuple[int, int]) -> bool:
+    s, e = sleep
+    return s <= hour < e if s <= e else (hour >= s or hour < e)
+
+
 def get_generic_schedule(character: dict, rnd: random.Random, life_state: dict | None = None) -> tuple[str, str, str]:
     """
-    애순이를 제외한 인물들의 스케줄. (location, activity, state)를 반환.
-    업무 시간엔 그 인물의 key_behavior(조직도에 있는, 콤마로 구분된 2~3개 행동) 중
-    하나를 그대로 활동으로 쓰고, 그 외 시간엔 공용 개인활동 풀에서 가중치 랜덤으로 고른다.
+    배경 인물의 (location, activity, state). 나이대/직업 유형(life_type)에 맞는 하루를 산다 -
+    잠, 일(학교/가게/병원/사무실...), 그 밖의 시간은 유형에 맞는 개인 활동(life.py 상태로 가중치 조정).
     """
     now = now_kst()
     hour = now.hour
-    is_weekend = now.weekday() >= 5  # 토/일 - 애순이와 달리 다른 인물은 토요일 특근 디테일 없음
-
-    if 0 <= hour < 7:
+    weekend = now.weekday() >= 5
+    kind, place = life_type(character)
+    day = _DAY.get(kind, _DAY["office"])
+    work, sleep, weekend_work = day.get("work", []), day.get("sleep", (0, 7)), day.get("weekend", False)
+    if kind == "shop":
+        work, sleep = _SHOP_HOURS.get(place, ([(10, 21)], (1, 8)))
+        weekend_work = True
+    if day.get("shift"):  # 교대 근무: 주간 / 야간 / 비번이 날마다 돈다 (사람마다 어긋나게)
+        turn = (now.toordinal() + sum(map(ord, character.get("name", "")))) % 3
+        work, sleep = ([(7, 19)], (23, 6)) if turn == 0 else ([(19, 24), (0, 7)], (8, 15)) if turn == 1 else ([], (0, 8))
+        weekend_work = True
+    if _asleep(hour, sleep):
         return "집", "잠자는 중", "자는 중"
-
-    # [수정] 원래 업무 시간이 9~18시였는데, 취침(0~7시)과의 사이에 7~8시가 아무 조건에도
-    # 안 걸려서 "출근 시간대인데 개인활동(소개팅 등) 중"으로 나오는 오류가 있었다.
-    # 취침 끝나는 시각과 바로 이어지게 7시부터 업무로 잡아서 그 공백을 없앴다.
-    if not is_weekend and 7 <= hour < 18:
+    if _in(hour, work) and (weekend_work or not weekend):
         behaviors = [b.strip() for b in character.get("key_behavior", "").split(",") if b.strip()]
-        act = rnd.choice(behaviors) if behaviors else "업무 처리 중"
-        workplace = f"{character.get('company', '회사')} 사무실"
-        return workplace, act, "일하는 중"
-
-    # [변경] 개인 시간 활동은 그 사람의 지금 상태(life.py)로 가중치를 조정한다 (스트레스↑ → 술자리 등)
-    candidates = GENERIC_PERSONAL_ACTIVITIES
+        default = {"child": "수업 듣기", "teen": "수업 듣기", "student": "공부"}.get(kind, "일하는 중")
+        act = rnd.choice(behaviors) if behaviors and kind not in ("child", "teen", "student") else default
+        return place, act, "일하는 중"
+    if hour < 10 and kind != "elder" and not day.get("shift"):  # 일 나가기 전 아침 (주말엔 늦잠/느긋한 아침)
+        if weekend:
+            return "집", "주말 늦잠 뒤 느긋한 아침", "개인시간"
+        return "집", ("등교 준비" if kind in ("child", "teen") else "아침 먹고 나갈 준비"), "개인시간"
+    if hour >= 22 and rnd.random() < 0.7:  # 밤늦게는 대부분 집에서 하루 마무리
+        return "집", "하루 마무리하며 쉬기", "개인시간"
+    for a, b, loc, act in day.get("after", []):
+        if a <= hour < b and not (weekend and kind in ("child", "teen")):
+            return loc, act, "개인시간"
+    candidates = PERSONAL_BY_TYPE.get(kind, GENERIC_PERSONAL_ACTIVITIES)
     if life_state:
         candidates = [(loc, act, life.bias_weight(life_state, f"{loc} {act}", w)) for loc, act, w in candidates]
     loc, act = _weighted_choice(rnd, candidates)
