@@ -55,6 +55,9 @@ deploy/     systemd 유닛 파일
    sudo systemctl enable --now discord_bot_v2.service
    ```
 3. 이후 업데이트 배포는 `scripts/git_pull_deploy.sh`가 `git pull` → 의존성 설치 → `systemctl restart discord_bot_v2.service`까지 처리한다 (서비스명이 위 유닛 파일과 일치해야 함).
+   배포 중에 `scripts/sync_env.py --apply`도 돌아서, `env.example`에 새로 생긴 변수를 `.env`에 기본값으로 채운다
+   (기존 값은 그대로, `.env`에만 있던 변수도 맨 아래에 그대로, 원래 파일은 `.env.bak.날짜시각`으로 백업). 끄려면 `SYNC_ENV=0`.
+   직접 돌릴 때: `venv/bin/python scripts/sync_env.py`(바뀔 내용만 보기) / `--apply`(적용) / `--check`(새 변수 있으면 종료 코드 1).
 
 ## 시작하기
 ```bash
