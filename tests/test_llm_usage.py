@@ -71,15 +71,15 @@ def test_erinn_llm_posts(monkeypatch):
     assert [p["id"] for p in posts["최택"]] == ["llm_requests"]
     assert [p["id"] for p in posts["동그라미"]] == ["llm_cost"]
     counts = {"llm_requests": {"today": 40, "avg": 100.0, "saturated": False, "pace": "평소보다 한산함", "failures": 12},
-              "llm_tokens": {"today": 5000, "avg": 10000.0, "saturated": False, "pace": "평소보다 한산함"}}
+              "llm_tokens": {"today": 1000, "avg": 10000.0, "saturated": False, "pace": "평소보다 한산함"}}
     monkeypatch.setattr(kpi.metrics, "count", lambda k: counts.get(k))
     req = kpi.reading(kpi.POST_BY_ID["llm_requests"])
     assert "처리 40건" in req["text"] and "실패 12건" in req["alert"]
     cost = kpi.reading(kpi.POST_BY_ID["llm_cost"])
-    assert "5,000토큰" in cost["text"] and not cost["alert"]
+    assert "1,000토큰" in cost["text"] and not cost["alert"]  # 몇 시에 돌려도 평소보다 적게 쓴 양
     kpi.record(datetime(2026, 10, 7, 23))
     rows = kpi._load()["daily"]["2026-10-07"]
-    assert rows["llm_cost"]["score"] == 200  # 평소의 절반만 썼다
+    assert rows["llm_cost"]["score"] == 200  # 평소의 1/10만 썼다 (상한 200)
     assert rows["llm_requests"]["score"] == 40
 
 
