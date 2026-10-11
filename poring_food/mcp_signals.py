@@ -32,6 +32,14 @@ WEATHER_LAT = float(os.getenv("PORING_WEATHER_LAT", "35.1595"))
 WEATHER_LON = float(os.getenv("PORING_WEATHER_LON", "126.8526"))
 # uvx로 뜨는 korea_weather는 첫 기동에 패키지 해석이 들어가서 넉넉하게 잡는다
 TIMEOUT_SEC = int(os.getenv("PORING_MCP_SIGNAL_TIMEOUT_SEC", "60"))
+# 이야기 속 "설비 온도"는 서버 센서 값을 화씨로 보고 섭씨로 바꿔서 쓴다 (95 -> 35°C).
+# 실제 서버 CPU 온도(섭씨)를 그대로 쓰면 미니 PC가 늘 90도대라 공장이 매시간 "과열 경보"가 된다.
+# 이야기용 표시만 바꾸는 것이고, 봇의 서버 상태 도구 등 다른 곳은 실제 값 그대로다. 0이면 실제 값.
+FACILITY_TEMP_AS_F = os.getenv("PORING_FACILITY_TEMP_AS_F", "1") not in ("0", "false", "False", "")
+
+
+def _story_temp(temp: float) -> float:
+    return round((temp - 32) * 5 / 9, 1) if FACILITY_TEMP_AS_F else temp
 
 
 # ---------------------------------------------------------------- 날씨 (korea_weather)
@@ -136,6 +144,8 @@ def describe_facility(status: dict, services: dict | None = None) -> str:
     disks = [d for d in disks if isinstance(d, (int, float))]
     disk = max(disks) if disks else None
     temp = _get(status, "temperature_c", "max")
+    if isinstance(temp, (int, float)):
+        temp = _story_temp(temp)
     days = _uptime_days(status.get("uptime"))
 
     parts, events = [], []

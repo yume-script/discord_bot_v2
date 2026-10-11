@@ -55,3 +55,13 @@ def test_shift_worker_has_night_and_off_days(monkeypatch):
     nurse = {"id": "n", "name": "간호사님", "rank": "간호사", "dept": "", "company": "광주 동네 상가", "key_behavior": "일"}
     states = {_schedule(monkeypatch, nurse, _at(d, 3))[2] for d in range(3)}
     assert "일하는 중" in states and "자는 중" in states
+
+
+def test_facility_temp_shown_as_fahrenheit_converted(monkeypatch):
+    from poring_food import mcp_signals
+    status = {"cpu": {"host_percent": 30}, "temperature_c": {"max": 95.0}}
+    monkeypatch.setattr(mcp_signals, "FACILITY_TEMP_AS_F", True)
+    line = mcp_signals.describe_facility(status)
+    assert "설비 온도 35°C" in line and "과열" not in line
+    monkeypatch.setattr(mcp_signals, "FACILITY_TEMP_AS_F", False)
+    assert "설비 과열 경보" in mcp_signals.describe_facility(status)
