@@ -72,3 +72,30 @@ def test_town_view_lists_everyone(fake_llm, monkeypatch, caplog):
     awake_bg = [st["name"] for st in states.values() if st["name"] not in agent_names and st.get("state") != "자는 중"]
     assert "지금 동네는" in out
     assert not awake_bg or any(n in out for n in awake_bg)
+
+
+def test_decide_all_runs_lanes_in_parallel_and_keeps_order(monkeypatch):
+    import threading
+    import time as _t
+    active = {"own": 0, "base": 0, "max_own": 0, "max_base": 0}
+    lock = threading.Lock()
+    own_names = {"소라", "김동식", "조이서"}
+    monkeypatch.setattr(agents, "agent_model", lambda n: "groq" if n in own_names else "")
+    monkeypatch.setattr(agents, "DECIDE_PARALLEL", 1)
+    monkeypatch.setattr(agents, "DECIDE_PARALLEL_OWN", 3)
+
+    def fake_decide(agent, st, hint, kakao, others):
+        lane = "own" if agent["name"] in own_names else "base"
+        with lock:
+            active[lane] += 1
+            active["max_" + lane] = max(active["max_" + lane], active[lane])
+        _t.sleep(0.05)
+        with lock:
+            active[lane] -= 1
+        return {"who": agent["name"]}
+    monkeypatch.setattr(agents, "_decide", fake_decide)
+    people = [{"name": n} for n in ("애순이", "소라", "오상식", "김동식", "조이서", "이지안")]
+    out = agents._decide_all([(p, {}, "", [], "") for p in people], people)
+    assert [d["who"] for d in out] == [p["name"] for p in people]  # 결과는 원래 순서대로
+    assert active["max_base"] == 1  # 기본 모델(분당 한도가 작은 무료 키)은 한 번에 한 명
+    assert active["max_own"] == 3   # 인물 전용 모델은 동시에

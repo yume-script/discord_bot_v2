@@ -32,7 +32,7 @@ from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import DATA_DIR, DISCORD_BOT_V2_DB_PATH, STATE_DIR
-from .llm import llm_json
+from .llm import agent_model, llm_json
 from config import settings as bot_settings
 
 AGENTS_PATH = os.path.join(DATA_DIR, "agents.json")
@@ -48,6 +48,12 @@ MAX_CONVOS_PER_HOUR = int(os.getenv("PORING_AGENT_CONVOS_PER_HOUR", "3"))       
 STATUS_DIGEST = os.getenv("PORING_AGENT_STATUS_DIGEST", "1") not in ("0", "false", "False", "")
 TYPING_DELAY = (float(os.getenv("PORING_AGENT_DELAY_MIN", "3")), float(os.getenv("PORING_AGENT_DELAY_MAX", "8")))
 DECIDE_TIMEOUT_SEC = 45
+# 매시 판단을 동시에 몇 명씩 할지 - 기본 모델(무료 Gemini는 분당 15회라 1)과 인물 전용 모델(groq 묶음은 여유가 있어 4)을
+# 따로 센다. 판단이 다 끝나야 대화가 시작되므로, 여기가 매시 회차에서 디스코드가 조용한 시간을 정한다.
+DECIDE_PARALLEL = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL", "1"))
+DECIDE_PARALLEL_OWN = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL_OWN", "4"))
+# 판단을 시작할 때 채널에 "생각하는 중" 한 줄 (대화가 올라오기까지 몇 분 걸려도 돌고 있는 걸 알 수 있게)
+PROGRESS_NOTICE = os.getenv("PORING_AGENT_PROGRESS", "1") not in ("0", "false", "False", "")
 VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
 
 # 단톡방 - 멤버만 보고 쓴다 (모두가 보는 곳이라 비밀 얘기는 안 쓴다)
@@ -661,6 +667,34 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "meeting_support": str(out.get("meeting_support") or "").strip()[:80] if pending else "",
         "project_work": _parse_project_work(out.get("project_work"), my_projects),
     }
+
+
+def _decide_all(jobs: list[tuple], agents: list[dict]) -> list[dict | None]:
+    """판단 여러 개를 동시에 (기본 모델 DECIDE_PARALLEL명, 인물 전용 모델 DECIDE_PARALLEL_OWN명씩 따로). 순서는 jobs 그대로.
+    _decide는 상태를 읽기만 하므로 동시에 돌려도 되고, 결과 반영은 호출한 쪽이 차례대로 한다."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def run(job):
+        agent, st, hint, kakao, _since = job
+        try:
+            return _decide(agent, st, hint, kakao, [o for o in agents if o is not agent])
+        except Exception as e:  # noqa: BLE001 - 한 사람 판단이 실패해도 나머지는 계속
+            print(f"[경고] 에이전트 {agent['name']} 판단 실패: {e}")
+            return None
+
+    lanes = {True: [], False: []}
+    for i, job in enumerate(jobs):
+        lanes[bool(agent_model(job[0]["name"]))].append(i)
+    results: list[dict | None] = [None] * len(jobs)
+    pools = {own: ThreadPoolExecutor(max(1, DECIDE_PARALLEL_OWN if own else DECIDE_PARALLEL)) for own in lanes if lanes[own]}
+    try:
+        futures = {i: pools[own].submit(run, jobs[i]) for own, idx in lanes.items() for i in idx}
+        for i, f in futures.items():
+            results[i] = f.result()
+    finally:
+        for pool in pools.values():
+            pool.shutdown(wait=True)
+    return results
 
 
 def _parse_project_work(raw, my_projects: list[dict]) -> dict | None:
@@ -1369,6 +1403,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     fresh: list[str] = []  # 이번 시간 새로 판단한 사람 (근황 요약용)
     pushed: set[str] = set()  # 관리자 사건/메시지로 다시 판단한 사람 - 이번 시간 대화를 이미 했어도 한 번 더 허용
     awake = [a for a in agents if not _asleep(a, now.hour)]
+    jobs = []
     for agent in awake:
         name = agent["name"]
         st = data.setdefault(name, {})
@@ -1382,8 +1417,16 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         if urgent:
             pushed.add(name)
         kakao, new_since = _kakao_digest(agent, st.get("kakao_since", ""))
-        others = [o for o in agents if o is not agent]
-        d = _decide(agent, st, routine_hints.get(name, ""), kakao, others)
+        jobs.append((agent, st, routine_hints.get(name, ""), kakao, new_since))
+    if jobs and PROGRESS_NOTICE:
+        _post_as("동네 소식", f"-# 🕒 {now.strftime('%H:%M')} 동네 사람 {len(jobs)}명이 이번 한 시간을 정하는 중… "
+                            "대화는 잠시 뒤에 올라와요")
+    started = time.time()
+    results = _decide_all(jobs, agents)
+    if jobs:
+        print(f"[에이전트] 판단 {len(jobs)}명 ({time.time() - started:.0f}초)")
+    for (agent, st, _hint, _kakao, new_since), d in zip(jobs, results):
+        name = agent["name"]
         st["kakao_since"] = new_since
         if not d:
             continue
