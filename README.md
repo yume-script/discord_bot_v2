@@ -32,6 +32,10 @@ deploy/     systemd 유닛 파일
    - `.env`가 실수로 커밋되지 않도록 이중으로 체크한다 (`.gitignore`가 1차 방어, 스크립트가 2차 확인).
    - `git init` → `git add .` → 초기 커밋 → `origin` 등록 → `git push -u origin main` 순서로 진행.
 
+## 별도 도구: 토론 시뮬레이터 (`debate/`)
+봇과 무관한 독립 스크립트. 정해 둔 인물들이 한 주제로 횟수 제한 없이 토론한다 (LiteLLM 등 OpenAI 호환 API, 표준 라이브러리만).
+`python3 debate/debate.py debate/debate.json` - 자세한 건 [`debate/README.md`](debate/README.md).
+
 ## MCP 서버 설정 (`config/mcp_servers.yaml`)
 - 이 파일은 git에 커밋되므로 **API 키/토큰을 직접 적지 않는다.** `PLEX_TOKEN: "${PLEX_TOKEN}"`처럼
   자리표시자로 쓰고 실제 값은 `.env`에 둔다 (`ai/mcp_manager.py`의 `prepare_server_config`가 치환,
