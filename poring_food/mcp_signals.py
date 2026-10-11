@@ -132,6 +132,27 @@ def _uptime_days(uptime) -> float | None:
     return days + h / 24 + mi / 1440
 
 
+def facility_numbers(status: dict, services: dict | None = None) -> dict:
+    """get_system_status(+get_service_status) 결과 -> 담당 실적(kpi.py)용 숫자. 없는 값은 빠진다.
+    {"cpu", "mem", "disk", "temp"(이야기용 섭씨), "uptime_days", "down": [멈춘 서비스 수]}"""
+    if not isinstance(status, dict) or not status:
+        return {}
+    cpu = _get(status, "cpu", "container_percent_of_machine")
+    if cpu is None:
+        cpu = _get(status, "cpu", "host_percent")
+    disks = [d.get("used_percent") for d in status.get("disks") or [] if isinstance(d, dict)]
+    disks = [d for d in disks if isinstance(d, (int, float))]
+    temp = _get(status, "temperature_c", "max")
+    out = {"cpu": cpu, "mem": _get(status, "memory", "used_percent"), "disk": max(disks) if disks else None,
+           "temp": _story_temp(temp) if isinstance(temp, (int, float)) else None,
+           "uptime_days": _uptime_days(status.get("uptime"))}
+    out = {k: round(float(v), 2) for k, v in out.items() if isinstance(v, (int, float))}
+    if out:
+        out["down"] = sum(1 for s in (services or {}).values()
+                          if isinstance(s, dict) and s.get("state") in ("failed", "inactive"))
+    return out
+
+
 def describe_facility(status: dict, services: dict | None = None) -> str:
     """get_system_status(+get_service_status) 결과 -> 공장 설비 한 줄. 값이 없으면 빈 문자열."""
     if not isinstance(status, dict) or not status:
@@ -183,7 +204,7 @@ def describe_facility(status: dict, services: dict | None = None) -> str:
     return line + (" → " + ", ".join(events) if events else " (정상 범위)")
 
 
-async def _facility_async() -> str:
+async def _facility_async() -> dict:
     from ai.mcp_manager import server_session
     async with server_session(FACILITY_SERVER) as session:
         status = _parse_tool_result(await session.call_tool("get_system_status", {}))
@@ -192,7 +213,7 @@ async def _facility_async() -> str:
             services = _parse_tool_result(await session.call_tool("get_service_status", {}))
         except Exception as e:  # noqa: BLE001 - 서비스 상태는 덤
             print(f"[경고] 서비스 상태 조회 실패: {_root_cause(e)!r}")
-    return describe_facility(status, services)
+    return {"text": describe_facility(status, services), "numbers": facility_numbers(status, services)}
 
 
 # ---------------------------------------------------------------- 수집
@@ -204,13 +225,18 @@ async def _gather_async() -> dict:
     for name, res in zip(names, results):
         if isinstance(res, BaseException):
             print(f"[경고] 외부 신호({name}) MCP 조회 실패: {_root_cause(res)!r}")
+        elif name == "facility" and isinstance(res, dict):
+            if res.get("text"):
+                out["facility"] = res["text"]
+            if res.get("numbers"):
+                out["facility_numbers"] = res["numbers"]
         elif res:
             out[name] = res
     return out
 
 
 def fetch() -> dict:
-    """[스레드에서 호출] {"weather": "...", "facility": "..."} - 실패한 항목은 빠진다."""
+    """[스레드에서 호출] {"weather": "...", "facility": "...", "facility_numbers": {...}} - 실패한 항목은 빠진다."""
     if not runtime.is_bound():
         return {}
     try:

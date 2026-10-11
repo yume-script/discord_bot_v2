@@ -27,7 +27,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, chronicle, life, memory, metrics, newcomers, projects, rotation, runtime, signals, world
+from . import characters, chronicle, kpi, life, memory, newcomers, projects, rotation, runtime, signals, world
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -69,7 +69,7 @@ GOSSIP_P_SAME_PLACE = 0.6     # 직접 만난 대화를 같은 곳에 있던 사
 GOSSIP_P_COLLEAGUE = 0.25     # 같은 회사 동료에게 말이 돎
 GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/포장마차 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
 GOSSIP_P_OTHER = 0.05
-# 담당 업무(agents.json "duty") - 실제 서비스 수치(metrics.part)가 그 사람의 실적이다
+# 담당 업무(kpi.py 자리) - 실제 서비스 수치가 그 자리 담당자의 실적이다
 DUTY_BIG_RATIO = 2.0      # 오늘 입고가 평소 하루 평균의 이만큼 이상이면 회사 사건 (하루 한 번)
 DUTY_BIG_MIN = 10         # 평균이 작을 때 몇 건만으로 "대량"이 되지 않게
 DUTY_SLOW_FROM_HOUR = 18  # 이 시각 이후에도 한산하면 담당자가 신경 쓴다 (하루 한 번)
@@ -359,62 +359,136 @@ def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dic
     print(f"[에이전트] {group} {agent['name']}: {text}")
 
 
-# ===================================================================== 담당 업무 (실제 서비스 수치)
-def _duty_text(x: dict) -> str:
-    line = f"오늘 입고 {x['today']}건{'+' if x.get('saturated') else ''}"
-    extra = [f"최근 7일 하루 평균 {x['avg']:g}건" if x.get("avg") is not None else "", x.get("pace", "")]
-    extra = [e for e in extra if e]
-    return line + (f" ({', '.join(extra)})" if extra else "")
-
-
+# ===================================================================== 담당 업무 (실제 서비스 수치 = 실적, kpi.py)
 def _duty_block(agent: dict) -> str:
-    duty = agent.get("duty") or {}
-    if not duty.get("metric"):
-        return ""
-    x = metrics.part(duty["metric"])
-    body = _duty_text(x) if x else "오늘 집계 전"
-    return (f"[내 담당 업무 - {duty.get('line', duty['metric'])}] {body}\n"
-            "이게 내 실적이다. 회사 사람들도 이 숫자를 안다.")
+    return "\n\n".join(b for b in (kpi.prompt_block(agent["name"], kpi.posts_of(agent["name"])),
+                                    kpi.trade_block(agent)) if b)
 
 
-def _duty_updates(agents: list[dict], data: dict, now) -> None:
+def _duty_updates(agents: list[dict], roster: list[dict], data: dict, now) -> None:
     """
-    담당 라인 수치가 바뀌면 담당자 받은편지함에 알린다 (깨우지는 않음). 평소의 몇 배가 들어온 날은
-    회사 사건으로 터뜨리고(하루 한 번, 동료들도 앎), 저녁까지 한산하면 담당자에게만 알린다(하루 한 번).
-    LLM 호출 없음 - 수치는 metrics.refresh()가 회차 맨 앞에서 MCP로 받아 둔 값.
+    자리 배정(교체로 빠진 담당자의 일은 같은 부서 에이전트가 인수인계) -> 오늘 실적 기록 -> 알림.
+    누적 지표(입고/출하/문의)는 늘면 담당자 받은편지함에 알리고(깨우지는 않음), 평소의 몇 배가 들어온 날은
+    회사 사건(하루 한 번), 저녁까지 한산하면 담당자에게만(하루 한 번). 수준 지표(가동률/적재율/안정성)는
+    이상이 생긴 날 한 번 담당자를 깨운다. LLM 호출 없음 - 수치는 회차 맨 앞에서 MCP로 받아 둔 값.
     """
-    today = now.strftime("%Y-%m-%d")
-    for agent in agents:
-        duty = agent.get("duty") or {}
-        x = metrics.part(duty.get("metric", "")) if duty.get("metric") else None
-        if not x:
+    posts, changes = kpi.assign(agents, roster)
+    for post, old, new in changes:
+        if not new:
             continue
-        name, line = agent["name"], duty.get("line", duty["metric"])
+        why = f"{j(old, '가')} 쉬러 가서 " if old else ""
+        _push_inbox(data, new, f"인수인계: {why}오늘부터 내가 {post['line']} 담당이다 ({post['source']}).", "업무")
+        memory.remember(new, f"{why}{post['line']} 일을 내가 맡게 됐다. 이제 그 숫자가 내 실적이다.", 6, [old] if old else [], "업무")
+        chronicle.record_event("업무", f"{post['line']} 담당 {old or '공석'} -> {new}", post["company"], [n for n in (old, new) if n])
+    kpi.record(now)
+    today = now.strftime("%Y-%m-%d")
+    for name, mine in posts.items():
         st = data.setdefault(name, {})
-        ds = st.get("duty_seen") or {}
-        if ds.get("date") != today:
-            ds = {"date": today, "seen": 0, "big": False, "slow": False}
-        n, avg = int(x["today"]), x.get("avg")
-        if n > ds["seen"]:
-            _push_inbox(data, name, f"담당 {line}에 새로 {n - ds['seen']}건 입고 - {_duty_text(x)}", "업무", quiet=True)
-            ds["seen"] = n
-        big = x.get("saturated") or (avg and n >= max(DUTY_BIG_MIN, avg * DUTY_BIG_RATIO))
-        if big and not ds["big"]:
-            ds["big"] = True
-            company = agent.get("company", "")
-            detail = (f"{company.split(' ')[0]} {line}에 오늘 {n}건{'+' if x.get('saturated') else ''}이 한꺼번에 들어왔다"
-                      + (f" (평소 하루 {avg:g}건)" if avg else "") + f". 담당 {name}의 일이 몰렸다.")
-            out = world.inject(f"{line} 대량 입고", detail, [company] if company else [name], agents,
-                               characters.load_roster(), effects={"stress": 0.05}, kind="업무")
-            if name not in {w for w, _, _ in out}:
-                out.append((name, detail, "사건"))
-            for who, text, kind in out:
-                _push_inbox(data, who, text, kind)
-            print(f"[에이전트] 담당 업무 사건: {name} {line} {n}건")
-        elif (now.hour >= DUTY_SLOW_FROM_HOUR and not ds["slow"] and x.get("pace") == "평소보다 한산함"):
-            ds["slow"] = True
-            _push_inbox(data, name, f"담당 {line}가 오늘 한산하다 - {_duty_text(x)}", "업무")
-        st["duty_seen"] = ds
+        seen_all = st.get("duty_seen") or {}
+        if "date" in seen_all:  # 예전 형식 (사람당 하나)
+            seen_all = {}
+        agent = next((a for a in agents if a["name"] == name), {})
+        for post in mine:
+            x = kpi.reading(post)
+            if not x:
+                continue
+            line = post["line"]
+            ds = seen_all.get(post["id"]) or {}
+            if ds.get("date") != today:
+                ds = {"date": today, "seen": 0, "big": False, "slow": False, "alert": False}
+            if post["kind"] != "count":
+                if x.get("alert") and not ds["alert"]:
+                    ds["alert"] = True
+                    _push_inbox(data, name, f"담당 {line}에 문제 - {x['text']}", "업무")
+                seen_all[post["id"]] = ds
+                continue
+            n, avg = int(x["value"]), x.get("avg")
+            if n > ds["seen"]:
+                _push_inbox(data, name, f"담당 {line} {post['verb']} {n - ds['seen']}{post['unit']} 늘어남 - {x['text']}",
+                            "업무", quiet=True)
+                ds["seen"] = n
+            big = x.get("saturated") or (avg and n >= max(DUTY_BIG_MIN, avg * DUTY_BIG_RATIO))
+            if big and not ds["big"]:
+                ds["big"] = True
+                company = agent.get("company", "")
+                detail = (f"{company.split(' ')[0]} {line}에 오늘 {n}{post['unit']}{'+' if x.get('saturated') else ''}이 몰렸다"
+                          + (f" (평소 하루 {avg:g}{post['unit']})" if avg else "") + f". 담당 {name}의 일이 몰렸다.")
+                out = world.inject(f"{line} 폭주", detail, [company] if company else [name], agents,
+                                   roster, effects={"stress": 0.05}, kind="업무")
+                if name not in {w for w, _, _ in out}:
+                    out.append((name, detail, "사건"))
+                for who, text, kind in out:
+                    _push_inbox(data, who, text, kind)
+                print(f"[에이전트] 담당 업무 사건: {name} {line} {n}{post['unit']}")
+            elif now.hour >= DUTY_SLOW_FROM_HOUR and not ds["slow"] and x.get("pace") == "평소보다 한산함":
+                ds["slow"] = True
+                _push_inbox(data, name, f"담당 {line}가 오늘 한산하다 - {x['text']}", "업무")
+            seen_all[post["id"]] = ds
+        st["duty_seen"] = seen_all
+
+
+def _kpi_announcer(company: str, agents: list[dict], roster: list[dict]) -> dict | None:
+    """실적 발표할 부서장: 그 소속 에이전트 중 부장 (생산기획부 먼저), 없으면 아무 에이전트."""
+    rank = {c["name"]: c for c in roster}
+    mine = [a for a in agents if a.get("company") == company]
+    heads = [a for a in mine if (rank.get(a["name"]) or {}).get("rank") == "부장"]
+    heads.sort(key=lambda a: ((rank.get(a["name"]) or {}).get("dept") != "생산기획부", a["name"]))
+    return (heads or mine or [None])[0]
+
+
+def _kpi_reviews(agents: list[dict], roster: list[dict], data: dict, now) -> None:
+    """[월요일 아침] 지난주 실적 순위 발표 + 상벌, [매달 1일] 지난달 우수 사원 칭호."""
+    by_name = {a["name"]: a for a in agents}
+    if kpi.weekly_due(now):
+        res = kpi.weekly(now)
+        for company, rows in res["companies"].items():
+            short = company.split(" ")[0]
+            if len(rows) < 2:  # 겨룰 사람이 없으면 본인에게만
+                for name, x in rows:
+                    _push_inbox(data, name, f"지난주({res['label']}) 내 {', '.join(x['posts'])} 실적 {x['score']}점 (평소=100)", "업무")
+                continue
+            top, bottom = rows[0][0], rows[-1][0]
+            board = "\n".join(f"{i}. {n} - {', '.join(x['posts'])} {x['score']}점" for i, (n, x) in enumerate(rows, 1))
+            for i, (name, x) in enumerate(rows, 1):
+                _push_inbox(data, name, f"지난주({res['label']}) {short} 실적 {len(rows)}명 중 {i}등 - {x['score']}점 (평소=100)", "업무")
+            life.apply_changes(top, {"happiness": 0.1, "confidence": 0.1, "job_satisfaction": 0.08}, f"주간 실적 1등 ({res['label']})")
+            life.give_money(top, kpi.WEEKLY_BONUS, f"주간 실적 1등 보너스 {kpi.WEEKLY_BONUS:,}원")
+            life.apply_changes(bottom, {"stress": 0.1, "confidence": -0.05}, f"주간 실적 꼴찌 ({res['label']})")
+            memory.remember(top, f"지난주({res['label']}) {short} 실적 1등 - 보너스 {kpi.WEEKLY_BONUS:,}원을 받았다.", 7, [], "실적")
+            memory.remember(bottom, f"지난주({res['label']}) {short} 실적 꼴찌였다. 이번 주엔 만회해야 한다.", 6, [], "실적")
+            chronicle.record_event("실적", f"{short} 주간 실적 1등 {top}", f"{res['label']}\n{board}", [n for n, _ in rows])
+            announcer = _kpi_announcer(company, agents, roster)
+            if company != GROUP_COMPANY or not announcer or not _group_channel(GROUP_NAME):
+                continue
+            out = llm_json(
+                _system(announcer),
+                f"[지금] 월요일 아침, {GROUP_NAME}\n[지난주({res['label']}) 실적 순위 - 실제 서비스 수치로 매긴 점수, 평소=100]\n{board}\n\n"
+                f"부서장으로서 단톡방에 주간 실적을 발표하라. 1등 {j(top, '을')} 칭찬하고 보너스 {kpi.WEEKLY_BONUS:,}원을 알리고, "
+                f"꼴찌 {bottom}에게는 내 성격대로 한마디 한다. 순위와 점수는 위 그대로 쓴다. 3~6줄.\n"
+                '반드시 JSON으로만 응답: {"text": "단톡방에 올릴 글"}',
+                temperature=0.8, timeout=DECIDE_TIMEOUT_SEC, tag=f"주간 실적 {announcer['name']}")
+            text = str((out or {}).get("text") or "").strip() if isinstance(out, dict) else ""
+            if not text:
+                text = (f"📊 지난주({res['label']}) 실적 발표합니다.\n{board}\n"
+                        f"1등 {j(top, '은')} 보너스 {kpi.WEEKLY_BONUS:,}원! {bottom} 씨는 이번 주 분발합시다.")
+            _post_group(announcer, GROUP_NAME, text[:1500], data, agents)
+    if kpi.monthly_due(now):
+        res = kpi.monthly(now)
+        for company, (name, x) in res["winners"].items():
+            short = company.split(" ")[0]
+            title = f"{res['label']} 우수 사원"
+            life.give_money(name, kpi.MONTHLY_BONUS, f"{title} 상여 {kpi.MONTHLY_BONUS:,}원")
+            life.apply_changes(name, {"happiness": 0.12, "confidence": 0.12, "job_satisfaction": 0.1}, title)
+            memory.remember(name, f"{short} {title}로 뽑혔다 ({', '.join(x['posts'])}, 평균 {x['score']}점). 상여 {kpi.MONTHLY_BONUS:,}원.",
+                            8, [], "실적", permanent=True)
+            chronicle.record_event("실적", f"{short} {title} {name}", f"{', '.join(x['posts'])} 평균 {x['score']}점", [name])
+            for a in agents:
+                if a.get("company") == company and a["name"] != name:
+                    _push_inbox(data, a["name"], f"{short} {title}: {name} ({', '.join(x['posts'])} 평균 {x['score']}점)", "소식", quiet=True)
+            announcer = _kpi_announcer(company, agents, roster)
+            if company == GROUP_COMPANY and announcer and _group_channel(GROUP_NAME) and name in by_name:
+                _post_group(announcer, GROUP_NAME, f"🏅 {title}: **{name}** 씨! {', '.join(x['posts'])} 평균 {x['score']}점. "
+                                                   f"상여 {kpi.MONTHLY_BONUS:,}원 나갑니다. 다들 박수!", data, agents)
 
 
 # ===================================================================== 지각
@@ -1278,9 +1352,13 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
 
     data = _load_state()
     try:
-        _duty_updates(agents, data, now)
+        _duty_updates(agents, roster, data, now)
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 담당 업무 갱신 실패: {e}")
+    try:
+        _kpi_reviews(agents, roster, data, now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 실적 발표 실패: {e}")
     decisions: dict[str, dict] = {}
     fresh: list[str] = []  # 이번 시간 새로 판단한 사람 (근황 요약용)
     pushed: set[str] = set()  # 관리자 사건/메시지로 다시 판단한 사람 - 이번 시간 대화를 이미 했어도 한 번 더 허용

@@ -324,6 +324,23 @@ def part(key: str) -> dict | None:
             "pace": "" if x.get("saturated") else pace(x["today"], x.get("avg"))}
 
 
+def count(key: str) -> dict | None:
+    """[담당 실적] 하루 누적 지표 하나 {today, avg, saturated, pace} - 생산 부문(plex/books/books_adult)
+    또는 "sales"(오늘 재생=출하), "orders"(오늘 사람 메시지=고객 문의). 집계 전이면 None."""
+    if key in PART_KEYS:
+        return part(key)
+    x = _today().get(key)
+    if not isinstance(x, dict) or "today" not in x:
+        return None
+    return {"today": int(x["today"]), "avg": x.get("avg"), "saturated": False, "pace": pace(int(x["today"]), x.get("avg"))}
+
+
+def streams() -> int | None:
+    """[담당 실적] 지금 시청 중인 스트림 수(매장 손님). 집계 전이면 None."""
+    x = _today().get("sales")
+    return int(x.get("streams", 0)) if isinstance(x, dict) else None
+
+
 def production() -> tuple[int, float]:
     """
     (오늘 생산량, 평소 하루 생산량 대비 %). %는 평균을 아는 부문끼리만 비교한다 - 평균을 모르는
