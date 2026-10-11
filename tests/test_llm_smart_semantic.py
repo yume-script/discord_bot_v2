@@ -29,6 +29,8 @@ def _route(monkeypatch, statuses: dict):
     monkeypatch.setattr(llm, "LLM_MODEL", "base")
     monkeypatch.setattr(llm, "SMART_MODEL", "smart")
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "_no_retry_until", 0.0)
+    monkeypatch.setattr(llm, "_smart_blocked_day", "")
     return calls
 
 
@@ -68,13 +70,18 @@ def test_semantic_recall_finds_meaning_not_words(monkeypatch):
     monkeypatch.setattr(semantic, "ENABLED", True)
     monkeypatch.setattr(semantic, "_encode", _fake_encode)
     monkeypatch.setattr(semantic, "available", lambda: True)
-    memory.remember("애순이", "어제 밤 11시까지 남아서 보고서를 고쳤다", 5)
+    monkeypatch.setattr(semantic, "_worker", object())  # 백그라운드 스레드 대신 테스트가 직접 채운다
     memory.remember("애순이", "점심에 강아지 영상을 봤다", 5)
+    memory.remember("애순이", "어제 밤 11시까지 남아서 보고서를 고쳤다", 5)
     memory.remember("애순이", "출근길에 우산을 놓고 왔다", 5)
+    # 처음엔 벡터가 없어서 판단 중에 만들지 않고 백그라운드에 맡긴다 (회차가 늘어지지 않게)
+    memory.recall("애순이", [], k=1, query="부장님이 또 야근을 시켰다")
+    assert len(semantic._pending) == 3
+    assert semantic.process_pending(100) == 3
     top = memory.recall("애순이", [], k=1, query="부장님이 또 야근을 시켰다")
     assert top[0]["text"].startswith("어제 밤 11시")
-    # 벡터는 저장돼서 다음엔 다시 만들지 않는다
     assert len(memory.store.memory_vecs([m["id"] for m in memory.store.memories("애순이")])) == 3
+    assert not semantic._pending
 
 
 def test_semantic_off_keeps_keyword_recall(monkeypatch):
@@ -83,3 +90,12 @@ def test_semantic_off_keeps_keyword_recall(monkeypatch):
     memory.remember("애순이", "혼자 집에서 쉼", 5)
     top = memory.recall("애순이", ["소라"], k=1, query="아무거나")
     assert "소라" in top[0]["text"]
+
+
+def test_persistent_429_stops_retrying(monkeypatch):
+    calls = _route(monkeypatch, {"smart": [429], "base": [429, 429, 429, 429]})
+    assert llm.llm_json("s", "u", smart=True) is None
+    assert calls == ["smart", "base", "base"]
+    calls.clear()
+    assert llm.llm_json("s", "u", smart=True) is None
+    assert calls == ["base"]  # 상위 모델은 오늘 막혔고, 기본 모델은 한동안 재시도 없이 바로 실패

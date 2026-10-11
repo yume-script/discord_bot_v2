@@ -30,8 +30,10 @@ def clean_state():
     for name in os.listdir(_STATE):
         path = os.path.join(_STATE, name)
         shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
-    from poring_food import store, characters
+    from poring_food import store, characters, semantic
     store._ready.clear()
+    semantic._cache.clear()
+    semantic._pending.clear()
     characters._TYPE_CACHE.clear()
     yield
 

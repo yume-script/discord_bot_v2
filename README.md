@@ -171,8 +171,9 @@ python app.py
   기본 모델이 분당 한도(HTTP 429)에 걸리면 `PORING_LLM_RETRY_SEC`초 쉬고 한 번 더. 스토리(장면/작가 회의)도 같은 함수를 쓴다.
 - **기억 의미 검색 (`poring_food/semantic.py`)**: 에이전트가 판단할 때 "지금 상황(새 소식 + 평소 이 시간 루틴)"과 뜻이
   비슷한 기억을 로컬 임베딩(`jhgan/ko-sroberta-multitask`, 라그M 검색과 같은 모델 - API 한도/요금 없음)으로 찾는다.
-  단어가 안 겹쳐도("야근" ↔ "밤 11시까지 남아서 보고서") 떠올린다. 벡터는 `world.db` `memory_vecs`에, 떠올릴 때 한 번에
-  최대 64개씩 만들어 저장(예전 기억도 조금씩 채워짐). sentence-transformers가 없거나 `PORING_MEMORY_SEMANTIC=0`이면 키워드만.
+  단어가 안 겹쳐도("야근" ↔ "밤 11시까지 남아서 보고서") 떠올린다. 판단 중에는 지금 상황 한 줄만 임베딩하고, 벡터가
+  없는 기억은 백그라운드 스레드가 8개씩 쉬어 가며 채워 `world.db` `memory_vecs`에 저장한다(CPU 스레드 `PORING_EMBEDDING_THREADS`,
+  기본 1 - 회차가 늘어지지 않게). sentence-transformers가 없거나 `PORING_MEMORY_SEMANTIC=0`이면 키워드만.
 - **봇 것을 그대로 쓰는 것**: LLM(`LITELLM_*`, 모델만 `PORING_LLM_MODEL`로 따로 지정 가능), 카톡 브릿지
   (`KATALK_BRIDGE_URL`, 방은 `PORING_KAKAO_ROOM_ID`), 디스코드(`PORING_DISCORD_CHANNEL_ID`면 봇이 직접
   올림, 없으면 `PORING_DISCORD_WEBHOOK_URL` 웹훅), 북오아시스 MCP 연결, 대화 로그 DB("주문·고객 문의"/경쟁사 지표).
