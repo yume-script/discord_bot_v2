@@ -18,9 +18,11 @@ class _Resp:
 def _route(monkeypatch, statuses: dict):
     """statuses: {모델: [차례로 돌려줄 HTTP 상태...]} - 다 쓰면 200."""
     calls = []
+    bodies = _route.bodies = []
 
     def post(url, json=None, **kw):  # noqa: A002
         calls.append(json["model"])
+        bodies.append(json)
         seq = statuses.get(json["model"], [])
         return _Resp(seq.pop(0) if seq else 200, {"model": json["model"]})
     monkeypatch.setattr(llm.requests, "post", post)
@@ -31,6 +33,8 @@ def _route(monkeypatch, statuses: dict):
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
     monkeypatch.setattr(llm, "_no_retry_until", 0.0)
     monkeypatch.setattr(llm, "_smart_blocked_day", "")
+    monkeypatch.setattr(llm, "_agent_model_blocked", {})
+    monkeypatch.setattr(llm, "AGENT_MODELS", {"소라": "groq"})
     return calls
 
 
@@ -99,3 +103,25 @@ def test_persistent_429_stops_retrying(monkeypatch):
     calls.clear()
     assert llm.llm_json("s", "u", smart=True) is None
     assert calls == ["base"]  # 상위 모델은 오늘 막혔고, 기본 모델은 한동안 재시도 없이 바로 실패
+
+
+def test_parse_agent_models():
+    assert llm.parse_agent_models("groq_free:소라, 김동식 ;other:조이서") == {
+        "소라": "groq_free", "김동식": "groq_free", "조이서": "other"}
+    assert llm.parse_agent_models("") == {}
+
+
+def test_agent_model_routing_and_fallback(monkeypatch):
+    calls = _route(monkeypatch, {})
+    assert llm.llm_json("s", "u", agent="소라") == {"model": "groq"}
+    assert _route.bodies[-1].get("reasoning_effort") == "low"
+    assert llm.llm_json("s", "u", agent="애순이") == {"model": "base"}  # 전용 모델이 없는 인물
+    assert "reasoning_effort" not in _route.bodies[-1]
+    assert calls == ["groq", "base"]
+    src = next(iter(llm_usage.by_day(1).values()))["sources"]
+    assert src["포링푸드(groq)"] == 1
+    # 분당 한도(429) -> 그 호출은 기본 모델로, 한동안은 전용 모델을 건너뛴다
+    calls = _route(monkeypatch, {"groq": [429]})
+    assert llm.llm_json("s", "u", agent="소라") == {"model": "base"}
+    assert llm.llm_json("s", "u", agent="소라") == {"model": "base"}
+    assert calls == ["groq", "base", "base"]

@@ -67,4 +67,8 @@ def test_town_view_lists_everyone(fake_llm, monkeypatch, caplog):
     caplog.clear()
     agents.post_town_view(states)
     out = "\n".join(r.getMessage() for r in caplog.records)
-    assert "지금 동네는" in out and "이맏이" in out  # 배경 인물도 보인다
+    # 배경 인물도 보인다 (특정 인물 이름으로 확인하면 그 사람이 자는 시간대에 실패해서, 깨어 있는 배경 인물 아무나)
+    agent_names = {a["name"] for a in agents.load_agents()}
+    awake_bg = [st["name"] for st in states.values() if st["name"] not in agent_names and st.get("state") != "자는 중"]
+    assert "지금 동네는" in out
+    assert not awake_bg or any(n in out for n in awake_bg)
