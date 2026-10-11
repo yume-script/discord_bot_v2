@@ -101,7 +101,7 @@ def _profile_for(member: dict, data: dict) -> dict:
         f"[인물] {member['name']}\n[설정] {persona}\n\n"
         "이 사람의 프로필을 써라. 반드시 JSON으로만 응답:\n"
         '{"profile": "나이대, 하는 일, 겉과 속, 요즘 고민 2~3문장", "routine": "평일/주말 하루 일과 한두 문장", '
-        '"speech": "말투 한 문장 (존댓말/반말, 말버릇)", "sleep": [잠드는 시각 0~23, 일어나는 시각 0~23], '
+        '"speech": "말투 한 문장 - 존댓말/반말, 사투리 여부, 따옴표로 입버릇 1~2개", "sleep": [잠드는 시각 0~23, 일어나는 시각 0~23], '
         '"hangouts": ["카페 오후세시/포장마차 단밤/동네 헬스장/동네 편의점 중 0~2곳"]}',
         temperature=0.7, timeout=TIMEOUT_SEC, tag=f"교체 프로필 {member['name']}")
     out = out if isinstance(out, dict) else {}
@@ -116,7 +116,7 @@ def _profile_for(member: dict, data: dict) -> dict:
         "avatar_url": f"https://api.dicebear.com/9.x/notionists/png?seed=rot{sum(map(ord, member['name']))}",
         "profile": str(out.get("profile") or persona).strip()[:400],
         "routine": str(out.get("routine") or "평일 낮엔 일하고 저녁엔 쉰다.").strip()[:300],
-        "speech": str(out.get("speech") or "평범한 해요체.").strip()[:200],
+        "speech": str(out.get("speech") or f"{member.get('key_behavior') or member.get('outer_persona') or '평범한 사람'}이 말에 그대로 묻어나는 말투.").strip()[:200],
         "account": "", "decide_every": DEFAULT_EVERY,
         "hangouts": [h for h in (out.get("hangouts") or []) if h in places][:2],
     }

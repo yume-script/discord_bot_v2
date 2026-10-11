@@ -99,3 +99,18 @@ def test_decide_all_runs_lanes_in_parallel_and_keeps_order(monkeypatch):
     assert [d["who"] for d in out] == [p["name"] for p in people]  # 결과는 원래 순서대로
     assert active["max_base"] == 1  # 기본 모델(분당 한도가 작은 무료 키)은 한 번에 한 명
     assert active["max_own"] == 3   # 인물 전용 모델은 동시에
+
+
+def test_persona_and_voice_reach_every_speaking_prompt(fake_llm, monkeypatch):
+    _quiet(monkeypatch)
+    fake = fake_llm(_handler)
+    agents.tick(characters.load_roster())
+    decide = [(s, u) for s, u in fake.calls if "이번 한 시간 동안" in u]
+    talk = [(s, u) for s, u in fake.calls if "다음 한마디" in u]
+    assert decide and talk
+    for system, user in decide + talk:
+        assert "[연기 원칙]" in system and "[말투]" in system
+        assert "[말투 지키기]" in user  # 긴 지각 뒤 맨 끝에도 말투를 다시
+    s, u = talk[0]
+    me = next(a for a in agents.load_agents() if f"'{a['name']}'" in s)
+    assert me["speech"] in u
