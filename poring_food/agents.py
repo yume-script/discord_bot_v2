@@ -58,8 +58,9 @@ GROUP_NAME = "포링푸드 단톡방"
 TOWN_GROUP = "동네 단톡방"
 GROUP_HEADERS = {TOWN_GROUP: "-# 🏘️ 동네 단톡방"}  # 다른 글과 같은 채널을 쓰는 단톡방은 머리줄로 구분
 GROUP_PATH = os.path.join(STATE_DIR, "group_chat.jsonl")
-GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))
-GROUP_MAX_POSTS_PER_HOUR = 2
+GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))            # 회사 단톡방 하루 상한
+TOWN_GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_TOWN_GROUP_MAX_POSTS_PER_DAY", "24"))  # 동네 단톡방(멤버가 많다)
+GROUP_MAX_POSTS_PER_HOUR = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_HOUR", "3"))
 GROUP_RECENT = 10
 
 # 엿듣기/소문 - 대화가 끝나면 주변 사람에게 확률적으로 퍼진다 (추가 LLM 호출 없음)
@@ -100,6 +101,16 @@ def _rotate(now) -> None:
     _post_as("동네 소식", "\n".join(lines))
 
 
+def _names_ever_used() -> set[str]:
+    """지금은 없지만 예전에 이 세계에 있었던 이름 전부 - 옛 동네 사람, 기억/상태/관계 기록에 남은 이름."""
+    from . import rename_migration
+    used = set(rename_migration.OLD_TOWN)
+    used |= memory.all_names()
+    used |= set(life.load_all().keys())
+    used |= set(_load_state().keys())
+    return {n for n in used if n and not n.startswith("_")}
+
+
 def move_in_newcomers(drama: str = "") -> dict:
     """[주 1회 / 관리자] 드라마 인물들이 동네로 이사 온다. 채널/연대기/모두의 받은편지함(깨우지 않음)에 알린다.
     동네 배경 인물이 상한을 넘으면 먼저 온 새 이웃이 이사 간다. 반환: newcomers.move_in 결과 + moved_out."""
@@ -111,6 +122,7 @@ def move_in_newcomers(drama: str = "") -> dict:
     agents = load_agents()
     active = {a["name"] for a in agents}
     existing = {c["name"] for c in characters.load_roster()} | active | {a["name"] for a in _base_agents()} | reserve
+    existing |= _names_ever_used()  # 예전에 지운 이름도 다시 쓰지 않는다 (옛 사람의 기억/관계를 물려받지 않게)
     res = newcomers.move_in(existing, drama)
     if not res["added"]:
         return res
@@ -521,7 +533,7 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         meeting_rule += (
             "- 나는 통장이다. 아직 끝나지 않은 동네 일이나 주민들 사이에서 나온 불편/아이디어를 챙겨서, 필요하면 모임을 열어 "
             "의견을 모으고, 정해진 일은 실제로 되도록 챙긴다.\n")
-    my_projects = [p for p in projects.active() if not p.get("members") or agent["name"] in p["members"]]
+    my_projects = [p for p in projects.active() if projects.open_to(p, agent["name"])]
     if my_projects:
         meeting_rule += ("- 진행 중인 마을 프로젝트에 이번 시간 실제로 손을 보탰으면(맡은 일, 도울 일, 지나가다 거든 일) "
                          "project_work에 써라. 안 했으면 null - 지어내지 마라.\n")
@@ -1188,7 +1200,7 @@ def _handle_projects(decisions: dict[str, dict], fresh: list[str], by_name: dict
                                     f"-# 함께한 사람: {', '.join(crew)}")
             chronicle.record_event("프로젝트", f"{p['title']} 완료", p["goal"], crew)
             for a in agents:
-                if p.get("members") and a["name"] not in p["members"]:
+                if not projects.open_to(p, a["name"]):
                     continue
                 here = a["name"] in crew
                 memory.remember(a["name"], (f"'{p['title']}'을(를) 다 같이 해냈다 - {p['goal']}" if here
@@ -1367,7 +1379,8 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
             continue
         if posted >= GROUP_MAX_POSTS_PER_HOUR:
             break
-        if counts.get(gp["group"], 0) >= GROUP_MAX_POSTS_PER_DAY:
+        day_cap = TOWN_GROUP_MAX_POSTS_PER_DAY if gp["group"] == TOWN_GROUP else GROUP_MAX_POSTS_PER_DAY
+        if counts.get(gp["group"], 0) >= day_cap:
             continue
         _post_group(by_name[name], gp["group"], gp["text"], data, agents)
         data.setdefault(name, {}).setdefault("decision", d)["group_done"] = True

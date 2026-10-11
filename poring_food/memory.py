@@ -3,22 +3,21 @@
 
 예) "10/03 동네 카페에서 오동백 과장이 내가 인터스텔라 좋아하는 걸 기억하고 있었다 (중요도 7)"
 
-- 저장: storage/poring_food/memories.jsonl  {"name", "at", "text", "importance"(1~10), "with"[이름], "source"}
+- 저장: storage/poring_food/world.db memories 테이블 (store.py) {"name", "at", "text", "importance"(1~10), "with"[이름], "source"}
 - 만드는 곳: 일지/장면 LLM이 JSON으로 같이 돌려준 memory(추가 LLM 호출 없음), 월급날 같은 규칙 사건
 - 떠올리기(recall): 최근일수록 + 중요할수록 + 지금 상황(같이 있는 사람, 화제 키워드)과 관련 있을수록
   점수가 높다. 프롬프트에는 상위 몇 개만 넣는다 (임베딩 없이 키워드로 충분한 규모).
 - 정리(prune): 파일이 커지면 인물별 최근 MAX_PER_PERSON개 + 중요도 8 이상(60일 이내) + 영구 기억(permanent,
   투표/모임 결론)만 남긴다.
-  빠진 기억은 지우지 않고 연대기 보관함(archive/memories.jsonl)으로 옮기고, 지금 상황과 관련 있으면
+  빠진 기억은 지우지 않고 보관 표시(archived)만 하고, 지금 상황과 관련 있으면
   (화제 키워드가 겹치면) 떠올리기에서 다시 꺼내 쓴다.
 """
 from __future__ import annotations
 
-import json
 import os
 from datetime import datetime, timedelta
 
-from . import chronicle
+from . import store
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -40,32 +39,21 @@ def remember(name: str, text: str, importance: int = 5, with_: list[str] | None 
         importance = max(1, min(10, int(importance)))
     except (TypeError, ValueError):
         importance = 5
-    entry = {
-        "name": name, "at": now_kst().isoformat(timespec="minutes"), "text": text[:200],
-        "importance": importance, "with": [w for w in (with_ or []) if w and w != name][:5], "source": source,
-    }
-    if permanent:
-        entry["permanent"] = True
     try:
-        with open(MEMORY_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError as e:
+        store.add_memory(name, now_kst().isoformat(timespec="minutes"), text[:200], importance,
+                         [w for w in (with_ or []) if w and w != name][:5], source, permanent)
+    except Exception as e:  # noqa: BLE001
         print(f"[경고] 기억 저장 실패: {e}")
 
 
 def _load(name: str | None = None) -> list[dict]:
-    if not os.path.exists(MEMORY_PATH):
-        return []
-    out = []
-    with open(MEMORY_PATH, "r", encoding="utf-8") as f:
-        for line in f:
-            try:
-                m = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if name is None or m.get("name") == name:
-                out.append(m)
-    return out
+    """평소 떠올리는(정리 안 된) 기억, 시간순."""
+    return store.memories(name)
+
+
+def all_names() -> set[str]:
+    """기억이 한 줄이라도 있는 이름 전부 (예전에 있었던 사람 포함)."""
+    return store.memory_names()
 
 
 def _score(m: dict, now: datetime, terms: list[str]) -> float:
@@ -86,9 +74,8 @@ def recall(name: str, terms: list[str] | None = None, k: int = 4) -> list[dict]:
     terms = [t for t in (terms or []) if t and t != name]
     mems = _load(name)
     if terms:
-        # 정리돼서 보관함으로 간 오래된 기억도 지금 화제와 겹치면 떠올린다
-        mems += [m for m in chronicle.archived_memories(name)
-                 if any(t in m.get("text", "") + " " + " ".join(m.get("with", [])) for t in terms)]
+        # 정리된 오래된 기억도 지금 화제와 겹치면 떠올린다 (색인으로 그 사람 것만 꺼낸다)
+        mems += store.memories(name, archived=True, like=terms)
     top = sorted(mems, key=lambda m: _score(m, now, terms), reverse=True)[:k]
     return sorted(top, key=lambda m: m.get("at", ""))
 
@@ -111,30 +98,21 @@ def apply_feedback(name: str, out: dict, source: str, with_: list[str] | None = 
 
 
 def prune() -> None:
-    """파일이 커지면 인물별 최근 기억 + 오래 남길 중요한 기억만 남긴다."""
-    mems = _load()
-    if len(mems) < PRUNE_AT_LINES:
+    """기억이 많아지면 인물별 최근 기억 + 오래 남길 중요한 기억 + 영구 기억만 평소에 떠올리고, 나머지는 보관 표시(지우지 않음)."""
+    if store.count_memories() < PRUNE_AT_LINES:
         return
+    mems = _load()
     cutoff = (now_kst() - timedelta(days=KEEP_IMPORTANT_DAYS)).isoformat()
     by_name: dict[str, list[dict]] = {}
     for m in mems:
         by_name.setdefault(m.get("name", ""), []).append(m)
-    keep = []
+    archive = []
     for items in by_name.values():
-        recent = items[-MAX_PER_PERSON:]
-        older = items[:-MAX_PER_PERSON]
-        important = [m for m in older if m.get("permanent")
-                     or (m.get("importance", 0) >= 8 and m.get("at", "") >= cutoff)]
-        keep.extend(important + recent)
-    keep.sort(key=lambda m: m.get("at", ""))
-    kept = {id(m) for m in keep}
-    chronicle.archive_memories([m for m in mems if id(m) not in kept])
-    tmp = MEMORY_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        for m in keep:
-            f.write(json.dumps(m, ensure_ascii=False) + "\n")
-    os.replace(tmp, MEMORY_PATH)
-    print(f"[기억] 정리: {len(mems)} -> {len(keep)}개")
+        for m in items[:-MAX_PER_PERSON]:
+            if not (m.get("permanent") or (m.get("importance", 0) >= 8 and m.get("at", "") >= cutoff)):
+                archive.append(m["id"])
+    store.archive_memory_ids(archive)
+    print(f"[기억] 정리: {len(mems)} -> {len(mems) - len(archive)}개 (보관 {len(archive)}개)")
 
 
 FEEDBACK_SPEC = (

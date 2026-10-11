@@ -49,6 +49,15 @@ def _save(items: list[dict]) -> None:
     os.replace(tmp, PROJECTS_PATH)
 
 
+TOWN_SCOPE = "동네"
+
+
+def open_to(p: dict, name: str) -> bool:
+    """이 사람이 이 프로젝트에 손을 보탤 수 있나. 동네 범위는 지금 동네에 있는 누구나(교체로 새로 나선 사람 포함),
+    회사 범위는 만들 때의 회사 사람들."""
+    return p.get("scope") == TOWN_SCOPE or not p.get("members") or name in p["members"]
+
+
 def _same(a: str, b: str) -> bool:
     a, b = (a or "").replace(" ", ""), (b or "").replace(" ", "")
     return bool(a and b) and (a in b or b in a)
@@ -100,7 +109,7 @@ def contribute(title: str, name: str, did: str) -> dict | None:
     for p in items:
         if p["stage"] == "완료" or not _same(p["title"], title):
             continue
-        if p.get("members") and name not in p["members"]:
+        if not open_to(p, name):
             return None
         today = now.strftime("%Y-%m-%d")
         if p.get("today", {}).get("date") != today:
@@ -159,7 +168,7 @@ def prompt_block(name: str) -> str:
     """에이전트 지각용: 진행 중인 마을 프로젝트(내가 맡은 일 표시) + 이미 바뀐 것."""
     lines = []
     for p in active():
-        if p.get("members") and name not in p["members"]:
+        if not open_to(p, name):
             continue
         role = "내가 담당" if name == p["owner"] else ("내가 돕는 중" if name in p["helpers"] else "")
         lines.append(f"- {p['title']} ({p['progress']}%, 지금 단계: {current_step(p)}) 담당 {p['owner']}"
@@ -167,7 +176,7 @@ def prompt_block(name: str) -> str:
     out = []
     if lines:
         out.append("[진행 중인 마을 프로젝트 - 손을 보태면 project_work에 그 시간에 실제로 한 일을 써라]\n" + "\n".join(lines))
-    fin = [p for p in done() if not p.get("members") or name in p["members"]][-10:]
+    fin = [p for p in done() if open_to(p, name)][-10:]
     if fin:
         out.append("[우리 마을이 바뀐 것 - 다 같이 해낸 일]\n" + "\n".join(
             f"- {p['title']}: {p['goal']} ({p.get('done_at', '')[:10]} 완료)" for p in fin))
