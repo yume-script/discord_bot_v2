@@ -639,7 +639,7 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "메신저|직접", "opening": "첫 마디"}}{group_spec}{meeting_spec}, '
         f"{life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
     )
-    out = llm_json(_system(agent), user, temperature=0.85, timeout=DECIDE_TIMEOUT_SEC, tag=f"에이전트 {agent['name']}")
+    out = llm_json(_system(agent), user, temperature=0.85, timeout=DECIDE_TIMEOUT_SEC, tag=f"에이전트 {agent['name']}", agent=agent["name"])
     if not out:
         return None
     location = str(out.get("location") or "").strip()[:40]
@@ -733,7 +733,7 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
         '{"say": "할 말(1~3문장)", "end": true/false, "affinity": -3~3 정수(이 대화로 상대에게 생긴 호감 변화), '
         f"{life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
     )
-    out = llm_json(_system(agent), user, temperature=0.9, timeout=DECIDE_TIMEOUT_SEC, tag=f"대화 {name}")
+    out = llm_json(_system(agent), user, temperature=0.9, timeout=DECIDE_TIMEOUT_SEC, tag=f"대화 {name}", agent=name)
     if not out or not str(out.get("say") or "").strip():
         return None
     return out
@@ -894,7 +894,7 @@ def _meeting_turn(agent: dict, topic: str, place: str, people: list[dict], trans
         '{"say": "할 말(1~3문장)", "stance": "제안/찬성/반대/질문/보충/정리 중 하나", '
         '"proposal": "새로 낸 구체적인 안이 있으면 짧게, 없으면 빈 문자열"}'
     )
-    out = llm_json(_system(agent), user, temperature=0.9, timeout=DECIDE_TIMEOUT_SEC, tag=f"모임 {name}")
+    out = llm_json(_system(agent), user, temperature=0.9, timeout=DECIDE_TIMEOUT_SEC, tag=f"모임 {name}", agent=name)
     if not out or not str(out.get("say") or "").strip():
         return None
     return out
@@ -958,7 +958,7 @@ def _vote_once(people: list[dict], topic: str, candidates: list[str], talk: str,
             f"아래 후보 중 하나에 내 생각대로 한 표를 던져라 (후보 이름을 그대로 써라).\n{numbered}\n"
             '반드시 JSON으로만 응답: {"vote": "후보 이름 그대로", "reason": "고른 이유 한 줄"}'
         )
-        res = llm_json(_system(p), user, temperature=0.7, timeout=DECIDE_TIMEOUT_SEC, tag=f"투표 {p['name']}")
+        res = llm_json(_system(p), user, temperature=0.7, timeout=DECIDE_TIMEOUT_SEC, tag=f"투표 {p['name']}", agent=p["name"])
         choice = _match_candidate(str((res or {}).get("vote") or ""), candidates)
         if not choice:
             print(f"[에이전트] 투표 무효: {p['name']} ({(res or {}).get('vote')})")

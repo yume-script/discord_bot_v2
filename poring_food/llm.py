@@ -7,7 +7,11 @@
   PORING_LLM_SMART_DAILY_MAX회까지만 쓰고, 넘거나 실패하면(한도 초과 429 포함) 바로 기본 모델로 다시 부른다.
 - 기본 모델이 429(분당 한도)면 PORING_LLM_RETRY_SEC초 쉬고 한 번만 더 부른다 - 매시 회차에 호출이 몰려
   분당 한도에 걸린 판단이 그냥 "평소 루틴"으로 떨어지지 않게.
-- 요청은 모두 ai/llm_usage.py가 센다 (출처 "포링푸드", 상위 모델은 "포링푸드(상위)").
+- 인물 전용 모델(PORING_AGENT_MODELS, agent=이름): 정해 둔 인물의 판단/대화/모임 발언/투표는 그 모델로
+  (예: "groq_free:소라,김동식,조이서" - 다른 두뇌라 말투와 판단이 다른 사람들과 확실히 달라지고, 기본 모델 하루 한도도
+  아낀다). 추론 모델이면 생각 토큰을 줄이게 reasoning_effort(PORING_AGENT_MODEL_REASONING, 기본 low)를 붙인다.
+  실패하면 그 호출만 기본 모델로 다시 부르고, 429(분당 토큰 한도)면 AGENT_MODEL_COOLDOWN_SEC 동안은 바로 기본 모델로.
+- 요청은 모두 ai/llm_usage.py가 센다 (출처 "포링푸드", 상위 모델은 "포링푸드(상위)", 인물 전용은 "포링푸드(모델이름)").
 """
 from __future__ import annotations
 
@@ -29,6 +33,30 @@ RETRY_COOLDOWN_SEC = 600  # 재시도해도 또 429면 이만큼은 재시도 �
 SOURCE = "포링푸드"
 SMART_SOURCE = "포링푸드(상위)"
 _no_retry_until = 0.0
+AGENT_MODEL_REASONING = os.getenv("PORING_AGENT_MODEL_REASONING", "low").strip()
+AGENT_MODEL_COOLDOWN_SEC = 60  # 인물 전용 모델이 429를 내면 이만큼은 기본 모델로 (분당 한도가 풀릴 때까지)
+_agent_model_blocked: dict[str, float] = {}
+
+
+def parse_agent_models(raw: str) -> dict[str, str]:
+    """"groq_free:소라,김동식; other:조이서" -> {"소라": "groq_free", "김동식": "groq_free", "조이서": "other"}."""
+    out: dict[str, str] = {}
+    for part in (raw or "").split(";"):
+        model, sep, names = part.partition(":")
+        if not sep or not model.strip():
+            continue
+        for n in names.split(","):
+            if n.strip():
+                out[n.strip()] = model.strip()
+    return out
+
+
+AGENT_MODELS = parse_agent_models(os.getenv("PORING_AGENT_MODELS", "groq_free:소라,김동식,조이서"))
+
+
+def agent_model(name: str) -> str:
+    """이 인물 전용 모델 (없으면 "")."""
+    return AGENT_MODELS.get(name or "", "")
 _smart_blocked_day = ""  # 상위 모델이 429를 낸 날 - 그날은 더 안 부른다
 
 
@@ -39,7 +67,7 @@ def smart_used_today() -> int:
         return 0
 
 
-def _post(model: str, system: str, user: str, temperature: float, timeout: int):
+def _post(model: str, system: str, user: str, temperature: float, timeout: int, extra: dict | None = None):
     return requests.post(
         API_URL,
         json={
@@ -47,23 +75,25 @@ def _post(model: str, system: str, user: str, temperature: float, timeout: int):
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "temperature": temperature,
             "response_format": {"type": "json_object"},
+            **(extra or {}),
         },
         headers={"Authorization": f"Bearer {LITELLM_MASTER_KEY}", "Content-Type": "application/json"},
         timeout=timeout,
     )
 
 
-def _call(model: str, source: str, system: str, user: str, temperature: float, timeout: int, tag: str):
+def _call(model: str, source: str, system: str, user: str, temperature: float, timeout: int, tag: str,
+          extra: dict | None = None):
     """한 번 부른다. 반환: (dict 또는 None, HTTP 상태 코드 - 연결 실패면 0)."""
     try:
-        res = _post(model, system, user, temperature, timeout)
+        res = _post(model, system, user, temperature, timeout, extra)
     except requests.RequestException as e:
         llm_usage.record(source, ok=False)
         print(f"[경고] {tag} 호출 실패: {e}")
         return None, 0
     if res.status_code != 200:
         llm_usage.record(source, ok=False)
-        print(f"[경고] {tag} 응답 오류: HTTP {res.status_code}" + (f" ({model})" if source == SMART_SOURCE else ""))
+        print(f"[경고] {tag} 응답 오류: HTTP {res.status_code}" + (f" ({model})" if source != SOURCE else ""))
         return None, res.status_code
     try:
         body = res.json()
@@ -77,10 +107,20 @@ def _call(model: str, source: str, system: str, user: str, temperature: float, t
 
 
 def llm_json(system: str, user: str, *, temperature: float = 0.8, timeout: int = 45, tag: str = "LLM",
-             smart: bool = False) -> dict | None:
+             smart: bool = False, agent: str = "") -> dict | None:
+    """agent: 이 호출이 그 인물의 생각/말이면 이름 (인물 전용 모델이 있으면 그 모델로)."""
     if not (API_URL and LITELLM_MASTER_KEY):
         return None
     global _no_retry_until, _smart_blocked_day
+    own = agent_model(agent)
+    if own and own != LLM_MODEL and time.time() >= _agent_model_blocked.get(own, 0):
+        extra = {"reasoning_effort": AGENT_MODEL_REASONING} if AGENT_MODEL_REASONING else None
+        out, status = _call(own, f"{SOURCE}({own})", system, user, temperature, timeout, tag, extra)
+        if out is not None:
+            return out
+        if status == 429:
+            _agent_model_blocked[own] = time.time() + AGENT_MODEL_COOLDOWN_SEC
+        print(f"[LLM] {tag}: {own} 실패 - 기본 모델로 다시")
     today = time.strftime("%Y-%m-%d")
     if (smart and SMART_MODEL and SMART_MODEL != LLM_MODEL and _smart_blocked_day != today
             and smart_used_today() < SMART_DAILY_MAX):
