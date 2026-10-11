@@ -29,6 +29,8 @@ def _route(monkeypatch, statuses: dict):
     monkeypatch.setattr(llm, "LLM_MODEL", "base")
     monkeypatch.setattr(llm, "SMART_MODEL", "smart")
     monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "_no_retry_until", 0.0)
+    monkeypatch.setattr(llm, "_smart_blocked_day", "")
     return calls
 
 
@@ -83,3 +85,12 @@ def test_semantic_off_keeps_keyword_recall(monkeypatch):
     memory.remember("애순이", "혼자 집에서 쉼", 5)
     top = memory.recall("애순이", ["소라"], k=1, query="아무거나")
     assert "소라" in top[0]["text"]
+
+
+def test_persistent_429_stops_retrying(monkeypatch):
+    calls = _route(monkeypatch, {"smart": [429], "base": [429, 429, 429, 429]})
+    assert llm.llm_json("s", "u", smart=True) is None
+    assert calls == ["smart", "base", "base"]
+    calls.clear()
+    assert llm.llm_json("s", "u", smart=True) is None
+    assert calls == ["base"]  # 상위 모델은 오늘 막혔고, 기본 모델은 한동안 재시도 없이 바로 실패

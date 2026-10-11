@@ -25,8 +25,11 @@ from .config import API_URL, LITELLM_MASTER_KEY, LLM_MODEL
 SMART_MODEL = os.getenv("PORING_LLM_MODEL_SMART", "gemini-free3_7").strip()
 SMART_DAILY_MAX = int(os.getenv("PORING_LLM_SMART_DAILY_MAX", "15"))
 RETRY_SEC = float(os.getenv("PORING_LLM_RETRY_SEC", "20"))
+RETRY_COOLDOWN_SEC = 600  # 재시도해도 또 429면 이만큼은 재시도 없이 바로 실패 (하루 한도를 다 쓴 경우 회차가 늘어지지 않게)
 SOURCE = "포링푸드"
 SMART_SOURCE = "포링푸드(상위)"
+_no_retry_until = 0.0
+_smart_blocked_day = ""  # 상위 모델이 429를 낸 날 - 그날은 더 안 부른다
 
 
 def smart_used_today() -> int:
@@ -77,13 +80,22 @@ def llm_json(system: str, user: str, *, temperature: float = 0.8, timeout: int =
              smart: bool = False) -> dict | None:
     if not (API_URL and LITELLM_MASTER_KEY):
         return None
-    if smart and SMART_MODEL and SMART_MODEL != LLM_MODEL and smart_used_today() < SMART_DAILY_MAX:
-        out, _status = _call(SMART_MODEL, SMART_SOURCE, system, user, temperature, timeout, tag)
+    global _no_retry_until, _smart_blocked_day
+    today = time.strftime("%Y-%m-%d")
+    if (smart and SMART_MODEL and SMART_MODEL != LLM_MODEL and _smart_blocked_day != today
+            and smart_used_today() < SMART_DAILY_MAX):
+        out, status = _call(SMART_MODEL, SMART_SOURCE, system, user, temperature, timeout, tag)
         if out is not None:
             return out
+        if status == 429:
+            _smart_blocked_day = today
+            print("[LLM] 상위 모델 한도 초과 - 오늘은 기본 모델만 쓴다")
         print(f"[LLM] {tag}: 상위 모델 실패 - 기본 모델로 다시")
     out, status = _call(LLM_MODEL, SOURCE, system, user, temperature, timeout, tag)
-    if out is None and status == 429 and RETRY_SEC > 0:
+    if out is None and status == 429 and RETRY_SEC > 0 and time.time() >= _no_retry_until:
         time.sleep(RETRY_SEC)
-        out, _status = _call(LLM_MODEL, SOURCE, system, user, temperature, timeout, f"{tag} (재시도)")
+        out, status = _call(LLM_MODEL, SOURCE, system, user, temperature, timeout, f"{tag} (재시도)")
+        if out is None and status == 429:
+            _no_retry_until = time.time() + RETRY_COOLDOWN_SEC
+            print(f"[LLM] 기본 모델 한도 초과가 계속됨 - {RETRY_COOLDOWN_SEC // 60}분간 재시도 없이 진행 (하루 한도를 다 썼을 수 있음)")
     return out
