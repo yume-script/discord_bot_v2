@@ -164,6 +164,15 @@ python app.py
 - **실행**: `cogs/poring_food.py`가 매시 `PORING_FOOD_RUN_MINUTE`분(기본 3분, KST)에 한 회차를 돌린다.
   포링푸드 코드는 동기(requests) 코드라 스레드에서 돌려서 봇을 막지 않는다. 관리자는 `/포링푸드실행`으로
   지금 바로 한 회차를 돌려볼 수 있다. 봇이 꺼져 있던 시간의 회차는 건너뛴다.
+- **LLM 두 단계 (`poring_food/llm.py`)**: 자주 부르는 것(매시 판단/대화 한마디/투표)은 기본 모델(`PORING_LLM_MODEL`),
+  하루 몇 번뿐인 중요한 판단(모임 결론, 마을 프로젝트 계획, 연대기 하루/주/월 요약, 세계 엔진 하루 계획, 작가 회의,
+  주간 실적 발표)은 상위 모델(`PORING_LLM_MODEL_SMART`, 기본 `gemini-free3_7`). 무료 키의 하루 한도가 작아서
+  하루 `PORING_LLM_SMART_DAILY_MAX`(기본 15)회까지만 쓰고, 넘거나 실패하면 기본 모델로 바로 다시 부른다.
+  기본 모델이 분당 한도(HTTP 429)에 걸리면 `PORING_LLM_RETRY_SEC`초 쉬고 한 번 더. 스토리(장면/작가 회의)도 같은 함수를 쓴다.
+- **기억 의미 검색 (`poring_food/semantic.py`)**: 에이전트가 판단할 때 "지금 상황(새 소식 + 평소 이 시간 루틴)"과 뜻이
+  비슷한 기억을 로컬 임베딩(`jhgan/ko-sroberta-multitask`, 라그M 검색과 같은 모델 - API 한도/요금 없음)으로 찾는다.
+  단어가 안 겹쳐도("야근" ↔ "밤 11시까지 남아서 보고서") 떠올린다. 벡터는 `world.db` `memory_vecs`에, 떠올릴 때 한 번에
+  최대 64개씩 만들어 저장(예전 기억도 조금씩 채워짐). sentence-transformers가 없거나 `PORING_MEMORY_SEMANTIC=0`이면 키워드만.
 - **봇 것을 그대로 쓰는 것**: LLM(`LITELLM_*`, 모델만 `PORING_LLM_MODEL`로 따로 지정 가능), 카톡 브릿지
   (`KATALK_BRIDGE_URL`, 방은 `PORING_KAKAO_ROOM_ID`), 디스코드(`PORING_DISCORD_CHANNEL_ID`면 봇이 직접
   올림, 없으면 `PORING_DISCORD_WEBHOOK_URL` 웹훅), 북오아시스 MCP 연결, 대화 로그 DB("주문·고객 문의"/경쟁사 지표).

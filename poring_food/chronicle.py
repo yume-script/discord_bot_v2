@@ -416,7 +416,7 @@ def _summarize_day(date: str) -> dict | None:
         '"status": "open 또는 resolved", "note": "오늘 어떻게 진행됐는지 한 줄 (해결됐으면 결론)"}]}\n'
         "threads는 동네/회사 사람들이 함께 아는 공개된 일만 (개인 비밀이나 속마음은 넣지 마라)."
     )
-    out = llm_json(system, user, temperature=0.4, timeout=SUMMARY_TIMEOUT_SEC, tag="연대기")
+    out = llm_json(system, user, temperature=0.4, timeout=SUMMARY_TIMEOUT_SEC, tag="연대기", smart=True)
     if not out or not str(out.get("summary") or "").strip():
         return None
     for t in out.get("threads") or []:
@@ -449,7 +449,7 @@ def _rollup(kind: str, key: str, days: list[str]) -> dict | None:
                    f"이 {label}를 정리해라. 반드시 JSON으로만 응답:\n"
                    '{"summary": "이 기간의 큰 흐름과 사건, 인물들의 변화 4~8문장", '
                    '"public": "동네 사람들이 다 알 만한 공개된 흐름만 2~4문장 (사적인 일/속마음/회사 기밀 제외)"}',
-                   temperature=0.4, timeout=SUMMARY_TIMEOUT_SEC, tag="연대기")
+                   temperature=0.4, timeout=SUMMARY_TIMEOUT_SEC, tag="연대기", smart=True)
     if not out or not str(out.get("summary") or "").strip():
         return None
     return {"kind": kind, "key": key, "text": str(out["summary"]).strip()[:2000],

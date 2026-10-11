@@ -466,7 +466,7 @@ def _kpi_reviews(agents: list[dict], roster: list[dict], data: dict, now) -> Non
                 f"부서장으로서 단톡방에 주간 실적을 발표하라. 1등 {j(top, '을')} 칭찬하고 보너스 {kpi.WEEKLY_BONUS:,}원을 알리고, "
                 f"꼴찌 {bottom}에게는 내 성격대로 한마디 한다. 순위와 점수는 위 그대로 쓴다. 3~6줄.\n"
                 '반드시 JSON으로만 응답: {"text": "단톡방에 올릴 글"}',
-                temperature=0.8, timeout=DECIDE_TIMEOUT_SEC, tag=f"주간 실적 {announcer['name']}")
+                temperature=0.8, timeout=DECIDE_TIMEOUT_SEC, tag=f"주간 실적 {announcer['name']}", smart=True)
             text = str((out or {}).get("text") or "").strip() if isinstance(out, dict) else ""
             if not text:
                 text = (f"📊 지난주({res['label']}) 실적 발표합니다.\n{board}\n"
@@ -520,6 +520,12 @@ def _kakao_digest(agent: dict, since: str) -> tuple[list[str], str]:
     return lines, now_iso
 
 
+def _situation(agent: dict, routine_hint: str, inbox: list[dict]) -> str:
+    """기억 의미 검색용 지금 상황 한 덩어리: 새로 알게 된 일 + 평소 이 시간 루틴 (사람 이름은 키워드 검색이 맡는다)."""
+    news = " / ".join(m["text"] for m in inbox[-6:])
+    return f"{news} {routine_hint or agent.get('routine', '')}".strip()
+
+
 def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: list[dict]) -> str:
     now = now_kst()
     name = agent["name"]
@@ -534,7 +540,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         f"[평소 이 시간 루틴] {routine_hint or agent.get('routine', '')}",
         life.prompt_block(name),
         _duty_block(agent),
-        memory.prompt_block(name, terms, k=5),
+        memory.prompt_block(name, terms, k=5, query=_situation(agent, routine_hint, inbox)),
         "[받은 소식/메시지 - 지난번 이후 새로 알게 된 것]\n" + ("\n".join(inbox_lines) or "- 없음"),
     ]
     if kakao:
@@ -1056,7 +1062,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
         '{"decided": true/false, "conclusion": "결론 한 줄 (결정됐으면 무엇으로 정했는지, 아니면 어디까지 왔는지)", '
         '"detail": "누가 어떤 안을 냈고 찬반이 어땠는지 1~2문장", "next": "결론이 안 났으면 다음에 할 일, 났으면 빈 문자열", '
         '"candidates": ["결론이 안 났으면 지금까지 나온 유력한 후보안들 2~5개 (짧은 이름 그대로)"]}',
-        temperature=0.3, timeout=DECIDE_TIMEOUT_SEC, tag="모임 결론")
+        temperature=0.3, timeout=DECIDE_TIMEOUT_SEC, tag="모임 결론", smart=True)
     decided = bool(out and out.get("decided"))
     conclusion = str((out or {}).get("conclusion") or "결론 없이 끝남").strip()[:200]
     detail = str((out or {}).get("detail") or "").strip()[:300]
@@ -1237,7 +1243,7 @@ def _start_project(topic: str, decision: str, talk: str, people: list[dict], sco
         "반드시 JSON으로만 응답:\n"
         '{"is_project": true/false, "title": "프로젝트 이름(짧게)", "goal": "다 되면 동네가 어떻게 바뀌는지 한 줄", '
         '"steps": ["단계 3~5개, 각각 짧게"], "owner": "참석자 중 맡을 사람(성격/처지에 맞게)", "helpers": ["도울 참석자 1~4명"]}',
-        temperature=0.4, timeout=DECIDE_TIMEOUT_SEC, tag="마을 프로젝트")
+        temperature=0.4, timeout=DECIDE_TIMEOUT_SEC, tag="마을 프로젝트", smart=True)
     if not out or not out.get("is_project") or not str(out.get("title") or "").strip():
         return ""
     owner = out.get("owner") if out.get("owner") in names else names[0]

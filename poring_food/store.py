@@ -7,6 +7,7 @@
 - memories : 인물 기억 (archived=1이면 정리돼서 평소엔 안 떠올리는 기억 - 지우지 않는다, permanent=1은 절대 정리 안 됨)
 - events   : 세계에서 일어난 일 (세계 엔진/소문/업무/모임/투표/프로젝트/교체/이사...)
 - actions  : 에이전트 매시 판단 (어디서 무엇을, 속마음)
+- memory_vecs : 기억 의미 검색용 벡터 (semantic.py, 기억 id별)
 
 처음 열 때 예전 jsonl(memories.jsonl, archive/memories.jsonl, archive/events.jsonl, archive/actions.jsonl)을
 한 번 옮겨 담고, 원래 파일은 *.imported로 이름만 바꿔 백업으로 남긴다.
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS actions (
     thought TEXT, plan TEXT);
 CREATE INDEX IF NOT EXISTS idx_actions_at ON actions(at);
 CREATE INDEX IF NOT EXISTS idx_actions_name ON actions(name, at);
+CREATE TABLE IF NOT EXISTS memory_vecs (id INTEGER PRIMARY KEY, vec BLOB NOT NULL);
 """
 _init_lock = threading.Lock()
 _ready: set[str] = set()
@@ -168,6 +170,25 @@ def archive_memory_ids(ids: list[int]) -> None:
         return
     with _db() as conn:
         conn.executemany("UPDATE memories SET archived=1 WHERE id=?", [(i,) for i in ids])
+
+
+def memory_vecs(ids: list[int]) -> dict[int, bytes]:
+    if not ids:
+        return {}
+    out: dict[int, bytes] = {}
+    with _db() as conn:
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            q = "SELECT id, vec FROM memory_vecs WHERE id IN (" + ",".join("?" * len(chunk)) + ")"
+            out.update({r[0]: r[1] for r in conn.execute(q, chunk)})
+    return out
+
+
+def set_memory_vecs(rows: dict[int, bytes]) -> None:
+    if not rows:
+        return
+    with _db() as conn:
+        conn.executemany("INSERT OR REPLACE INTO memory_vecs (id, vec) VALUES (?, ?)", list(rows.items()))
 
 
 def memory_names() -> set[str]:

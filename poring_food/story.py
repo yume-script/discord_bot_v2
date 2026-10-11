@@ -25,12 +25,11 @@ import random
 import uuid
 from datetime import datetime, timedelta
 
-import requests
-
 from .clock import now_kst
 from . import characters, life, memory, signals
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
-from .config import API_URL, LITELLM_MASTER_KEY, LLM_MODEL, STATE_DIR
+from .config import STATE_DIR
+from .llm import llm_json
 
 STORY_ENABLED = os.getenv("PORING_STORY_ENABLED", "1") not in ("0", "false", "False", "")
 SCENE_HOURS = {int(h) for h in os.getenv("PORING_SCENE_HOURS", "9,11,13,15,17,20").split(",") if h.strip()}
@@ -51,29 +50,8 @@ _AMBIGUOUS_LOCATIONS = {"집"}
 
 
 # ===================================================================== 공용
-def _llm_json(system: str, user: str, *, temperature: float, timeout: int) -> dict | None:
-    if not (API_URL and LITELLM_MASTER_KEY):
-        return None
-    try:
-        res = requests.post(
-            API_URL,
-            json={
-                "model": LLM_MODEL,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "temperature": temperature,
-                "response_format": {"type": "json_object"},
-            },
-            headers={"Authorization": f"Bearer {LITELLM_MASTER_KEY}", "Content-Type": "application/json"},
-            timeout=timeout,
-        )
-        if res.status_code != 200:
-            print(f"[경고] 스토리 LLM 응답 오류: HTTP {res.status_code}")
-            return None
-        data = json.loads(res.json()["choices"][0]["message"]["content"])
-        return data if isinstance(data, dict) else None
-    except Exception as e:  # noqa: BLE001
-        print(f"[경고] 스토리 LLM 호출 실패: {e}")
-        return None
+def _llm_json(system: str, user: str, *, temperature: float, timeout: int, smart: bool = False) -> dict | None:
+    return llm_json(system, user, temperature=temperature, timeout=timeout, tag="스토리 LLM", smart=smart)
 
 
 def _load_json(path: str, default):
@@ -445,7 +423,7 @@ def maybe_run_writers_room(roster: list[dict], force: bool = False) -> bool:
         '"status": "active|climax|resolved", "summary_so_far": "지금까지", "next_hook": "다음 떡밥"}], '
         '"previously": "...", "today_digest": "..."}'
     )
-    out = _llm_json(system, user, temperature=0.8, timeout=WRITERS_TIMEOUT_SEC)
+    out = _llm_json(system, user, temperature=0.8, timeout=WRITERS_TIMEOUT_SEC, smart=True)
     if not out:
         return False
 
