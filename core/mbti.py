@@ -46,7 +46,7 @@ async def analyze_mbti(conversation_key: str, target_display_name: str, is_kakao
     chat_log = "\n".join(f"- {m}" for m in messages)
     prompt = ANALYSIS_PROMPT_TEMPLATE.format(chat_log=chat_log, persona_name=persona_name)
 
-    model = build_chat_model()
+    model = build_chat_model(source="MBTI")
     resp = await model.ainvoke(
         [
             SystemMessage(content=f"너는 {'카카오톡' if is_kakao else '디스코드'} 봇 {persona_name}야."),

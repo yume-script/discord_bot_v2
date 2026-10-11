@@ -84,7 +84,7 @@ async def a_query(
     tools = [*local_tools, *(t for t in get_tools() if t.name not in local_names)]
     tools_by_name = {t.name: t for t in tools}
 
-    model = build_chat_model()
+    model = build_chat_model(source="채팅")
     bound_model = model.bind_tools(tools) if tools else model
 
     messages = [SystemMessage(content=build_system_prompt(is_kakao, familiar))]

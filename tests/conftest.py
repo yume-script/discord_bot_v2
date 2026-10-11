@@ -13,6 +13,7 @@ import tempfile
 _STATE = tempfile.mkdtemp(prefix="poring_test_")
 os.environ.setdefault("DISCORD_BOT_TOKEN", "test")
 os.environ["PORING_FOOD_STATE_DIR"] = _STATE
+os.environ["LLM_USAGE_DB_PATH"] = os.path.join(_STATE, "llm_usage.db")
 os.environ.setdefault("LITELLM_API_KEY", "test")
 os.environ.setdefault("LITELLM_BASE_URL", "http://llm.invalid")
 os.environ.setdefault("PORING_AGENT_CHANNEL_ID", "0")

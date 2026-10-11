@@ -76,6 +76,17 @@ server_status:
   args:
     - "/mnt/discord_bot_v2/scripts/server_status_mcp.py"
 
+# LiteLLM 프록시 전체 + 이 봇이 직접 센 LLM 요청 수/토큰 (읽기 전용, 키는 응답에 안 나간다)
+# 포링푸드 담당 실적(에린 '연산 처리'/'운영 경비')과 "오늘 LLM 몇 번 썼어?" 질문에 쓴다.
+llm_usage:
+  transport: stdio
+  command: /mnt/discord_bot_v2/venv/bin/python3
+  args:
+    - "/mnt/discord_bot_v2/scripts/llm_usage_mcp.py"
+  env:
+    LITELLM_BASE_URL: "${LITELLM_BASE_URL}"
+    LITELLM_API_KEY: "${LITELLM_API_KEY}"
+
 bookoasis:
   transport: stdio
   command: ssh

@@ -5,6 +5,8 @@ import json
 
 import requests
 
+from ai import llm_usage
+
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import API_URL, LITELLM_MASTER_KEY, LLM_MODEL
 
@@ -25,10 +27,18 @@ def llm_json(system: str, user: str, *, temperature: float = 0.8, timeout: int =
             timeout=timeout,
         )
         if res.status_code != 200:
+            llm_usage.record("포링푸드", ok=False)
             print(f"[경고] {tag} 응답 오류: HTTP {res.status_code}")
             return None
-        data = json.loads(res.json()["choices"][0]["message"]["content"])
+        body = res.json()
+        usage = body.get("usage") or {} if isinstance(body, dict) else {}
+        llm_usage.record("포링푸드", True, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+        data = json.loads(body["choices"][0]["message"]["content"])
         return data if isinstance(data, dict) else None
+    except requests.RequestException as e:
+        llm_usage.record("포링푸드", ok=False)  # 연결 실패/타임아웃 - 응답을 받은 뒤의 형식 오류는 이미 셌다
+        print(f"[경고] {tag} 호출 실패: {e}")
+        return None
     except Exception as e:  # noqa: BLE001
         print(f"[경고] {tag} 호출 실패: {e}")
         return None

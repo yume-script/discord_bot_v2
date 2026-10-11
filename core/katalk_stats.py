@@ -88,7 +88,7 @@ async def summarize_today(conversation_key: str, is_kakao: bool = False) -> str:
     )
 
     identity = "너는 카카오톡 봇 애순이야." if is_kakao else "너는 디스코드 봇 아메하나야."
-    model = build_chat_model()
+    model = build_chat_model(source="카톡통계")
     resp = await model.ainvoke(
         [
             SystemMessage(content=f"{identity} 카톡방 대화를 요약해주는 중이야."),
