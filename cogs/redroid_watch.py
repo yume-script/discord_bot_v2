@@ -142,7 +142,7 @@ async def _compose_message(event: dict) -> str:
     names = _package_names(event)
     text = ""
     try:
-        model = build_chat_model()
+        model = build_chat_model(source="레드로이드")
         resp = await asyncio.wait_for(
             model.ainvoke([
                 SystemMessage(content=_SYSTEM_PROMPT),

@@ -8,6 +8,8 @@
 |  └ 담당 라인         | books=일반/웹툰 서재(애순이), books_adult=성인/화보 서재, plex=영상     |                                     |
 | 판매량(출하)         | 오늘 Plex 재생 수, 지금 시청 중인 수(매장 손님)  | tautulli plays_by_date / activity   |
 | 주문·고객 문의        | 오늘 사람이 봇에게 보낸 메시지 수               | 대화 로그 DB (예전 "생산량")         |
+| 연산 처리 / 운영 경비  | 오늘 LLM 요청 수 / 토큰                       | llm_usage get_llm_usage (LiteLLM     |
+|                     |                                              | 프록시 전체, 못 받으면 봇 직접 집계)  |
 
 [변경] 예전엔 생산량=사람 메시지 수, 판매량=봇 응답 수였고 목표가 1000건 고정이라 늘 "한산함"
 이었다. 이제 기준은 각 지표의 "최근 7일 하루 평균"이다 - 실제로 평소보다 바쁜지가 이야기에 나온다.
@@ -38,6 +40,7 @@ KST = timezone(timedelta(hours=9))
 METRICS_PATH = os.path.join(STATE_DIR, "metrics.json")
 PLEX_SERVER = os.getenv("PORING_PLEX_MCP_SERVER", "plex")
 TAUTULLI_SERVER = os.getenv("PORING_TAUTULLI_MCP_SERVER", "tautulli")
+LLM_USAGE_SERVER = os.getenv("PORING_LLM_USAGE_MCP_SERVER", "llm_usage")
 PLEX_FETCH_LIMIT = int(os.getenv("PORING_PLEX_FETCH_LIMIT", "50"))
 # 최근 7일 기록이 아직 없을 때 쓰는 하루 생산 목표
 DEFAULT_PRODUCTION_TARGET = float(os.getenv("PORING_PRODUCTION_DEFAULT_TARGET", "5"))
@@ -170,6 +173,42 @@ async def _tautulli_async() -> dict:
     return {"plays": plays, "streams": streams}
 
 
+# ---------------------------------------------------------------- LLM 사용량 (LiteLLM 프록시 / 봇 집계)
+
+async def _llm_async() -> dict:
+    from ai.mcp_manager import server_session
+    async with server_session(LLM_USAGE_SERVER) as session:
+        return _parse_tool_result(await session.call_tool("get_llm_usage", {"days": AVG_DAYS + 1}))
+
+
+def _present_avg(by_day: dict, today: str) -> float | None:
+    """지난 7일 중 기록이 있는 날만의 하루 평균 (집계를 시작하기 전 날을 0으로 치지 않게)."""
+    vals = [by_day[d] for d in _past_days(today) if d in by_day]
+    return round(sum(vals) / len(vals), 1) if vals else None
+
+
+def llm_summary(proxy: dict | None, bot: dict, today: str) -> dict | None:
+    """
+    프록시 기록(있으면, 같은 LiteLLM을 쓰는 다른 서비스까지 전체)이나 봇 집계 -> 오늘 지표
+    {"today", "avg", "tokens_today", "tokens_avg", "failures_today", "bot_today", "source"}. 둘 다 없으면 None.
+    실패 수는 봇 집계에만 있다 (프록시 새 API에 있으면 그걸 쓴다).
+    """
+    days = (proxy or {}).get("days") if isinstance((proxy or {}).get("days"), dict) else None
+    source = "LiteLLM 전체"
+    if not days:
+        days, source = bot, "봇 집계"
+    if not days:
+        return None
+    req = {d: int(v.get("requests", 0)) for d, v in days.items() if isinstance(v, dict)}
+    tok = {d: int(v.get("tokens", 0)) for d, v in days.items() if isinstance(v, dict)}
+    t = days.get(today) or {}
+    failures = t.get("failures") if "failures" in t else (bot.get(today) or {}).get("failures", 0)
+    return {"today": req.get(today, 0), "avg": _present_avg(req, today),
+            "tokens_today": tok.get(today, 0), "tokens_avg": _present_avg(tok, today),
+            "failures_today": int(failures or 0), "bot_today": int((bot.get(today) or {}).get("requests", 0)),
+            "source": source}
+
+
 # ---------------------------------------------------------------- 주문 (대화 로그 DB)
 
 def _orders_by_day(today: str) -> dict:
@@ -197,7 +236,7 @@ def _orders_by_day(today: str) -> dict:
 # ---------------------------------------------------------------- 갱신
 
 async def _gather_async() -> dict:
-    jobs = {"plex": _plex_async(), "tautulli": _tautulli_async()}
+    jobs = {"plex": _plex_async(), "tautulli": _tautulli_async(), "llm": _llm_async()}
     if BOOKOASIS_ENABLED:
         jobs["books"] = _books_async()
     results = await asyncio.gather(*jobs.values(), return_exceptions=True)
@@ -299,9 +338,25 @@ def refresh() -> None:
     if orders or os.path.exists(DISCORD_BOT_V2_DB_PATH):
         data["orders"] = {"today": orders.get(today, 0), "avg": _avg(orders, today)}
 
+    # LLM 사용량: 프록시 기록(MCP) 우선, 못 받으면 봇 집계(같은 서버의 storage/llm_usage.db를 바로 읽는다)
+    try:
+        from ai import llm_usage
+        bot = llm_usage.by_day(AVG_DAYS + 1)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 봇 LLM 사용량 읽기 실패: {e}")
+        bot = {}
+    proxy = (fetched.get("llm") or {}).get("proxy")
+    if not (proxy or {}).get("days") and same_day and (prev.get("llm") or {}).get("source") == "LiteLLM 전체":
+        data["llm"] = prev["llm"]  # 이번에만 프록시 조회 실패 - 같은 날엔 출처를 섞지 않는다
+    else:
+        summary = llm_summary(proxy, bot, today)
+        if summary:
+            data["llm"] = summary
+
     _save(data)
     print(f"[통계] 지표 갱신: 생산 {data.get('production', {}).get('today', '?')} / "
-          f"판매 {data.get('sales', {}).get('today', '?')} / 주문 {data.get('orders', {}).get('today', '?')}")
+          f"판매 {data.get('sales', {}).get('today', '?')} / 주문 {data.get('orders', {}).get('today', '?')} / "
+          f"LLM {data.get('llm', {}).get('today', '?')}({data.get('llm', {}).get('source', '-')})")
 
 
 # ---------------------------------------------------------------- 읽기
@@ -325,10 +380,18 @@ def part(key: str) -> dict | None:
 
 
 def count(key: str) -> dict | None:
-    """[담당 실적] 하루 누적 지표 하나 {today, avg, saturated, pace} - 생산 부문(plex/books/books_adult)
-    또는 "sales"(오늘 재생=출하), "orders"(오늘 사람 메시지=고객 문의). 집계 전이면 None."""
+    """[담당 실적] 하루 누적 지표 하나 {today, avg, saturated, pace} - 생산 부문(plex/books/books_adult),
+    "sales"(오늘 재생=출하), "orders"(오늘 사람 메시지=고객 문의), "llm_requests"/"llm_tokens"(LLM 요청/토큰).
+    집계 전이면 None."""
     if key in PART_KEYS:
         return part(key)
+    if key in ("llm_requests", "llm_tokens"):
+        x = _today().get("llm")
+        if not isinstance(x, dict):
+            return None
+        today, avg = (x["today"], x.get("avg")) if key == "llm_requests" else (x["tokens_today"], x.get("tokens_avg"))
+        return {"today": int(today), "avg": avg, "saturated": False, "pace": pace(int(today), avg),
+                "failures": x.get("failures_today", 0), "source": x.get("source", "")}
     x = _today().get(key)
     if not isinstance(x, dict) or "today" not in x:
         return None

@@ -368,9 +368,9 @@ def _duty_block(agent: dict) -> str:
 def _duty_updates(agents: list[dict], roster: list[dict], data: dict, now) -> None:
     """
     자리 배정(교체로 빠진 담당자의 일은 같은 부서 에이전트가 인수인계) -> 오늘 실적 기록 -> 알림.
-    누적 지표(입고/출하/문의)는 늘면 담당자 받은편지함에 알리고(깨우지는 않음), 평소의 몇 배가 들어온 날은
-    회사 사건(하루 한 번), 저녁까지 한산하면 담당자에게만(하루 한 번). 수준 지표(가동률/적재율/안정성)는
-    이상이 생긴 날 한 번 담당자를 깨운다. LLM 호출 없음 - 수치는 회차 맨 앞에서 MCP로 받아 둔 값.
+    누적 지표(입고/출하/문의/연산 처리)는 늘면 담당자 받은편지함에 알리고(깨우지는 않음), 평소의 몇 배가 들어온 날은
+    회사 사건(하루 한 번), 저녁까지 한산하면 담당자에게만(하루 한 번). 이상(과부하/창고 포화/멈춘 라인/연산 실패/
+    경비 급증)이 생긴 날은 한 번 담당자를 깨운다. LLM 호출 없음 - 수치는 회차 맨 앞에서 MCP로 받아 둔 값.
     """
     posts, changes = kpi.assign(agents, roster)
     for post, old, new in changes:
@@ -396,10 +396,10 @@ def _duty_updates(agents: list[dict], roster: list[dict], data: dict, now) -> No
             ds = seen_all.get(post["id"]) or {}
             if ds.get("date") != today:
                 ds = {"date": today, "seen": 0, "big": False, "slow": False, "alert": False}
+            if x.get("alert") and not ds.get("alert"):
+                ds["alert"] = True
+                _push_inbox(data, name, f"담당 {line}에 문제 - {x['alert']} ({x['text']})", "업무")
             if post["kind"] != "count":
-                if x.get("alert") and not ds["alert"]:
-                    ds["alert"] = True
-                    _push_inbox(data, name, f"담당 {line}에 문제 - {x['text']}", "업무")
                 seen_all[post["id"]] = ds
                 continue
             n, avg = int(x["value"]), x.get("avg")

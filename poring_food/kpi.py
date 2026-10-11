@@ -11,6 +11,8 @@
 | 설비 가동률            | 포링푸드 생산기획부           | server_status CPU %                         | 정명석    |
 | 창고 적재율            | 포링푸드 물류운송부           | server_status 디스크 사용률 (낮을수록 좋다)     | 이지안    |
 | 설비 안정성            | 에린 로지스틱스 시설관리부     | server_status 연속 가동일 / 멈춘 서비스 수      | 리정혁    |
+| 연산 처리             | 에린 로지스틱스 기획전략부     | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)        | 최택      |
+| 운영 경비             | 에린 로지스틱스 데이터보안부   | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)      | 동그라미  |
 | 매장 손님 수           | 카페 오후세시                | Tautulli 지금 시청 중인 스트림 수               | 소라      |
 
 - 담당은 사람이 아니라 자리에 붙는다: 담당자가 교체(rotation.py)로 쉬러 가면 같은 소속·부서의 다른 에이전트가
@@ -52,7 +54,8 @@ SCORE_CAP = 200
 CPU_OVERLOAD = 80
 DISK_ALERT = 85
 
-# kind: count(하루 누적, 평소 대비) / level(그때그때 수준) / disk(낮을수록 좋음) / stability(문제 없을수록 좋음)
+# kind: count(하루 누적, 평소 대비) / cost(하루 누적, 적을수록 좋음) / level(그때그때 수준) / disk(낮을수록 좋음) /
+#       stability(문제 없을수록 좋음)
 POSTS = [
     {"id": "books", "company": PF, "dept": "생산부", "first": "애순이", "kind": "count", "metric": "books",
      "line": "일반/웹툰 라인", "verb": "입고", "unit": "권", "source": "북오아시스 일반/웹툰 서재 오늘 입고 권 수"},
@@ -70,6 +73,10 @@ POSTS = [
      "line": "창고 적재율", "unit": "%", "source": "server_status 디스크 사용률"},
     {"id": "facility_stability", "company": ER, "dept": "시설관리부", "first": "리정혁", "kind": "stability",
      "metric": "stability", "line": "설비 안정성", "unit": "점", "source": "server_status 연속 가동일 / 멈춘 서비스"},
+    {"id": "llm_requests", "company": ER, "dept": "기획전략부", "first": "최택", "kind": "count", "metric": "llm_requests",
+     "line": "연산 처리", "verb": "처리", "unit": "건", "source": "LiteLLM 오늘 요청 수 (프록시 전체, 못 받으면 봇 집계)"},
+    {"id": "llm_cost", "company": ER, "dept": "데이터보안부", "first": "동그라미", "kind": "cost", "metric": "llm_tokens",
+     "line": "운영 경비", "unit": "토큰", "source": "LiteLLM 오늘 사용 토큰 (평소보다 적을수록 좋음)"},
     {"id": "streams", "company": CAFE, "dept": "카페", "first": "소라", "kind": "level", "metric": "streams",
      "line": "매장 손님", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수"},
 ]
@@ -159,9 +166,20 @@ def reading(post: dict) -> dict | None:
         text = f"오늘 {post['verb']} {x['today']}{post['unit']}{'+' if x.get('saturated') else ''}"
         extra = [f"최근 7일 하루 평균 {x['avg']:g}{post['unit']}" if x.get("avg") is not None else "", x.get("pace", "")]
         extra = [e for e in extra if e]
+        fails = int(x.get("failures") or 0)
+        alert = f"오늘 처리 실패 {fails}건 - 연산 라인이 자꾸 멈춘다" if fails >= max(5, x["today"] * 0.2) else ""
         return {"value": int(x["today"]), "avg": x.get("avg"), "pace": x.get("pace", ""),
                 "saturated": bool(x.get("saturated")), "text": text + (f" ({', '.join(extra)})" if extra else ""),
-                "alert": ""}
+                "alert": alert}
+    if kind == "cost":
+        x = metrics.count(metric)
+        if not x:
+            return None
+        avg = x.get("avg")
+        text = f"오늘 쓴 연산 경비 {x['today']:,}{post['unit']}" + (f" (최근 7일 하루 평균 {avg:,.0f}{post['unit']})" if avg else "")
+        heavy = bool(avg) and metrics.pace(int(x["today"]), avg) == "평소보다 훨씬 바쁨"
+        return {"value": int(x["today"]), "avg": avg, "text": text,
+                "alert": "경비가 평소보다 훨씬 많이 나가는 중" if heavy else ""}
     if metric == "streams":
         n = metrics.streams()
         if n is None:
@@ -218,6 +236,11 @@ def _score(post: dict, rec: dict, hist: float | None) -> int:
         if post["metric"] == "cpu" and mean >= CPU_OVERLOAD:
             s -= (mean - CPU_OVERLOAD) * 5  # 과부하는 실적이 아니라 사고
         return int(max(0, min(SCORE_CAP, s)))
+    if kind == "cost":  # 평소보다 적게 쓸수록 높다 (하루 마지막 기록이 그날 점수)
+        avg = rec.get("avg")
+        if not avg:
+            return 100
+        return int(min(SCORE_CAP, avg / max(rec["last"], 1) * 100))
     if kind == "disk":
         return int(max(0, min(SCORE_CAP, 150 - rec["sum"] / rec["n"])))
     return int(rec.get("min", rec["last"]))  # stability: 그날 가장 나빴던 때
@@ -240,7 +263,7 @@ def record(now: datetime | None = None) -> None:
         rec.update(last=v, sum=rec["sum"] + v, n=rec["n"] + 1, max=max(rec.get("max", v), v),
                    min=min(rec.get("min", v), v), holder=holders.get(post["id"]) or rec.get("holder", ""),
                    company=post["company"])
-        if post["kind"] == "count":
+        if post["kind"] in ("count", "cost"):
             rec.update(avg=x.get("avg"), saturated=x.get("saturated", False))
         rec["score"] = _score(post, rec, _hist_mean(data, post["id"], today))
         rows[post["id"]] = rec
