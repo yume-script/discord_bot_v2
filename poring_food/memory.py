@@ -5,8 +5,9 @@
 
 - 저장: storage/poring_food/world.db memories 테이블 (store.py) {"name", "at", "text", "importance"(1~10), "with"[이름], "source"}
 - 만드는 곳: 일지/장면 LLM이 JSON으로 같이 돌려준 memory(추가 LLM 호출 없음), 월급날 같은 규칙 사건
-- 떠올리기(recall): 최근일수록 + 중요할수록 + 지금 상황(같이 있는 사람, 화제 키워드)과 관련 있을수록
-  점수가 높다. 프롬프트에는 상위 몇 개만 넣는다 (임베딩 없이 키워드로 충분한 규모).
+- 떠올리기(recall): 최근일수록 + 중요할수록 + 지금 상황과 관련 있을수록 점수가 높다. 프롬프트에는 상위 몇 개만.
+  관련도는 키워드(같이 있는 사람, 화제 단어)와 의미 검색(semantic.py - 로컬 임베딩, 단어가 달라도 뜻이 비슷하면) 중
+  높은 쪽. 의미 검색을 못 쓰는 환경이면 키워드만.
 - 정리(prune): 파일이 커지면 인물별 최근 MAX_PER_PERSON개 + 중요도 8 이상(60일 이내) + 영구 기억(permanent,
   투표/모임 결론)만 남긴다.
   빠진 기억은 지우지 않고 보관 표시(archived)만 하고, 지금 상황과 관련 있으면
@@ -17,7 +18,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta
 
-from . import store
+from . import semantic, store
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -56,7 +57,15 @@ def all_names() -> set[str]:
     return store.memory_names()
 
 
-def _score(m: dict, now: datetime, terms: list[str]) -> float:
+ARCHIVED_SEMANTIC_MAX = 300  # 의미 검색으로 같이 훑는 정리된(오래된) 기억 수 - 최근 것부터
+
+
+def _semantic_rel(cos: float) -> float:
+    """임베딩 유사도(대략 0.2~0.8) -> 관련도 0~1."""
+    return max(0.0, min(1.0, (cos - 0.3) / 0.4))
+
+
+def _score(m: dict, now: datetime, terms: list[str], sem: dict[int, float] | None = None) -> float:
     try:
         age_h = max(0.0, (now - datetime.fromisoformat(m["at"])).total_seconds() / 3600)
     except (KeyError, ValueError):
@@ -65,23 +74,34 @@ def _score(m: dict, now: datetime, terms: list[str]) -> float:
     importance = m.get("importance", 5) / 10
     hay = m.get("text", "") + " " + " ".join(m.get("with", []))
     relevance = (sum(1 for t in terms if t and t in hay) / len(terms)) if terms else 0
+    if sem:
+        relevance = max(relevance, _semantic_rel(sem.get(m.get("id"), 0.0)))
+        return 0.35 * recency + 0.3 * importance + 0.35 * relevance + (0.3 if m.get("permanent") else 0)
     return 0.45 * recency + 0.35 * importance + 0.2 * relevance + (0.3 if m.get("permanent") else 0)
 
 
-def recall(name: str, terms: list[str] | None = None, k: int = 4) -> list[dict]:
-    """지금 상황(terms: 같이 있는 사람 이름, 화제 키워드)에 맞는 기억 상위 k개를 시간순으로."""
+def recall(name: str, terms: list[str] | None = None, k: int = 4, query: str = "") -> list[dict]:
+    """지금 상황(terms: 같이 있는 사람 이름, 화제 키워드 / query: 지금 상황을 풀어 쓴 글)에 맞는 기억 상위 k개를 시간순으로."""
     now = now_kst()
     terms = [t for t in (terms or []) if t and t != name]
     mems = _load(name)
+    seen = {m.get("id") for m in mems}
     if terms:
         # 정리된 오래된 기억도 지금 화제와 겹치면 떠올린다 (색인으로 그 사람 것만 꺼낸다)
-        mems += store.memories(name, archived=True, like=terms)
-    top = sorted(mems, key=lambda m: _score(m, now, terms), reverse=True)[:k]
+        mems += [m for m in store.memories(name, archived=True, like=terms) if m.get("id") not in seen]
+    sem = {}
+    if query and semantic.ENABLED:
+        if semantic.available():
+            seen = {m.get("id") for m in mems}
+            old = store.memories(name, archived=True)[-ARCHIVED_SEMANTIC_MAX:]
+            mems += [m for m in old if m.get("id") not in seen]
+        sem = semantic.similarities(query, mems)
+    top = sorted(mems, key=lambda m: _score(m, now, terms, sem), reverse=True)[:k]
     return sorted(top, key=lambda m: m.get("at", ""))
 
 
-def prompt_block(name: str, terms: list[str] | None = None, k: int = 4) -> str:
-    mems = recall(name, terms, k)
+def prompt_block(name: str, terms: list[str] | None = None, k: int = 4, query: str = "") -> str:
+    mems = recall(name, terms, k, query)
     if not mems:
         return ""
     lines = [f"[{name}의 기억 - 본인이 직접 겪은 일이다. 지금 상황과 관련 있으면 자연스럽게 떠올려라]"]

@@ -107,7 +107,7 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         '"targets": ["에이전트 이름 또는 회사 이름 또는 동네"], "visibility": "direct 또는 rumor", '
         '"effects": {"stress|happiness|loneliness|anger|romance|confidence|energy|job_satisfaction": -0.2~0.2}}]}'
     )
-    out = llm_json(system, user, temperature=0.9, timeout=PLAN_TIMEOUT_SEC, tag="세계 엔진")
+    out = llm_json(system, user, temperature=0.9, timeout=PLAN_TIMEOUT_SEC, tag="세계 엔진", smart=True)
     if not out:
         return []
     valid_targets = {a["name"] for a in agents} | set(companies) | {TOWN}

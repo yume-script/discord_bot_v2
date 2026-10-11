@@ -1,0 +1,85 @@
+"""LLM 상위 모델 라우팅(하루 상한, 실패 시 기본 모델, 429 재시도)과 기억 의미 검색."""
+import json
+
+from ai import llm_usage
+from poring_food import llm, memory, semantic
+
+
+class _Resp:
+    def __init__(self, status, content=None):
+        self.status_code = status
+        self._content = content
+
+    def json(self):
+        return {"choices": [{"message": {"content": json.dumps(self._content or {"ok": 1})}}],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2}}
+
+
+def _route(monkeypatch, statuses: dict):
+    """statuses: {모델: [차례로 돌려줄 HTTP 상태...]} - 다 쓰면 200."""
+    calls = []
+
+    def post(url, json=None, **kw):  # noqa: A002
+        calls.append(json["model"])
+        seq = statuses.get(json["model"], [])
+        return _Resp(seq.pop(0) if seq else 200, {"model": json["model"]})
+    monkeypatch.setattr(llm.requests, "post", post)
+    monkeypatch.setattr(llm, "API_URL", "http://llm.invalid/v1/chat/completions")
+    monkeypatch.setattr(llm, "LITELLM_MASTER_KEY", "k")
+    monkeypatch.setattr(llm, "LLM_MODEL", "base")
+    monkeypatch.setattr(llm, "SMART_MODEL", "smart")
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    return calls
+
+
+def test_smart_routing_and_daily_cap(monkeypatch):
+    calls = _route(monkeypatch, {})
+    monkeypatch.setattr(llm, "SMART_DAILY_MAX", 2)
+    assert llm.llm_json("s", "u", smart=True) == {"model": "smart"}
+    assert llm.llm_json("s", "u") == {"model": "base"}
+    assert llm.llm_json("s", "u", smart=True) == {"model": "smart"}
+    assert llm.llm_json("s", "u", smart=True) == {"model": "base"}  # 오늘 상한을 다 씀
+    assert calls == ["smart", "base", "smart", "base"]
+    assert llm.smart_used_today() == 2
+    src = next(iter(llm_usage.by_day(1).values()))["sources"]
+    assert src == {"포링푸드(상위)": 2, "포링푸드": 2}
+
+
+def test_smart_failure_falls_back_and_429_retries(monkeypatch):
+    calls = _route(monkeypatch, {"smart": [429], "base": [429]})
+    assert llm.llm_json("s", "u", smart=True) == {"model": "base"}
+    assert calls == ["smart", "base", "base"]  # 상위 모델 한도 초과 -> 기본 모델, 분당 한도 -> 쉬고 한 번 더
+    calls.clear()
+    _route(monkeypatch, {"base": [500]})
+    assert llm.llm_json("s", "u") is None  # 429가 아니면 다시 부르지 않는다
+
+
+def _fake_encode(texts):
+    groups = [("야근", "밤", "늦게", "남아서", "보고서"), ("고양이", "강아지", "산책"), ("비", "우산")]
+    out = []
+    for t in texts:
+        v = [1.0 if any(w in t for w in g) else 0.0 for g in groups] + [0.1]
+        n = sum(x * x for x in v) ** 0.5
+        out.append([x / n for x in v])
+    return out
+
+
+def test_semantic_recall_finds_meaning_not_words(monkeypatch):
+    monkeypatch.setattr(semantic, "ENABLED", True)
+    monkeypatch.setattr(semantic, "_encode", _fake_encode)
+    monkeypatch.setattr(semantic, "available", lambda: True)
+    memory.remember("애순이", "어제 밤 11시까지 남아서 보고서를 고쳤다", 5)
+    memory.remember("애순이", "점심에 강아지 영상을 봤다", 5)
+    memory.remember("애순이", "출근길에 우산을 놓고 왔다", 5)
+    top = memory.recall("애순이", [], k=1, query="부장님이 또 야근을 시켰다")
+    assert top[0]["text"].startswith("어제 밤 11시")
+    # 벡터는 저장돼서 다음엔 다시 만들지 않는다
+    assert len(memory.store.memory_vecs([m["id"] for m in memory.store.memories("애순이")])) == 3
+
+
+def test_semantic_off_keeps_keyword_recall(monkeypatch):
+    monkeypatch.setattr(semantic, "ENABLED", False)
+    memory.remember("애순이", "소라랑 카페에서 수다", 5)
+    memory.remember("애순이", "혼자 집에서 쉼", 5)
+    top = memory.recall("애순이", ["소라"], k=1, query="아무거나")
+    assert "소라" in top[0]["text"]
