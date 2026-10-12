@@ -398,7 +398,7 @@ def _duty_updates(agents: list[dict], roster: list[dict], data: dict, now) -> No
         _push_inbox(data, new, f"인수인계: {why}오늘부터 내가 {post['line']} 담당이다 ({post['source']}).", "업무")
         memory.remember(new, f"{why}{post['line']} 일을 내가 맡게 됐다. 이제 그 숫자가 내 실적이다.", 6, [old] if old else [], "업무")
         chronicle.record_event("업무", f"{post['line']} 담당 {old or '공석'} -> {new}", post["company"], [n for n in (old, new) if n])
-    kpi.record(now)
+    kpi.record(now, _desk_staff(data, now))
     today = now.strftime("%Y-%m-%d")
     for name, mine in posts.items():
         st = data.setdefault(name, {})
@@ -417,6 +417,10 @@ def _duty_updates(agents: list[dict], roster: list[dict], data: dict, now) -> No
             if x.get("alert") and not ds.get("alert"):
                 ds["alert"] = True
                 _push_inbox(data, name, f"담당 {line}에 문제 - {x['alert']} ({x['text']})", "업무")
+            if post["kind"] == "desk" and x.get("vip", 0) > ds.get("vip", 0):  # 실제 사람이 봇에게 말을 걸었다
+                _push_inbox(data, name, f"VIP 손님 문의 {x['vip'] - ds.get('vip', 0)}건이 들어와서 바로 응대함 - {x['text']}",
+                            "업무", quiet=True)
+                ds["vip"] = x["vip"]
             if post["kind"] != "count":
                 seen_all[post["id"]] = ds
                 continue
@@ -443,6 +447,20 @@ def _duty_updates(agents: list[dict], roster: list[dict], data: dict, now) -> No
                 _push_inbox(data, name, f"담당 {line}가 오늘 한산하다 - {x['text']}", "업무")
             seen_all[post["id"]] = ds
         st["duty_seen"] = seen_all
+
+
+def _desk_staff(data: dict, now) -> dict | None:
+    """문의 창구 담당자가 지난 한 시간 한 일 (이번 시간 판단은 아직 전이라 가장 최근 판단 - 몇 시간 전 것까지)."""
+    name = kpi.holder("orders")
+    if not name:
+        return None
+    d = (data.get(name) or {}).get("decision") or {}
+    try:
+        fresh = (now - datetime.strptime(d.get("hour", ""), "%Y-%m-%d %H").replace(tzinfo=now.tzinfo)).total_seconds() < 4 * 3600
+    except ValueError:
+        fresh = False
+    lv = life.get(name)
+    return {"state": d.get("state", "") if fresh else "", "energy": lv.get("energy", 0.6), "stress": lv.get("stress", 0.4)}
 
 
 def _kpi_announcer(company: str, agents: list[dict], roster: list[dict]) -> dict | None:

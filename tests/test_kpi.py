@@ -48,6 +48,47 @@ def test_record_scores(monkeypatch):
     assert rows["streams"]["holder"] == "소라"
     block = kpi.prompt_block("이지안", kpi.posts_of("이지안"))
     assert "창고 적재율 70%" in block
+    assert rows["orders"]["holder"] == "최수연" and "score" in rows["orders"]
+
+
+def test_desk_virtual_inquiries_and_vip(monkeypatch):
+    """문의 창구: 가상 문의가 시간대별로 들어오고, 일하면 처리/쉬면 대기로 쌓인다. 실제 사람 메시지는 VIP 가산."""
+    monkeypatch.setattr(kpi.signals, "weather_text", lambda: "기온 15°C, 비 (3mm)")
+    real = {"n": 0}
+    monkeypatch.setattr(kpi.metrics, "orders", lambda: real["n"])
+    demand, reasons = kpi.desk_demand(datetime(2026, 10, 12, 9))  # 월요일 + 비
+    assert demand == kpi.desk_demand(datetime(2026, 10, 12, 20))[0]  # 같은 날은 같은 수요
+    assert any("월요일" in r for r in reasons) and any("비" in r for r in reasons)
+    data = {}
+    # 밤새 아무도 안 받으면 대기로 쌓인다
+    for h in range(1, 9):
+        kpi._desk_step(data, datetime(2026, 10, 12, h), {"state": "자는 중"})
+    night = data["desk"]["backlog"]
+    assert night == data["desk"]["arrived"] > 0 and data["desk"]["handled"] == 0
+    # 출근해서 일하면 밀린 것까지 처리
+    for h in range(9, 13):
+        kpi._desk_step(data, datetime(2026, 10, 12, h), {"state": "일하는 중", "energy": 0.8, "stress": 0.2})
+    assert data["desk"]["handled"] >= night and data["desk"]["backlog"] < night + 5
+    x = kpi._desk_reading(data["desk"])
+    score_before = x["score"]
+    assert "손님 문의" in x["text"] and "대기" in x["text"]
+    # 실제 사람이 봇에게 2건 보내면 VIP 2건 - 점수 가산 (같은 시간에 다시 돌려도 문의가 또 들어오지 않는다)
+    real["n"] = 2
+    arrived = data["desk"]["arrived"]
+    kpi._desk_step(data, datetime(2026, 10, 12, 12, 30), {"state": "일하는 중"})
+    assert data["desk"]["arrived"] == arrived and data["desk"]["vip"] == 2
+    x = kpi._desk_reading(data["desk"])
+    assert x["score"] > score_before and "VIP" in x["text"]
+    # 공석이면 처리 0, 대기가 많으면 경고
+    data["desk"]["backlog"] = 40
+    kpi._desk_step(data, datetime(2026, 10, 12, 14), None)
+    assert kpi._desk_reading(data["desk"])["alert"]
+    # 다음 날: 오늘 수치는 새로, 대기는 넘어간다
+    left = data["desk"]["backlog"]
+    real["n"] = 0
+    kpi._desk_step(data, datetime(2026, 10, 13, 0, 5), None)
+    assert data["desk"]["date"] == "2026-10-13" and data["desk"]["vip"] == 0
+    assert data["desk"]["backlog"] >= left
 
 
 def _seed_week(scores: dict[str, tuple[str, int]]):
