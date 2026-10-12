@@ -108,7 +108,8 @@ def _run_world_tick(aesun_status: dict) -> None:
 
 
 KAKAO_PER_LINE = os.getenv("PORING_KAKAO_PER_LINE", "1") not in ("0", "false", "False", "")
-# 연재 장면을 에이전트 대화 채널에도 인물별로 (그 인물 이름/아바타로 한 줄씩) - 방송 채널/카톡은 그대로
+# 연재 장면을 에이전트 대화 채널에 인물별로 (그 인물 이름/아바타로 한 줄씩) - 그러면 방송 채널엔 안 올린다(두 번 안 보이게).
+# 카톡은 그대로. 0이면 예전처럼 방송 채널에 장면째로.
 SCENE_TO_AGENT_CHANNEL = os.getenv("PORING_SCENE_AGENT_CHANNEL", "1") not in ("0", "false", "False", "")
 
 
@@ -140,20 +141,25 @@ def _send_scene_to_agents(scene: dict, start, rnd: random.Random) -> None:
 
 def _send_scene(scene: dict, now, rnd: random.Random) -> None:
     """
-    연재 장면을 디스코드(방송 채널 + 에이전트 대화 채널은 인물별로)/카톡에 올린다. 예약함을 쓸 수 있으면 대사 하나씩, 이번 시간 HH:10~45 어딘가에서 시작해
+    연재 장면을 디스코드(에이전트 대화 채널에 인물별로, 끄면 방송 채널에 장면째로)/카톡에 올린다. 예약함을 쓸 수 있으면 대사 하나씩, 이번 시간 HH:10~45 어딘가에서 시작해
     말 길이만큼 간격을 두고 (사람들이 실제로 주고받듯). 머리줄(장소·인물, 줄거리)은 첫 대사와 같이 간다.
     카톡은 PORING_KAKAO_PER_LINE=0이면 예전처럼 장면 전체를 한 메시지로 (시작 시각에).
     """
+    to_agents = SCENE_TO_AGENT_CHANNEL and bool((scene.get("scene") or {}).get("lines"))
     if not outbox.paced():
-        notifier.send_to_discord(scene["discord"])
-        notifier.send_to_local_bot(scene["kakao"])
-        if SCENE_TO_AGENT_CHANNEL:
+        if to_agents:
             _send_scene_to_agents(scene, now, rnd)
+        else:
+            notifier.send_to_discord(scene["discord"])
+        notifier.send_to_local_bot(scene["kakao"])
         return
     start = outbox.slot(now, 10, 45, rnd)
-    if SCENE_TO_AGENT_CHANNEL:
+    targets = [("kakao", scene["kakao"], KAKAO_PER_LINE)]
+    if to_agents:
         _send_scene_to_agents(scene, start, rnd)
-    for kind, text, per_line in (("discord", scene["discord"], True), ("kakao", scene["kakao"], KAKAO_PER_LINE)):
+    else:
+        targets.insert(0, ("discord", scene["discord"], True))
+    for kind, text, per_line in targets:
         lines = [ln for ln in text.split("\n") if ln.strip()]
         if not per_line or len(lines) < 2:
             outbox.schedule(start, kind, text=text)

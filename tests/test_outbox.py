@@ -92,4 +92,5 @@ def test_scene_also_goes_to_agent_channel_per_speaker(monkeypatch):
     assert agent[0]["text"].startswith("-# 🎬 에린 로지스틱스 사무실 · 10:") and "📖 줄거리" in agent[0]["text"]
     assert agent[1]["text"].endswith('"네" *(속마음: 또?)*')
     assert agent[0]["due"] < agent[1]["due"] < agent[2]["due"]
-    assert [it for it in items if it["kind"] == "kakao"] and [it for it in items if it["kind"] == "discord"]
+    assert [it for it in items if it["kind"] == "kakao"]
+    assert not [it for it in items if it["kind"] == "discord"]  # 방송 채널엔 또 안 올린다 (두 번 안 보이게)
