@@ -108,19 +108,51 @@ def _run_world_tick(aesun_status: dict) -> None:
 
 
 KAKAO_PER_LINE = os.getenv("PORING_KAKAO_PER_LINE", "1") not in ("0", "false", "False", "")
+# 연재 장면을 에이전트 대화 채널에도 인물별로 (그 인물 이름/아바타로 한 줄씩) - 방송 채널/카톡은 그대로
+SCENE_TO_AGENT_CHANNEL = os.getenv("PORING_SCENE_AGENT_CHANNEL", "1") not in ("0", "false", "False", "")
+
+
+def _send_scene_to_agents(scene: dict, start, rnd: random.Random) -> None:
+    """장면 대사를 에이전트 대화 채널에 화자 계정으로 하나씩 (다른 대화처럼 출처 머리줄 + 대사)."""
+    raw = scene.get("scene") or {}
+    lines = raw.get("lines") or []
+    if not lines:
+        return
+    by_name = {a["name"]: a for a in agents.load_agents()}
+    place = raw.get("location") or "어딘가"
+    arc = scene.get("arc_title")
+    t = start
+    for i, ln in enumerate(lines):
+        if i:
+            t = t + outbox.gap(lines[i - 1].get("line", "") + ln.get("line", ""), rnd)
+        who = ln.get("speaker") or "동네 사람"
+        inner = ln.get("inner")
+        head = f"-# 🎬 {place} · {t.strftime('%H:%M')} · {who}" + (f" · 📖 {arc}" if arc and i == 0 else "")
+        text = f"{head}\n\"{ln.get('line', '')}\"" + (f" *(속마음: {inner})*" if inner else "")
+        a = by_name.get(who) or {}
+        outbox.schedule(t if outbox.paced() else None, "agent", account=a.get("account", ""), name=who, text=text,
+                        avatar=a.get("avatar_url", ""))
+    if raw.get("narration"):
+        t = t + outbox.gap(raw["narration"], rnd)
+        outbox.schedule(t if outbox.paced() else None, "agent", account="", name="동네 소식",
+                        text=f"-# 🎬 {place} · {t.strftime('%H:%M')}\n— {raw['narration']}", avatar="")
 
 
 def _send_scene(scene: dict, now, rnd: random.Random) -> None:
     """
-    연재 장면을 디스코드/카톡에 올린다. 예약함을 쓸 수 있으면 대사 하나씩, 이번 시간 HH:10~45 어딘가에서 시작해
+    연재 장면을 디스코드(방송 채널 + 에이전트 대화 채널은 인물별로)/카톡에 올린다. 예약함을 쓸 수 있으면 대사 하나씩, 이번 시간 HH:10~45 어딘가에서 시작해
     말 길이만큼 간격을 두고 (사람들이 실제로 주고받듯). 머리줄(장소·인물, 줄거리)은 첫 대사와 같이 간다.
     카톡은 PORING_KAKAO_PER_LINE=0이면 예전처럼 장면 전체를 한 메시지로 (시작 시각에).
     """
     if not outbox.paced():
         notifier.send_to_discord(scene["discord"])
         notifier.send_to_local_bot(scene["kakao"])
+        if SCENE_TO_AGENT_CHANNEL:
+            _send_scene_to_agents(scene, now, rnd)
         return
     start = outbox.slot(now, 10, 45, rnd)
+    if SCENE_TO_AGENT_CHANNEL:
+        _send_scene_to_agents(scene, start, rnd)
     for kind, text, per_line in (("discord", scene["discord"], True), ("kakao", scene["kakao"], KAKAO_PER_LINE)):
         lines = [ln for ln in text.split("\n") if ln.strip()]
         if not per_line or len(lines) < 2:
