@@ -102,6 +102,30 @@ def send_to_discord(text):
         print(f"[에러] Discord 전송 실패: {e}")
 
 
+TICK_NOTICE = os.getenv("PORING_TICK_NOTICE", "1") not in ("0", "false", "False", "")
+
+
+def tick_notice(text):
+    """회차 시작/끝 알림 - 카톡방에만 보낸다 (디스코드 채널엔 대화만 올라오게). PORING_TICK_NOTICE=0이면 끔."""
+    if TICK_NOTICE:
+        send_to_local_bot(text)
+
+
+def tick_summary(seconds, failed=False):
+    """회차 끝 알림 한 줄 - 걸린 시간, 판단한 사람 수, 앞으로 차례대로 올라갈 글 수."""
+    from . import agents, outbox
+    head = f"⚠️ {now_kst():%H:%M} 포링푸드 회차 실패" if failed else f"✅ {now_kst():%H:%M} 포링푸드 회차 완료"
+    parts = [f"{int(seconds) // 60}분 {int(seconds) % 60}초"]
+    if agents.LAST_TICK.get("decided"):
+        parts.append(f"판단 {agents.LAST_TICK['decided']}명")
+    try:
+        if outbox.paced():
+            parts.append(f"올라갈 글 {outbox.pending()}개")
+    except Exception:  # noqa: BLE001
+        pass
+    return f"{head} ({' · '.join(parts)})"
+
+
 def send_to_local_bot(text):
     """
     카톡 방송. [변경] 예전 LOCAL_BOT_URL 대신 봇과 같은 카톡 브릿지(KATALK_BRIDGE_URL/reply)로

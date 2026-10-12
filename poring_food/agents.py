@@ -63,8 +63,8 @@ RIPPLE_MAX_TALKS_PER_PERSON = 3     # 한 사람이 한 시간에 하는 대화 
 RIPPLE_GROUP_WATCHERS = 3           # 단톡방 새 글을 "본" 사람 중 반응할지 고민해 보는 사람 수 (이름 불린 사람 말고, 무작위)
 RIPPLE_MIN_MATTERS = 3              # 스스로 매긴 중요도가 이보다 낮으면 행동했다고 해도 가만히로 본다 (말과 행동이 어긋나지 않게)
 RIPPLE_MINUTES = (20, 35, 50)       # 바퀴마다 붙이는 시각 (로그/채널이 실제 한 시간처럼 읽히게)
-# 판단을 시작할 때 채널에 "생각하는 중" 한 줄 (대화가 올라오기까지 몇 분 걸려도 돌고 있는 걸 알 수 있게)
-PROGRESS_NOTICE = os.getenv("PORING_AGENT_PROGRESS", "1") not in ("0", "false", "False", "")
+# 지난 회차 숫자 - 회차 끝 카톡 알림(cogs/poring_food.py)에 쓴다 (예전 디스코드 "정하는 중" 한 줄은 카톡 알림으로 옮겼다)
+LAST_TICK: dict = {}
 VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
 
 # 단톡방 - 멤버만 보고 쓴다 (모두가 보는 곳이라 비밀 얘기는 안 쓴다)
@@ -1622,11 +1622,10 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
             pushed.add(name)
         kakao, new_since = _kakao_digest(agent, st.get("kakao_since", ""))
         jobs.append((agent, st, routine_hints.get(name, ""), kakao, new_since))
-    if jobs and PROGRESS_NOTICE:
-        _post_as("동네 소식", f"-# 🕒 {now.strftime('%H:%M')} 동네 사람 {len(jobs)}명이 이번 한 시간을 정하는 중… "
-                            "대화는 잠시 뒤에 올라와요")
     started = time.time()
     results = _decide_all(jobs, agents)
+    LAST_TICK.clear()
+    LAST_TICK.update(decided=len(jobs), decide_sec=round(time.time() - started))
     if jobs:
         print(f"[에이전트] 판단 {len(jobs)}명 ({time.time() - started:.0f}초)")
     for (agent, st, _hint, _kakao, new_since), d in zip(jobs, results):

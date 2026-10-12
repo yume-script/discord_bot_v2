@@ -221,14 +221,26 @@ class PoringFood(commands.Cog):
             return False
         async with self._lock:
             from poring_food import main as poring_main
+            from poring_food import notifier
+            from poring_food.clock import now_kst
             started = time.monotonic()
             log.info("포링푸드 회차 시작")
+            # 회차 시작/끝 알림은 카톡방에만 (디스코드엔 대화만)
+            await asyncio.to_thread(notifier.tick_notice, f"🕒 {now_kst():%H:%M} 포링푸드 회차 시작 - "
+                                                          "대화는 다 만들어지면 차례대로 올라가요")
+            failed = False
             try:
                 await asyncio.to_thread(poring_main.main)
             except Exception:
+                failed = True
                 log.exception("포링푸드 회차 실행 실패 - 다음 회차에 다시 시도")
             else:
                 log.info("포링푸드 회차 완료 (%.1f초)", time.monotonic() - started)
+            try:
+                summary = await asyncio.to_thread(notifier.tick_summary, time.monotonic() - started, failed)
+                await asyncio.to_thread(notifier.tick_notice, summary)
+            except Exception:
+                log.exception("포링푸드 회차 끝 알림 실패")
         return True
 
     @tasks.loop(time=RUN_TIMES)
