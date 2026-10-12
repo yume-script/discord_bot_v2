@@ -7,7 +7,7 @@
 | 스페셜 라인 입고       | 포링푸드 생산부              | 북오아시스 성인/화보 서재 오늘 입고 권 수        | 김동식    |
 | 영상 라인 입고         | 포링푸드 홍보마케팅부         | Plex 오늘 신규 등록 영상 수                    | 오동백    |
 | 출하량               | 포링푸드 영업기획부           | Tautulli 오늘 재생 수                         | 권민우    |
-| 고객 문의 처리량        | 포링푸드 영업지원부           | 대화 로그 DB 오늘 사람 메시지 수               | 최수연    |
+| 고객 문의 처리         | 포링푸드 영업지원부           | 가상 손님 문의 처리율 + 실제 봇 대화(VIP 문의) | 최수연    |
 | 설비 가동률            | 포링푸드 생산기획부           | server_status CPU %                         | 정명석    |
 | 창고 적재율            | 포링푸드 물류운송부           | server_status 디스크 사용률 (낮을수록 좋다)     | 이지안    |
 | 설비 안정성            | 에린 로지스틱스 시설관리부     | server_status 연속 가동일 / 멈춘 서비스 수      | 리정혁    |
@@ -24,10 +24,17 @@
 - 주간 실적 발표(weekly): 월요일 아침, 지난주 점수로 소속별 순위. 포링푸드는 단톡방에 부서장이 발표
   (LLM 한 번), 1등은 기분/자신감 + 보너스, 꼴찌는 스트레스. 순위를 매길 사람이 없는 소속은 본인에게만 알린다.
 - 월간 평가(monthly): 매달 1일 아침, 지난달 소속별 1등에게 "N월 우수 사원" 칭호 - 영구 기억으로 남는다.
+- 고객 문의 창구(desk): 봇에게 말을 거는 실제 사람이 적어서(혼자 쓰는 서버) 메시지 수로는 실적이 늘 바닥이라,
+  가상 손님 문의를 만든다. 하루 문의 수요 = PORING_DESK_DAILY x 요일(월요일은 주말에 쌓인 문의) x 날씨(비/눈이면
+  배송 문의) x 그날 운(날짜로 정해진 0.75~1.3). 매시 회차마다 지난 한 시간치 문의가 시간대 비율대로 들어오고,
+  담당자가 그 시간에 한 일(일하는 중/이동 중/개인시간/자는 중 + 체력/스트레스)만큼 처리한다. 못 한 건 대기로
+  쌓여 다음 시간/다음 날로 넘어간다 (밤에 온 문의는 아침에 밀려 있다). 실제 사람이 봇에게 보낸 메시지는
+  VIP 문의 - 봇이 바로 응대했으니 처리된 것으로 치고, 1건을 일반 문의 PORING_DESK_VIP_WEIGHT건 실적으로 가산한다.
+  점수 = (오늘 처리 + VIP x 가중치) / 오늘 들어온 문의 x 100 (다 처리하면 100, 밀린 걸 털거나 VIP가 있으면 그 이상).
 - 날씨 장사(weather_trade): 기상청 날씨로 카페/포장마차 손님이 오늘 얼마나 달라질지 (agents.json "trade").
 
 저장: storage/poring_food/kpi.json {"holders", "daily": {날짜: {자리: 기록}}, "weekly_done", "monthly_done",
-"titles", "history"} - daily는 최근 70일만, 나머지는 지우지 않는다.
+"titles", "history", "desk"} - daily는 최근 70일만, 나머지는 지우지 않는다.
 이 모듈은 agents.py를 import하지 않는다 (게시/받은편지함은 agents가 한다).
 """
 from __future__ import annotations
@@ -53,9 +60,21 @@ MONTHLY_BONUS = int(os.getenv("PORING_KPI_MONTHLY_BONUS", "500000"))
 SCORE_CAP = 200
 CPU_OVERLOAD = 80
 DISK_ALERT = 85
+# 고객 문의 창구 (가상 손님 문의 + 실제 봇 대화 = VIP)
+DESK_DAILY = int(os.getenv("PORING_DESK_DAILY", "60"))             # 평일 하루 문의 수요 (보통 날씨, 보통 운)
+DESK_VIP_WEIGHT = int(os.getenv("PORING_DESK_VIP_WEIGHT", "3"))    # 실제 사람 메시지 1건 = 일반 문의 몇 건 실적
+DESK_WORK_CAP = 10        # 일하는 중인 한 시간에 처리하는 문의 (체력/스트레스로 0.5~1.4배)
+DESK_STATE_CAP = {"일하는 중": None, "이동 중": 3, "개인시간": 2, "자는 중": 0}  # 쉬는 동안은 동료가 조금 받아 준다
+DESK_BACKLOG_ALERT = 25
+# 시간대별 문의 비율 (업무 시간에 몰리고 밤엔 드물다)
+_DESK_HOURS = [0.2] * 7 + [0.6, 0.6] + [1.6] * 3 + [0.8] + [1.6] * 5 + [0.8] * 3 + [0.4] * 3
+_DESK_WEEKDAY = [(1.3, "월요일 - 주말에 쌓인 문의"), (1.0, ""), (1.0, ""), (1.0, ""), (0.9, "금요일 - 조금 한산"),
+                 (0.6, "토요일 - 주말이라 한산"), (0.5, "일요일 - 주말이라 한산")]
+_DESK_WEATHER = {"snow": (1.3, "눈 - 배송 지연 문의 폭주"), "rain": (1.2, "비 - 배송 지연 문의"),
+                 "hot": (1.1, "폭염 - 상한 제품 문의"), "cold": (1.15, "한파 - 배송 지연 문의")}
 
 # kind: count(하루 누적, 평소 대비) / cost(하루 누적, 적을수록 좋음) / level(그때그때 수준) / disk(낮을수록 좋음) /
-#       stability(문제 없을수록 좋음)
+#       stability(문제 없을수록 좋음) / desk(가상 손님 문의 처리율 + VIP)
 POSTS = [
     {"id": "books", "company": PF, "dept": "생산부", "first": "애순이", "kind": "count", "metric": "books",
      "line": "일반/웹툰 라인", "verb": "입고", "unit": "권", "source": "북오아시스 일반/웹툰 서재 오늘 입고 권 수"},
@@ -65,8 +84,8 @@ POSTS = [
      "line": "영상 라인", "verb": "입고", "unit": "건", "source": "Plex 오늘 신규 등록 영상 수"},
     {"id": "sales", "company": PF, "dept": "영업기획부", "first": "권민우", "kind": "count", "metric": "sales",
      "line": "출하", "verb": "출하", "unit": "건", "source": "Tautulli 오늘 재생 수"},
-    {"id": "orders", "company": PF, "dept": "영업지원부", "first": "최수연", "kind": "count", "metric": "orders",
-     "line": "고객 문의 처리", "verb": "문의", "unit": "건", "source": "오늘 사람이 봇에게 보낸 메시지 수"},
+    {"id": "orders", "company": PF, "dept": "영업지원부", "first": "최수연", "kind": "desk", "metric": "orders",
+     "line": "고객 문의 처리", "verb": "문의", "unit": "건", "source": "손님 문의 창구 (실제 봇 대화는 VIP 문의)"},
     {"id": "facility_cpu", "company": PF, "dept": "생산기획부", "first": "정명석", "kind": "level", "metric": "cpu",
      "line": "설비 가동률", "unit": "%", "source": "server_status CPU 사용률"},
     {"id": "facility_disk", "company": PF, "dept": "물류운송부", "first": "이지안", "kind": "disk", "metric": "disk",
@@ -156,9 +175,11 @@ def posts_of(name: str) -> list[dict]:
 
 
 # ===================================================================== 지금 수치
-def reading(post: dict) -> dict | None:
+def reading(post: dict, data: dict | None = None) -> dict | None:
     """자리 하나의 지금 수치. {"value", "avg"?, "pace"?, "saturated"?, "text", "alert"}. 집계 전이면 None."""
     kind, metric = post["kind"], post["metric"]
+    if kind == "desk":
+        return _desk_reading((data if data is not None else _load()).get("desk") or {})
     if kind == "count":
         x = metrics.count(metric)
         if not x:
@@ -210,6 +231,92 @@ def reading(post: dict) -> dict | None:
     return None
 
 
+# ===================================================================== 고객 문의 창구 (가상 손님 + VIP)
+def _weather_kind(weather: str) -> str:
+    """기상청 한 줄 -> "snow"/"rain"/"hot"/"cold"/"" (날씨 장사와 문의 창구가 같이 쓴다)."""
+    if not weather:
+        return ""
+    m = re.search(r"기온\s*(-?\d+(?:\.\d+)?)", weather)
+    temp = float(m.group(1)) if m else None
+    tokens = [t.strip() for t in re.split(r"[,/→]", weather)]
+    if any(t.startswith(("눈", "진눈깨비")) for t in tokens):
+        return "snow"
+    if any(t.startswith(("비", "소나기", "빗방울")) for t in tokens) or "폭우" in weather:
+        return "rain"
+    if temp is not None and temp >= 30:
+        return "hot"
+    if temp is not None and temp <= 0:
+        return "cold"
+    return ""
+
+
+def desk_demand(day: datetime, weather: str | None = None) -> tuple[int, list[str]]:
+    """그날 문의 수요(건)와 이유들. 그날 운은 날짜로 정해서 회차를 다시 돌려도 같다."""
+    import random
+    w, why = _DESK_WEEKDAY[day.weekday()]
+    reasons = [why] if why else []
+    wk = _weather_kind(signals.weather_text() if weather is None else weather)
+    if wk:
+        f, text = _DESK_WEATHER[wk]
+        w *= f
+        reasons.append(text)
+    luck = random.Random(f"desk-{day:%Y-%m-%d}").uniform(0.75, 1.3)
+    if luck >= 1.2:
+        reasons.append("이상하게 문의가 많은 날")
+    elif luck <= 0.85:
+        reasons.append("이상하게 조용한 날")
+    return max(1, round(DESK_DAILY * w * luck)), reasons
+
+
+def _desk_capacity(staff: dict | None, hour: int) -> int:
+    """담당자가 그 한 시간 동안 처리할 수 있는 문의 수. staff: {"state", "energy", "stress"} (없으면 공석)."""
+    if staff is None:
+        return 0
+    state = staff.get("state") or ("일하는 중" if 9 <= hour < 18 else "개인시간")
+    cap = DESK_STATE_CAP.get(state, 2)
+    if cap is not None:
+        return cap
+    energy, stress = float(staff.get("energy", 0.6)), float(staff.get("stress", 0.4))
+    return max(1, round(DESK_WORK_CAP * (0.6 + 0.6 * energy) * (1.2 - 0.4 * stress)))
+
+
+def _desk_step(data: dict, now: datetime, staff: dict | None) -> None:
+    """[매시 회차] 지난 한 시간치 문의가 들어오고 담당자가 처리한다 + 실제 사람 메시지(VIP)를 센다."""
+    import random
+    desk = data.setdefault("desk", {})
+    today = now.strftime("%Y-%m-%d")
+    if desk.get("date") != today:  # 대기는 다음 날로 넘어간다
+        demand, reasons = desk_demand(now)
+        desk.update(date=today, demand=demand, reasons=reasons, arrived=0, handled=0, vip=0, vip_seen=0)
+    prev = now - timedelta(hours=1)
+    hk = prev.strftime("%Y-%m-%dT%H")
+    if desk.get("last_hour") != hk:
+        desk["last_hour"] = hk
+        share = _DESK_HOURS[prev.hour] / sum(_DESK_HOURS)
+        arrived = round(desk["demand"] * share * random.Random(f"desk-{hk}").uniform(0.6, 1.4))
+        queue = int(desk.get("backlog", 0)) + arrived
+        done = min(queue, _desk_capacity(staff, prev.hour))
+        desk.update(arrived=desk["arrived"] + arrived, handled=desk["handled"] + done, backlog=queue - done,
+                    last=f"{prev.hour}시대 문의 {arrived}건 들어옴, {done}건 처리")
+    real = int(metrics.orders() or 0)
+    if real > desk.get("vip_seen", 0):
+        desk["vip"] = desk.get("vip", 0) + real - desk.get("vip_seen", 0)
+    desk["vip_seen"] = max(real, desk.get("vip_seen", 0))
+
+
+def _desk_reading(desk: dict) -> dict | None:
+    if not desk.get("date"):
+        return None
+    arrived, handled, backlog, vip = (int(desk.get(k, 0)) for k in ("arrived", "handled", "backlog", "vip"))
+    score = int(min(SCORE_CAP, (handled + vip * DESK_VIP_WEIGHT) / max(arrived, 1) * 100)) if arrived or vip else 100
+    text = (f"오늘 손님 문의 {arrived}건 들어옴 · {handled}건 처리 · 대기 {backlog}건"
+            + (f" · VIP(실제 손님) 문의 {vip}건 응대" if vip else "")
+            + f" (오늘 예상 문의 {desk.get('demand', 0)}건" + (f" - {', '.join(desk['reasons'])}" if desk.get("reasons") else "")
+            + ")")
+    alert = f"문의가 밀렸다 - 답을 못 받은 손님 {backlog}명이 항의 중" if backlog >= DESK_BACKLOG_ALERT else ""
+    return {"value": handled, "score": score, "vip": vip, "backlog": backlog, "text": text, "alert": alert}
+
+
 def _hist_mean(data: dict, post_id: str, today: str) -> float | None:
     """수준 지표의 지난 기록 평균 (최근 7일, 오늘 제외)."""
     vals = []
@@ -246,16 +353,23 @@ def _score(post: dict, rec: dict, hist: float | None) -> int:
     return int(rec.get("min", rec["last"]))  # stability: 그날 가장 나빴던 때
 
 
-def record(now: datetime | None = None) -> None:
-    """[매시 회차] 자리별 지금 수치를 오늘 기록에 더하고 오늘 점수를 다시 낸다 (담당자 이름도 같이)."""
+def record(now: datetime | None = None, desk_staff: dict | None = None) -> None:
+    """
+    [매시 회차] 자리별 지금 수치를 오늘 기록에 더하고 오늘 점수를 다시 낸다 (담당자 이름도 같이).
+    desk_staff: 문의 창구 담당자가 지난 한 시간 한 일 {"state", "energy", "stress"} (None이면 공석 - 처리 0).
+    """
     now = now or now_kst()
     today = now.strftime("%Y-%m-%d")
     data = _load()
     daily = data.setdefault("daily", {})
     rows = daily.setdefault(today, {})
     holders = data.get("holders", {})
+    try:
+        _desk_step(data, now, desk_staff)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 문의 창구 집계 실패: {e}")
     for post in POSTS:
-        x = reading(post)
+        x = reading(post, data)
         if not x:
             continue
         rec = rows.get(post["id"]) or {"sum": 0.0, "n": 0}
@@ -265,7 +379,7 @@ def record(now: datetime | None = None) -> None:
                    company=post["company"])
         if post["kind"] in ("count", "cost"):
             rec.update(avg=x.get("avg"), saturated=x.get("saturated", False))
-        rec["score"] = _score(post, rec, _hist_mean(data, post["id"], today))
+        rec["score"] = x["score"] if post["kind"] == "desk" else _score(post, rec, _hist_mean(data, post["id"], today))
         rows[post["id"]] = rec
     cutoff = (now - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
     data["daily"] = {d: r for d, r in daily.items() if d >= cutoff}
@@ -307,19 +421,15 @@ def weather_trade(trade: str, weather: str | None = None) -> dict | None:
     weather = signals.weather_text() if weather is None else weather
     if not weather:
         return None
-    m = re.search(r"기온\s*(-?\d+(?:\.\d+)?)", weather)
-    temp = float(m.group(1)) if m else None
-    tokens = [t.strip() for t in re.split(r"[,/→]", weather)]
-    rain = any(t.startswith(("비", "소나기", "빗방울")) for t in tokens) or "폭우" in weather
-    snow = any(t.startswith(("눈", "진눈깨비")) for t in tokens)
+    kind = _weather_kind(weather)
     cafe = trade == "카페"
-    if snow:
+    if kind == "snow":
         return {"pct": 5 if cafe else 20, "why": "눈 오는 날 - " + ("창가 자리에 오래 머무는 손님" if cafe else "어묵 국물에 소주 한잔")}
-    if rain:
+    if kind == "rain":
         return {"pct": 15 if cafe else 25, "why": "비 오는 날 - " + ("따뜻한 음료 들고 비 피하는 손님" if cafe else "비 오는 날엔 파전에 막걸리")}
-    if temp is not None and temp >= 30:
+    if kind == "hot":
         return {"pct": 20 if cafe else -20, "why": "더운 날 - " + ("아이스 음료 주문 폭주" if cafe else "더워서 포장마차는 한산")}
-    if temp is not None and temp <= 0:
+    if kind == "cold":
         return {"pct": 10 if cafe else 15, "why": "추운 날 - " + ("몸 녹이러 들어오는 손님" if cafe else "따끈한 국물 찾는 손님")}
     return {"pct": 0, "why": "무난한 날씨 - 평소 장사"}
 
