@@ -234,3 +234,19 @@ def test_town_map_png(fake_llm, monkeypatch, tmp_path):
     im = Image.open(files[0]["path"])
     assert im.size[0] == townmap.W and im.size[1] > 400
     assert not [it for it in items if it["kind"] == "agent" and it["name"] == "동네 소식" and "지금 동네는" in it["text"]]
+
+
+def test_daily_cap_counts_only_first_decision_convos(fake_llm, monkeypatch, caplog):
+    """예전 기록(반응 대화까지 하루 상한에 섞여 48개가 참)이어도 처음 판단 대화만 다시 세서 대화가 계속 생긴다."""
+    caplog.set_level(logging.INFO, logger="poring_food")
+    _quiet(monkeypatch)
+    fake_llm(_handler)
+    now = agents.now_kst()
+    data = agents._load_state()
+    data["_convos"] = {"date": now.strftime("%Y-%m-%d"), "count": agents.MAX_CONVOS_PER_DAY,
+                       "hours": [], "per_hour": {now.strftime("%Y-%m-%d") + " 01": 20}}
+    agents._save_state(data)
+    agents.tick(characters.load_roster())
+    assert len(_talks(caplog)) == agents.MAX_CONVOS_PER_HOUR
+    convo = agents._load_state()["_convos"]
+    assert convo["count"] == 20 + agents.MAX_CONVOS_PER_HOUR and "ripple" in convo
