@@ -1,5 +1,6 @@
 import os
 import random
+import re
 
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -127,10 +128,15 @@ def _send_scene(scene: dict, now, rnd: random.Random) -> None:
             continue
         head = 1 + (1 if len(lines) > 2 and "📖" in lines[1] else 0)  # 머리줄(+ 줄거리 줄)은 첫 대사와 함께
         msgs = ["\n".join(lines[:head + 1])] + lines[head + 1:]
+        m = re.search(r"\[(.+?) · \d{2}:\d{2}\]", lines[0])
+        place = m.group(1) if m else "어딘가"
         t = start
         for i, msg in enumerate(msgs):
             if i:
                 t = t + outbox.gap(msgs[i - 1] + msg, rnd)
+                # 대사마다 출처 - 다른 대화와 섞여도 어디서 하는 말인지 보이게
+                msg = (f"-# 🎬 {place} · {t.strftime('%H:%M')}\n{msg}" if kind == "discord"
+                       else f"🎬 {place} · {t.strftime('%H:%M')}\n{msg}")
             outbox.schedule(t, kind, text=msg)
 
 
