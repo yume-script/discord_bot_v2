@@ -250,3 +250,25 @@ def test_daily_cap_counts_only_first_decision_convos(fake_llm, monkeypatch, capl
     assert len(_talks(caplog)) == agents.MAX_CONVOS_PER_HOUR
     convo = agents._load_state()["_convos"]
     assert convo["count"] == 20 + agents.MAX_CONVOS_PER_HOUR and "ripple" in convo
+
+
+def test_agent_plays_bot_game_in_free_time(fake_llm, monkeypatch, caplog):
+    """판단에서 game을 고르면 봇 미니게임을 실제로 한 판 하고 이야기 속 돈이 바뀐다."""
+    from poring_food import life
+    caplog.set_level(logging.INFO, logger="poring_food")
+    _quiet(monkeypatch)
+    seen = {}
+
+    def handler(system, user):
+        out = _handler(system, user)
+        if "이번 한 시간 동안" in user and "'홍두식'" in system:
+            seen["rule"] = "봇 오락실" in user
+            out.update(state="개인시간", contact=None, game={"name": "주사위", "bet": 5000})
+        return out
+
+    fake_llm(handler)
+    before = int(life.get("홍두식")["money"])
+    agents.tick(characters.load_roster())
+    assert seen["rule"]
+    assert any("[오락실] 홍두식 /주사위 5000" in r.getMessage() for r in caplog.records)
+    assert int(life.get("홍두식")["money"]) != before or any("+0원" in r.getMessage() for r in caplog.records)

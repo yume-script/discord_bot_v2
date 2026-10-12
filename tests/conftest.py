@@ -35,6 +35,9 @@ def clean_state():
     semantic._cache.clear()
     semantic._pending.clear()
     characters._TYPE_CACHE.clear()
+    from core import game_engine  # 봇 오락실(포링푸드 인물이 하는 미니게임) 머니도 임시 폴더로
+    game_engine.money_system.base_dir = os.path.join(_STATE, "money")
+    os.makedirs(game_engine.money_system.base_dir, exist_ok=True)
     yield
 
 
