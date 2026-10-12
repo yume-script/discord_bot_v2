@@ -868,7 +868,9 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
             c = r["contact"]
             if c:
                 target = by_name.get(c["to"])
-                ok = (target and ripple_convos < RIPPLE_CONVOS_PER_HOUR and convo["count"] < MAX_CONVOS_PER_DAY
+                # 반응 대화는 하루 상한(MAX_CONVOS_PER_DAY - 처음 판단 대화용)에 안 센다 - 시간당 상한만 (예전엔 같이 세서
+                # 오후에 하루 상한이 차면 그날 남은 시간엔 대화가 하나도 안 생겼다)
+                ok = (target and ripple_convos < RIPPLE_CONVOS_PER_HOUR
                       and talked.get(n, 0) < RIPPLE_MAX_TALKS_PER_PERSON
                       and talked.get(target["name"], 0) < RIPPLE_MAX_TALKS_PER_PERSON
                       and not ({n, target["name"]} & busy))
@@ -887,8 +889,7 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
                     talked[target["name"]] = talked.get(target["name"], 0) + 1
                     busy |= {n, target["name"]}
                     ripple_convos += 1
-                    convo["count"] += 1
-                    convo["hours"].append(hk)
+                    convo["ripple"] = convo.get("ripple", 0) + 1
             gp = r["group_post"]
             if gp:
                 day_cap = TOWN_GROUP_MAX_POSTS_PER_DAY if gp["group"] == TOWN_GROUP else GROUP_MAX_POSTS_PER_DAY
@@ -1685,7 +1686,10 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     convo = data.setdefault("_convos", {})
     if convo.get("date") != today:
         convo.clear()
-        convo.update({"date": today, "count": 0, "hours": []})
+        convo.update({"date": today, "count": 0, "hours": [], "ripple": 0})
+    elif "ripple" not in convo:  # 예전 기록: 반응 대화까지 count에 섞여 있다 - 처음 판단 대화(시간별 기록)만 다시 센다
+        convo["count"] = sum((convo.get("per_hour") or {}).values())
+        convo["ripple"] = 0
     pushed_contacts = [(n, decisions[n]) for n in pushed
                        if n in decisions and (decisions[n].get("contact") or {}).get("to")]
     per_hour = convo.setdefault("per_hour", {})
@@ -1699,6 +1703,10 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     hour_triggers: dict = {}  # {이름: {어떤 일: [겪은 것]}} - 이번 시간에 겪은 일 -> 파급 라운드의 반응 거리
     for name, d in order:
         if convo["count"] >= MAX_CONVOS_PER_DAY:
+            if not convo.get("cap_logged"):
+                convo["cap_logged"] = True
+                print(f"[에이전트] 오늘 대화 상한 {MAX_CONVOS_PER_DAY}개를 다 씀 - 자정까지 새 대화는 반응 대화만"
+                      " (PORING_AGENT_MAX_CONVOS_PER_DAY)")
             break
         if used >= MAX_CONVOS_PER_HOUR and name not in pushed:
             break
