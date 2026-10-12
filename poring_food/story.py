@@ -363,6 +363,8 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
         "kakao": _format_scene(scene, title, kakao=True),
         "participants": cast_keys,
         "summary": summary,
+        "scene": scene,         # 에이전트 대화 채널에 인물별로 한 줄씩 올릴 때 (main._send_scene)
+        "arc_title": title,
     }
 
 
