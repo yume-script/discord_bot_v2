@@ -22,7 +22,7 @@ import json
 import os
 import uuid
 
-from . import chronicle, life, memory, projects
+from . import chronicle, life, memory, novelty, projects
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -32,7 +32,7 @@ WORLD_PATH = os.path.join(STATE_DIR, "world_state.json")
 PLAN_FROM_HOUR = 6          # 이 시각 이후 그날 처음 돌 때 계획을 세운다
 LAST_EVENT_HOUR = 23
 RUMOR_CONFIRM_AFTER_H = 2
-MAX_LOG = 60
+MAX_LOG = 150             # 최근 사건 기록 (사건 종류 분포를 2주치 보려고)
 PLAN_TIMEOUT_SEC = 120
 DETAILED_AGENTS = 12        # 계획 프롬프트에 루틴/기억까지 자세히 넣는 에이전트 수 (agents.json 앞에서부터)
 TOWN = "동네"
@@ -94,15 +94,17 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         + (chronicle.prompt_block() + "\n\n" if chronicle.prompt_block() else "")
         + (projects.public_block() + "\n\n" if projects.public_block() else "") +
         "[최근에 세상에서 있었던 일]\n" + ("\n".join(f"- {e.get('date', '')} {e.get('hour', '')}시 {e.get('title', '')}" for e in recent_log[-8:]) or "- 없음") + "\n\n"
+        + novelty.kind_balance(recent_log, now) + "\n" + novelty.calendar_hint(now) + "\n\n"
         "오늘 일어날 사건 4~8개를 정해라:\n"
         "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 회사 전체/동네 사건으로 여러 명에게 닿게 하고,"
         " 개인 사건은 최근에 사건이 없던 사람 위주로.\n"
         "- 좋은 일, 나쁜 일, 소소한 일을 골고루. 매일 큰 사건이 터지면 안 된다(큰 사건은 가끔).\n"
+        "- 사건 종류(kind)를 골고루 - 같은 종류를 하루에 두 번 넘게 쓰지 마라.\n"
         "- 실제 날씨/날짜/화제와 어긋나지 않게. 최근 사건과 똑같은 걸 반복하지 마라.\n"
         "- 회사 내부의 불확실한 일(구조조정, 인사, 감사 등)은 visibility를 rumor로 - 먼저 소문으로 돈다.\n"
         "- 실존 인물/정치/혐오 소재 금지.\n"
         "반드시 JSON으로만 응답:\n"
-        '{"events": [{"hour": 정수, "title": "사건 제목", "detail": "실제로 일어난 일(당사자가 알게 되는 내용) 1~2문장", '
+        '{"events": [{"hour": 정수, "kind": "사건 종류(위 목록 중 하나)", "title": "사건 제목", "detail": "실제로 일어난 일(당사자가 알게 되는 내용) 1~2문장", '
         '"rumor": "visibility가 rumor일 때 먼저 도는 흐릿한 소문 한 문장(아니면 빈 문자열)", '
         '"targets": ["에이전트 이름 또는 회사 이름 또는 동네"], "visibility": "direct 또는 rumor", '
         '"effects": {"stress|happiness|loneliness|anger|romance|confidence|energy|job_satisfaction": -0.2~0.2}}]}'
@@ -124,8 +126,10 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         if not (first_hour <= hour <= LAST_EVENT_HOUR) or not targets or not title:
             continue
         rumor = e.get("visibility") == "rumor" and bool(str(e.get("rumor") or "").strip())
+        kind = str(e.get("kind") or "").strip()
         events.append({
             "id": uuid.uuid4().hex[:8], "hour": hour, "title": title,
+            "kind": kind if kind in novelty.EVENT_KINDS else "",
             "detail": str(e.get("detail") or title).strip()[:300],
             "rumor": str(e.get("rumor") or "").strip()[:200] if rumor else "",
             "visibility": "rumor" if rumor else "direct",
@@ -183,13 +187,14 @@ def tick(agents: list[dict], roster: list[dict], signals_block: str = "") -> lis
         if not e.get("released") and e["hour"] <= now.hour:
             e["released"] = True
             data.setdefault("log", []).append({"date": today, "hour": e["hour"], "title": e["title"],
-                                               "targets": e["targets"]})
+                                               "targets": e["targets"], "kind": e.get("kind", "")})
             _apply_npc_effects(e, roster, agent_names)
             kind, text = ("소문", e["rumor"]) if e["visibility"] == "rumor" else ("사건", e["detail"])
             for name in _recipients(e, agents):
                 deliveries.append((name, text, kind))
             chronicle.record_event("소문" if kind == "소문" else "세계", e["title"], text, e["targets"],
                                    private=e.get("private", False))
+            novelty.note("사건", f"{e['title']} - {text}", e["targets"])
             print(f"[세계] 사건 발생 {e['hour']}시: {e['title']} ({kind})")
         elif e.get("released") and not e.get("confirmed") and now.hour >= e["hour"] + RUMOR_CONFIRM_AFTER_H:
             e["confirmed"] = True
