@@ -114,3 +114,67 @@ def test_persona_and_voice_reach_every_speaking_prompt(fake_llm, monkeypatch):
     s, u = talk[0]
     me = next(a for a in agents.load_agents() if f"'{a['name']}'" in s)
     assert me["speech"] in u
+
+
+def test_ripple_round_chains_reactions_within_the_hour(fake_llm, monkeypatch, caplog):
+    """홍두식-윤혜진 대화 -> (반응) 윤혜진이 표미선에게 하소연 -> (다음 바퀴) 표미선이 동네 단톡방에 한마디. 같은 시간 안에."""
+    caplog.set_level(logging.INFO, logger="poring_food")
+    _quiet(monkeypatch)
+    monkeypatch.setattr(agents, "RIPPLE_CONVOS_PER_HOUR", 2)
+    first = {"홍두식": "윤혜진"}
+
+    def handler(system, user):
+        me = re.search(r"'([^']+)'", system).group(1)
+        if "이번 한 시간 동안" in user:
+            c = {"to": first[me], "how": "직접", "opening": "혜진 쌤!"} if me in first else None
+            return {"location": "카페 오후세시", "activity": "일", "state": "일하는 중", "thought": "흠", "contact": c}
+        if "다음 한마디" in user:
+            return {"say": "응", "end": True}
+        if "방금 이번 시간에 일어난 일" in user:
+            if me == "윤혜진":
+                return {"react": "연락", "thought": "미선이한테 얘기해야지",
+                        "contact": {"to": "표미선", "how": "메신저", "opening": "미선아 있잖아"}}
+            if me == "표미선":
+                return {"react": "단톡방", "thought": "다들 알아야 해",
+                        "group_post": {"group": "동네 단톡방", "text": "여화정 통장님 이것 좀 보세요"}}
+            return {"react": "가만히", "thought": "그렇구나"}
+        return {}
+    fake_llm(handler)
+    monkeypatch.setattr(agents, "_group_channel", lambda g: 1)
+    monkeypatch.setattr(agents.runtime, "has_agent_sender", lambda: False)
+    monkeypatch.setattr(agents.runtime, "send_as", lambda *a, **k: None)
+    agents.tick(characters.load_roster())
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    assert re.search(r"대화 \d+마디: 홍두식[와과] 윤혜진", log)
+    assert "파급 1바퀴" in log and "윤혜진" in log
+    assert re.search(r"대화 \d+마디: 윤혜진과 표미선", log)          # 반응이 새 대화로
+    assert "동네 단톡방 표미선: 여화정 통장님 이것 좀 보세요" in log    # 그 대화가 또 다음 바퀴 반응으로
+    assert "파급 3바퀴" in log or "파급 2바퀴" in log
+    m = re.search(r"파급 라운드: 반응 (\d+)번", log)
+    assert m and int(m.group(1)) <= agents.RIPPLE_MAX_REACTIONS
+    # 같은 시간에 다시 돌아도 반응/대화가 또 생기지 않는다
+    caplog.clear()
+    agents.tick(characters.load_roster())
+    assert "파급" not in "\n".join(r.getMessage() for r in caplog.records)
+
+
+def test_ripple_respects_caps(fake_llm, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="poring_food")
+    _quiet(monkeypatch)
+    monkeypatch.setattr(agents, "RIPPLE_MAX_REACTIONS", 3)
+
+    def handler(system, user):
+        me = re.search(r"'([^']+)'", system).group(1)
+        if "이번 한 시간 동안" in user:
+            c = {"to": PAIRS[me], "how": "직접", "opening": "야"} if me in PAIRS else None
+            return {"location": "골목", "activity": "일", "state": "일하는 중", "thought": "흠", "contact": c}
+        if "다음 한마디" in user:
+            return {"say": "응", "end": True}
+        if "방금 이번 시간에 일어난 일" in user:
+            return {"react": "연락", "thought": "또 연락", "contact": {"to": "여화정", "how": "메신저", "opening": "통장님"}}
+        return {}
+    fake_llm(handler)
+    agents.tick(characters.load_roster())
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    m = re.search(r"파급 라운드: 반응 (\d+)번, 새 대화 (\d+)개", log)
+    assert m and int(m.group(1)) <= 3 and int(m.group(2)) <= agents.RIPPLE_CONVOS_PER_HOUR
