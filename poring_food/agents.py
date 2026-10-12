@@ -52,6 +52,17 @@ DECIDE_TIMEOUT_SEC = 45
 # 따로 센다. 판단이 다 끝나야 대화가 시작되므로, 여기가 매시 회차에서 디스코드가 조용한 시간을 정한다.
 DECIDE_PARALLEL = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL", "1"))
 DECIDE_PARALLEL_OWN = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL_OWN", "4"))
+# 시간 안의 파급 라운드 - 대화/소문/단톡방 언급을 겪은 사람이 같은 시간 안에 다시 반응해서(LLM 1회) 새 연락/글로
+# 이어진다. 바퀴 수, 한 시간 반응 판단 상한, 한 사람 반응 상한, 반응으로 생기는 대화 상한 (ROUNDS=0이면 끔)
+RIPPLE_ROUNDS = int(os.getenv("PORING_RIPPLE_ROUNDS", "3"))                     # 연쇄 깊이 (0이면 끔)
+RIPPLE_MAX_REACTIONS = int(os.getenv("PORING_RIPPLE_MAX_REACTIONS", "20"))       # 한 시간 반응 판단 상한 (전체)
+RIPPLE_PER_PERSON = int(os.getenv("PORING_RIPPLE_PER_PERSON", "5"))              # 한 사람 한 시간 반응 상한
+RIPPLE_PER_PERSON_PER_ROUND = 2     # 한 바퀴에 한 사람이 반응하는 일 수 (서로 다른 일에서 온 것만 따로 - 같은 일은 묶어서 한 번)
+RIPPLE_CONVOS_PER_HOUR = int(os.getenv("PORING_RIPPLE_CONVOS_PER_HOUR", "5"))   # 반응으로 생기는 대화 상한
+RIPPLE_MAX_TALKS_PER_PERSON = 3     # 한 사람이 한 시간에 하는 대화 수 (처음 판단 1 + 반응 2)
+RIPPLE_GROUP_WATCHERS = 3           # 단톡방 새 글을 "본" 사람 중 반응할지 고민해 보는 사람 수 (이름 불린 사람 말고, 무작위)
+RIPPLE_MIN_MATTERS = 3              # 스스로 매긴 중요도가 이보다 낮으면 행동했다고 해도 가만히로 본다 (말과 행동이 어긋나지 않게)
+RIPPLE_MINUTES = (20, 35, 50)       # 바퀴마다 붙이는 시각 (로그/채널이 실제 한 시간처럼 읽히게)
 # 판단을 시작할 때 채널에 "생각하는 중" 한 줄 (대화가 올라오기까지 몇 분 걸려도 돌고 있는 걸 알 수 있게)
 PROGRESS_NOTICE = os.getenv("PORING_AGENT_PROGRESS", "1") not in ("0", "false", "False", "")
 VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
@@ -346,8 +357,8 @@ def _group_block(agent: dict, st: dict) -> str:
     return "\n\n".join(blocks)
 
 
-def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dict]) -> None:
-    """단톡방에 올리고 기록한다. 이름이 불린 멤버는 받은편지함으로 깨운다."""
+def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dict]) -> list[str]:
+    """단톡방에 올리고 기록한다. 이름이 불린 멤버는 받은편지함으로 깨운다. 반환: 이름이 불린 멤버 (파급 라운드용)."""
     now = now_kst()
     header = GROUP_HEADERS.get(group)
     try:
@@ -355,14 +366,17 @@ def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dic
                         agent.get("avatar_url", ""), channel_id=_group_channel(group))
     except Exception as e:  # noqa: BLE001
         print(f"[경고] {agent['name']} {group} 전송 실패: {e}")
-        return
+        return []
     with open(GROUP_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps({"at": now.isoformat(timespec="minutes"), "group": group, "name": agent["name"],
                             "text": text}, ensure_ascii=False) + "\n")
+    mentioned = []
     for other in agents:
         if other is not agent and group in _groups_of(other) and other["name"] in text:
             _push_inbox(data, other["name"], f"{group}에서 {j(agent['name'], '가')} 나를 언급함: {text}", "단톡방")
+            mentioned.append(other["name"])
     print(f"[에이전트] {group} {agent['name']}: {text}")
+    return mentioned
 
 
 # ===================================================================== 담당 업무 (실제 서비스 수치 = 실적, kpi.py)
@@ -683,11 +697,194 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
     }
 
 
+def _run_lanes(items: list, name_of, fn) -> list:
+    """items를 fn으로 동시에 처리 (이름의 인물 전용 모델 여부로 레인을 나눠 각자 DECIDE_PARALLEL[_OWN]명씩). 순서 유지."""
+    from concurrent.futures import ThreadPoolExecutor
+    lanes = {True: [], False: []}
+    for i, it in enumerate(items):
+        lanes[bool(agent_model(name_of(it)))].append(i)
+    results: list = [None] * len(items)
+    pools = {own: ThreadPoolExecutor(max(1, DECIDE_PARALLEL_OWN if own else DECIDE_PARALLEL)) for own in lanes if lanes[own]}
+    try:
+        futures = {i: pools[own].submit(fn, items[i]) for own, idx in lanes.items() for i in idx}
+        for i, f in futures.items():
+            results[i] = f.result()
+    finally:
+        for pool in pools.values():
+            pool.shutdown(wait=True)
+    return results
+
+
+# ===================================================================== 파급 라운드 (같은 시간 안의 반응)
+def _react(agent: dict, st: dict, triggers: list[str], others: list[dict], minute: int) -> dict | None:
+    """방금 이번 시간에 겪은 일(대화/소문/단톡방)을 보고, 반응할지 말지 스스로 따져 본 뒤 정한다 (LLM 1회, 짧은 지각)."""
+    name = agent["name"]
+    now = now_kst()
+    d = st.get("decision") or {}
+    groups = _groups_of(agent)
+    other_names = [o["name"] for o in others]
+    group_spec = (f', "group_post": null 또는 {{"group": "{"|".join(groups)}", "text": "단톡방에 올릴 말(1~2문장)"}}'
+                  if groups else "")
+    user = (
+        "\n\n".join(b for b in (
+            f"[지금] {now.strftime('%Y-%m-%d')} {now.hour:02d}:{minute:02d} ({'월화수목금토일'[now.weekday()]}요일)",
+            f"[이번 시간 내 계획] {d.get('location', '')}에서 {d.get('activity', '')} - {d.get('thought', '')}" if d else "",
+            life.prompt_block(name),
+            memory.prompt_block(name, [w for t in triggers for w in t.split()[:6]], k=3, query=" / ".join(triggers)),
+            "[방금 이번 시간에 일어난 일 - 지금 막 겪은 것]\n" + "\n".join(f"- {t}" for t in triggers[-6:]),
+            f"[연락할 수 있는 사람] {', '.join(other_names)}",
+        ) if b) + "\n\n"
+        "방금 겪은 일에 지금 바로 반응할지 스스로 따져 봐라. 먼저 consider에 고민을 적어라 - 이 일이 나와 얼마나 상관있는지, "
+        "지금 내 기분/체력/하던 일, 상대와의 사이, 반응하면 생길 일(좋은 것/곤란한 것). 그 다음에 정한다:\n"
+        "- 남 일이거나, 귀찮거나, 바쁘거나, 굳이 끼어들 필요가 없으면 가만히 (대부분은 이게 자연스럽다).\n"
+        "- 나와 상관있고 마음이 크게 움직였으면(속상함, 화남, 걱정, 반가움, 궁금함) 행동 - 따지러 가기, 하소연, 소문 확인, "
+        "사과, 전하기, 단톡방에 한마디, 계획 바꾸기. 성격대로 - 참는 사람은 참고, 못 참는 사람은 못 참는다.\n"
+        + _voice(agent) + "\n"
+        "반드시 JSON으로만 응답:\n"
+        '{"consider": "반응할지 말지 따져 본 고민 한 줄", "matters": 1~10 정수(이 일이 지금 나에게 얼마나 중요한지), '
+        '"react": "가만히|연락|단톡방|계획 변경", "thought": "지금 속마음 한 줄", '
+        '"location": "계획을 바꾸면 새 장소(아니면 빈 문자열)", "activity": "계획을 바꾸면 새로 하는 일(아니면 빈 문자열)", '
+        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "메신저|직접", "opening": "첫 마디"}}'
+        f"{group_spec}, {life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
+    )
+    out = llm_json(_system(agent), user, temperature=0.85, timeout=DECIDE_TIMEOUT_SEC, tag=f"반응 {name}", agent=name)
+    if not isinstance(out, dict):
+        return None
+    try:
+        matters = max(1, min(10, int(out.get("matters", 5))))
+    except (TypeError, ValueError):
+        matters = 5
+    react = str(out.get("react") or "가만히").strip()
+    if react not in ("가만히", "연락", "단톡방", "계획 변경") or matters < RIPPLE_MIN_MATTERS:
+        react = "가만히"
+    contact = out.get("contact")
+    if not (isinstance(contact, dict) and contact.get("to") in other_names and str(contact.get("opening") or "").strip()):
+        contact = None
+    return {"react": react, "matters": matters, "consider": str(out.get("consider") or "").strip()[:200],
+            "thought": str(out.get("thought") or "").strip()[:200],
+            "location": str(out.get("location") or "").strip()[:40], "activity": str(out.get("activity") or "").strip()[:60],
+            "contact": contact if react != "가만히" else None,
+            "group_post": _parse_group_post(out.get("group_post"), groups) if react != "가만히" else None, "raw": out}
+
+
+def _add_trigger(triggers: dict, name: str, text: str, source: str) -> None:
+    """반응 거리 하나. source(어떤 일에서 왔는지)가 같은 것끼리는 묶어서 한 번만 반응한다."""
+    triggers.setdefault(name, {}).setdefault(source, []).append(text[:220])
+
+
+def _scene_triggers(triggers: dict, scene: dict, a: str, b: str, how: str) -> None:
+    """대화 하나가 남긴 반응 거리: 두 당사자(마지막 몇 마디) + 소문을 들은 사람."""
+    src = f"대화:{scene.get('id', a + b)}"
+    tail = " / ".join(f"{t['speaker']}: {t['line'][:70]}" for t in (scene.get("lines") or [])[-3:])
+    for me, other in ((a, b), (b, a)):
+        _add_trigger(triggers, me, f"{j(other, '와')} {'메신저로' if how == '메신저' else '직접'} 얘기했다 - {tail}", src)
+    for who, text in scene.get("gossip", []):
+        _add_trigger(triggers, who, f"소문: {text}", src)
+
+
+def _group_triggers(triggers: dict, poster: dict, gp: dict, mentioned: list[str], agents: list[dict], hour: int,
+                    rnd: random.Random) -> None:
+    """단톡방 글 하나가 남긴 반응 거리: 이름 불린 사람 + 그 글을 본 멤버 몇 명(끼어들지 말지는 각자 고민)."""
+    src = f"단톡:{poster['name']}:{gp['text'][:20]}"
+    for m in mentioned:
+        _add_trigger(triggers, m, f"{gp['group']}에서 {j(poster['name'], '가')} 나를 불렀다: {gp['text']}", src)
+    watchers = [a["name"] for a in agents if a["name"] != poster["name"] and a["name"] not in mentioned
+                and gp["group"] in _groups_of(a) and not _asleep(a, hour)]
+    rnd.shuffle(watchers)
+    for w in watchers[:RIPPLE_GROUP_WATCHERS]:
+        _add_trigger(triggers, w, f"{gp['group']}에 {poster['name']}의 새 글을 봤다: {gp['text']}", src)
+
+
+def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, hk: str,
+            talked: dict[str, int], convo: dict, gcounts: dict) -> int:
+    """
+    [파급 라운드] 이번 시간에 대화/소문/단톡방을 겪은 사람들이 반응할지 말지 스스로 따져 보고(가만히/연락/단톡방/계획 변경),
+    그 반응(새 대화/글)이 또 다음 바퀴의 반응 거리가 된다. 연쇄 깊이 RIPPLE_ROUNDS바퀴, 한 시간 반응 RIPPLE_MAX_REACTIONS번,
+    한 사람 RIPPLE_PER_PERSON번(한 바퀴엔 서로 다른 일 RIPPLE_PER_PERSON_PER_ROUND개까지), 반응 대화 RIPPLE_CONVOS_PER_HOUR개.
+    반환: 반응 판단 수.
+    """
+    if RIPPLE_ROUNDS <= 0:
+        return 0
+    reacted: dict[str, int] = {}
+    total = ripple_convos = acted = 0
+    for rnd_no in range(RIPPLE_ROUNDS):
+        minute = RIPPLE_MINUTES[min(rnd_no, len(RIPPLE_MINUTES) - 1)]
+        rnd = random.Random(f"{hk}|{rnd_no}")
+        people = [n for n in triggers if n in by_name and not _asleep(by_name[n], now.hour)]
+        rnd.shuffle(people)
+        jobs: list[tuple[str, list[str]]] = []
+        for n in people:
+            room = min(RIPPLE_PER_PERSON - reacted.get(n, 0), RIPPLE_PER_PERSON_PER_ROUND)
+            for texts in list(triggers[n].values())[:max(0, room)]:
+                jobs.append((n, texts))
+        jobs = jobs[:max(0, RIPPLE_MAX_REACTIONS - total)]
+        if not jobs:
+            break
+        print(f"[에이전트] 파급 {rnd_no + 1}바퀴 ({now.hour:02d}:{minute:02d}): {', '.join(dict.fromkeys(n for n, _ in jobs))}")
+        triggers = {}
+        results = _run_lanes(jobs, lambda job: job[0], lambda job: _react(
+            by_name[job[0]], data.setdefault(job[0], {}), job[1], [o for o in agents if o["name"] != job[0]], minute))
+        total += len(jobs)
+        busy: set[str] = set()
+        for (n, _texts), r in zip(jobs, results):
+            reacted[n] = reacted.get(n, 0) + 1
+            if not r:
+                continue
+            st = data.setdefault(n, {})
+            life.apply_feedback(n, r["raw"], "방금 겪은 일")
+            memory.apply_feedback(n, r["raw"], "반응")
+            print(f"[에이전트] 반응 {n}: {r['react']} (중요도 {r['matters']}) - 고민: {r['consider']} / {r['thought']}")
+            if r["react"] == "가만히":
+                continue
+            acted += 1
+            d = st.get("decision") or {}
+            if r["thought"]:
+                d["thought"] = r["thought"]
+            if r["react"] == "계획 변경" and r["location"] and r["activity"]:
+                d["location"], d["activity"] = r["location"], r["activity"]
+            if d:
+                st["decision"] = d
+            chronicle.record_action(n, {"location": d.get("location", ""), "activity": d.get("activity", ""),
+                                        "state": d.get("state", ""), "thought": f"(반응) {r['thought']}", "plan": d.get("plan", "")})
+            c = r["contact"]
+            if c:
+                target = by_name.get(c["to"])
+                ok = (target and ripple_convos < RIPPLE_CONVOS_PER_HOUR and convo["count"] < MAX_CONVOS_PER_DAY
+                      and talked.get(n, 0) < RIPPLE_MAX_TALKS_PER_PERSON
+                      and talked.get(target["name"], 0) < RIPPLE_MAX_TALKS_PER_PERSON
+                      and not ({n, target["name"]} & busy))
+                if ok and _asleep(target, now.hour):
+                    _post(by_name[n], f"-# 📱 메신저 · {now.hour:02d}:{minute:02d} · {n} → {target['name']}\n{c['opening']}")
+                    _push_inbox(data, target["name"], f"{n}에게서 온 메시지: {c['opening']}", "메시지")
+                elif ok:
+                    how = c.get("how", "메신저")
+                    place = d.get("location") or "어딘가"
+                    scene = _conversation(by_name[n], target, str(c["opening"]), how, place,
+                                          at=f"{now.hour:02d}:{minute:02d}")
+                    for who, text in scene.get("gossip", []):
+                        _push_inbox(data, who, text, "소문")
+                    _scene_triggers(triggers, scene, n, target["name"], how)
+                    talked[n] = talked.get(n, 0) + 1
+                    talked[target["name"]] = talked.get(target["name"], 0) + 1
+                    busy |= {n, target["name"]}
+                    ripple_convos += 1
+                    convo["count"] += 1
+                    convo["hours"].append(hk)
+            gp = r["group_post"]
+            if gp:
+                day_cap = TOWN_GROUP_MAX_POSTS_PER_DAY if gp["group"] == TOWN_GROUP else GROUP_MAX_POSTS_PER_DAY
+                if gcounts.get(gp["group"], 0) < day_cap:
+                    mentioned = _post_group(by_name[n], gp["group"], gp["text"], data, agents)
+                    _group_triggers(triggers, by_name[n], gp, mentioned, agents, now.hour, rnd)
+                    gcounts[gp["group"]] = gcounts.get(gp["group"], 0) + 1
+    if total:
+        print(f"[에이전트] 파급 라운드: 반응 고민 {total}번, 행동 {acted}번, 새 대화 {ripple_convos}개")
+    return total
+
+
 def _decide_all(jobs: list[tuple], agents: list[dict]) -> list[dict | None]:
     """판단 여러 개를 동시에 (기본 모델 DECIDE_PARALLEL명, 인물 전용 모델 DECIDE_PARALLEL_OWN명씩 따로). 순서는 jobs 그대로.
     _decide는 상태를 읽기만 하므로 동시에 돌려도 되고, 결과 반영은 호출한 쪽이 차례대로 한다."""
-    from concurrent.futures import ThreadPoolExecutor
-
     def run(job):
         agent, st, hint, kakao, _since = job
         try:
@@ -695,20 +892,7 @@ def _decide_all(jobs: list[tuple], agents: list[dict]) -> list[dict | None]:
         except Exception as e:  # noqa: BLE001 - 한 사람 판단이 실패해도 나머지는 계속
             print(f"[경고] 에이전트 {agent['name']} 판단 실패: {e}")
             return None
-
-    lanes = {True: [], False: []}
-    for i, job in enumerate(jobs):
-        lanes[bool(agent_model(job[0]["name"]))].append(i)
-    results: list[dict | None] = [None] * len(jobs)
-    pools = {own: ThreadPoolExecutor(max(1, DECIDE_PARALLEL_OWN if own else DECIDE_PARALLEL)) for own in lanes if lanes[own]}
-    try:
-        futures = {i: pools[own].submit(run, jobs[i]) for own, idx in lanes.items() for i in idx}
-        for i, f in futures.items():
-            results[i] = f.result()
-    finally:
-        for pool in pools.values():
-            pool.shutdown(wait=True)
-    return results
+    return _run_lanes(jobs, lambda job: job[0]["name"], run)
 
 
 def _parse_project_work(raw, my_projects: list[dict]) -> dict | None:
@@ -837,10 +1021,10 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
     return picked[:GOSSIP_MAX_RECIPIENTS]
 
 
-def _conversation(a: dict, b: dict, opening: str, how: str, place: str) -> dict:
-    """a가 먼저 말을 걸고 b와 번갈아 말한다. 각자 자기 계정으로 채널에 올린다."""
+def _conversation(a: dict, b: dict, opening: str, how: str, place: str, at: str = "") -> dict:
+    """a가 먼저 말을 걸고 b와 번갈아 말한다. 각자 자기 계정으로 채널에 올린다. at: 머리줄에 쓸 시각(파급 라운드는 HH:20 등)."""
     now = now_kst()
-    header = f"-# {'📱 메신저' if how == '메신저' else '📍 ' + place} · {now.strftime('%H:%M')} · {a['name']} → {b['name']}"
+    header = f"-# {'📱 메신저' if how == '메신저' else '📍 ' + place} · {at or now.strftime('%H:%M')} · {a['name']} → {b['name']}"
     transcript = [{"speaker": a["name"], "line": opening.strip()[:300]}]
     _post(a, f"{header}\n{transcript[0]['line']}")
     outs: dict[str, dict] = {}
@@ -1478,6 +1662,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     if used >= MAX_CONVOS_PER_HOUR:
         order = pushed_contacts
     busy_now: set[str] = set()
+    hour_triggers: dict = {}  # {이름: {어떤 일: [겪은 것]}} - 이번 시간에 겪은 일 -> 파급 라운드의 반응 거리
     for name, d in order:
         if convo["count"] >= MAX_CONVOS_PER_DAY:
             break
@@ -1499,6 +1684,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
             for who, text in scene.get("gossip", []):
                 _push_inbox(data, who, text, "소문")
                 print(f"[에이전트] 소문: {who} <- {text}")
+            _scene_triggers(hour_triggers, scene, name, target["name"], c.get("how", "메신저"))
         busy_now |= {name, target["name"]}
         c["done"] = True
         data.setdefault(name, {}).setdefault("decision", d)["contact"] = c
@@ -1525,10 +1711,17 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         day_cap = TOWN_GROUP_MAX_POSTS_PER_DAY if gp["group"] == TOWN_GROUP else GROUP_MAX_POSTS_PER_DAY
         if counts.get(gp["group"], 0) >= day_cap:
             continue
-        _post_group(by_name[name], gp["group"], gp["text"], data, agents)
+        mentioned = _post_group(by_name[name], gp["group"], gp["text"], data, agents)
+        _group_triggers(hour_triggers, by_name[name], gp, mentioned, agents, now.hour, random.Random(f"{hk}|group"))
         data.setdefault(name, {}).setdefault("decision", d)["group_done"] = True
         counts[gp["group"]] = counts.get(gp["group"], 0) + 1
         posted += 1
+    # 3.2) 파급 라운드 - 방금 겪은 일에 같은 시간 안에 반응하고, 그게 또 새 대화/글로 이어진다
+    try:
+        talked = {n: 1 for n in busy_now}
+        _ripple(hour_triggers, by_name, agents, data, now, hk, talked, convo, counts)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 파급 라운드 실패: {e}")
     # 3.5) 에이전트가 직접 제안한 모임 - 제안/찬성/확정/흐지부지
     try:
         _handle_proposals(decisions, fresh, by_name, agents, data, now)
