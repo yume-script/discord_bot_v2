@@ -66,6 +66,7 @@ def test_weekly_ranking_and_rewards(fake_llm, monkeypatch):
                 "리정혁": ("facility_stability", 100)})
     sent = []
     monkeypatch.setattr(agents.runtime, "send_as", lambda acc, name, text, *a, **k: sent.append((name, text)))
+    monkeypatch.setattr(agents.runtime, "has_agent_sender", lambda: True)
     monkeypatch.setattr(agents, "_group_channel", lambda g: 1)
     fake_llm(lambda system, user: {"text": "지난주 1등 애순이! 권민우는 분발."} if "주간 실적" in user else {})
     money = life.get("애순이")["money"]

@@ -6,6 +6,8 @@
 - 디스코드 방송은 PORING_DISCORD_CHANNEL_ID가 있으면 봇 계정이 그 채널에 직접 올리고,
   없으면 예전 웹훅(PORING_DISCORD_WEBHOOK_URL)으로 보낸다(poring_food/notifier.py).
 - 봇이 꺼져 있던 시간의 회차는 건너뛴다(밀린 회차를 몰아서 돌리지 않음).
+- 대화/단톡방/연재 장면은 회차가 만들어 둔 시각대로 예약함(poring_food/outbox.py)에서 몇 초마다 꺼내 차례대로 올린다
+  (한 시간치 대화가 몇 분 사이에 몰려 올라오지 않게, 다른 곳 대화가 중간에 섞이게).
 - 관리자는 /포링푸드실행 으로 지금 바로 한 회차를 돌려볼 수 있다(이전 회차가 도는 중이면 거절).
 - 관리자 개입 (세계 밖에서 조종):
   (예전의 /포링푸드사건, /포링푸드메시지는 매시 회차와 겹치면 소식이 사라질 수 있어서 내렸다 -
@@ -58,6 +60,7 @@ class PoringFood(commands.Cog):
         await asyncio.to_thread(rename_migration.migrate)
         if settings.PORING_FOOD_ENABLED:
             self.hourly.start()
+            self.drain_outbox.start()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
                      settings.PORING_DISCORD_CHANNEL_ID or ("웹훅" if settings.PORING_DISCORD_WEBHOOK_URL else "없음"),
@@ -67,6 +70,36 @@ class PoringFood(commands.Cog):
 
     async def cog_unload(self) -> None:
         self.hourly.cancel()
+        self.drain_outbox.cancel()
+
+    @tasks.loop(seconds=5)
+    async def drain_outbox(self) -> None:
+        """예약함에서 보낼 때가 된 글을 시각 순서대로 보낸다 (디스코드 rate limit 대비 글 사이 1초)."""
+        from poring_food import notifier, outbox
+        try:
+            items = await asyncio.to_thread(outbox.take_due)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 예약함 읽기 실패")
+            return
+        for it in items:
+            try:
+                if it["kind"] == "agent":
+                    await self._send_as_agent(it.get("account", ""), it["name"], it["text"], it.get("avatar", ""),
+                                              it.get("channel_id", 0))
+                elif it["kind"] == "discord":
+                    if settings.PORING_DISCORD_CHANNEL_ID:
+                        await self._send_discord(it["text"])
+                    else:
+                        await asyncio.to_thread(notifier.send_to_discord, it["text"])
+                elif it["kind"] == "kakao":
+                    await asyncio.to_thread(notifier.send_to_local_bot, it["text"])
+            except Exception:  # noqa: BLE001 - 한 글이 실패해도 다음 글은 보낸다
+                log.exception("포링푸드 예약 글 전송 실패 (%s)", it.get("kind"))
+            await asyncio.sleep(1)
+
+    @drain_outbox.before_loop
+    async def _before_drain(self) -> None:
+        await self.bot.wait_until_ready()
 
     async def _send_discord(self, text: str) -> None:
         channel_id = settings.PORING_DISCORD_CHANNEL_ID

@@ -17,6 +17,7 @@ from . import metrics
 from . import characters
 from . import signals
 from . import story
+from . import outbox
 from .config import INTERACTION_HOURS
 
 # [신규] 애순이가 매시간 스포트라이트(=디스코드/카톡으로 방송)를 독점하지 않고, 깨어있는
@@ -105,6 +106,34 @@ def _run_world_tick(aesun_status: dict) -> None:
     _run_world_tick_common(roster, roster_map, states, rnd)
 
 
+KAKAO_PER_LINE = os.getenv("PORING_KAKAO_PER_LINE", "1") not in ("0", "false", "False", "")
+
+
+def _send_scene(scene: dict, now, rnd: random.Random) -> None:
+    """
+    연재 장면을 디스코드/카톡에 올린다. 예약함을 쓸 수 있으면 대사 하나씩, 이번 시간 HH:10~45 어딘가에서 시작해
+    말 길이만큼 간격을 두고 (사람들이 실제로 주고받듯). 머리줄(장소·인물, 줄거리)은 첫 대사와 같이 간다.
+    카톡은 PORING_KAKAO_PER_LINE=0이면 예전처럼 장면 전체를 한 메시지로 (시작 시각에).
+    """
+    if not outbox.paced():
+        notifier.send_to_discord(scene["discord"])
+        notifier.send_to_local_bot(scene["kakao"])
+        return
+    start = outbox.slot(now, 10, 45, rnd)
+    for kind, text, per_line in (("discord", scene["discord"], True), ("kakao", scene["kakao"], KAKAO_PER_LINE)):
+        lines = [ln for ln in text.split("\n") if ln.strip()]
+        if not per_line or len(lines) < 2:
+            outbox.schedule(start, kind, text=text)
+            continue
+        head = 1 + (1 if len(lines) > 2 and "📖" in lines[1] else 0)  # 머리줄(+ 줄거리 줄)은 첫 대사와 함께
+        msgs = ["\n".join(lines[:head + 1])] + lines[head + 1:]
+        t = start
+        for i, msg in enumerate(msgs):
+            if i:
+                t = t + outbox.gap(msgs[i - 1] + msg, rnd)
+            outbox.schedule(t, kind, text=msg)
+
+
 def _run_world_tick_common(roster: list, roster_map: dict, states: dict, rnd: random.Random,
                             exclude_name: str | None = None) -> None:
     """
@@ -144,9 +173,8 @@ def _run_world_tick_common(roster: list, roster_map: dict, states: dict, rnd: ra
                 print(f"[에러] 장면 생성 실패: {e}")
                 scene = None
             if scene:
-                notifier.send_to_discord(scene["discord"])
-                notifier.send_to_local_bot(scene["kakao"])
-                print(f"[스토리] 장면 전송 완료: {scene['summary']}")
+                _send_scene(scene, now, rnd)
+                print(f"[스토리] 장면 전송 {'예약' if outbox.paced() else '완료'}: {scene['summary']}")
         return
 
     if now.hour not in INTERACTION_HOURS:

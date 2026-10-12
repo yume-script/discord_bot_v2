@@ -27,7 +27,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, chronicle, kpi, life, memory, newcomers, projects, rotation, runtime, signals, world
+from . import characters, chronicle, kpi, life, memory, newcomers, outbox, projects, rotation, runtime, signals, world
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -357,16 +357,14 @@ def _group_block(agent: dict, st: dict) -> str:
     return "\n\n".join(blocks)
 
 
-def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dict]) -> list[str]:
-    """단톡방에 올리고 기록한다. 이름이 불린 멤버는 받은편지함으로 깨운다. 반환: 이름이 불린 멤버 (파급 라운드용)."""
-    now = now_kst()
+def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dict], at: datetime | None = None) -> list[str]:
+    """단톡방에 올리고 기록한다(at: 올릴 시각 - 예약함). 이름이 불린 멤버는 받은편지함으로 깨운다.
+    반환: 이름이 불린 멤버 (파급 라운드용)."""
+    now = at or now_kst()
     header = GROUP_HEADERS.get(group)
-    try:
-        runtime.send_as(agent.get("account", ""), agent["name"], f"{header}\n{text}" if header else text,
-                        agent.get("avatar_url", ""), channel_id=_group_channel(group))
-    except Exception as e:  # noqa: BLE001
-        print(f"[경고] {agent['name']} {group} 전송 실패: {e}")
-        return []
+    outbox.schedule(at, "agent", account=agent.get("account", ""), name=agent["name"],
+                    text=f"{header}\n{text}" if header else text, avatar=agent.get("avatar_url", ""),
+                    channel_id=_group_channel(group))
     with open(GROUP_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps({"at": now.isoformat(timespec="minutes"), "group": group, "name": agent["name"],
                             "text": text}, ensure_ascii=False) + "\n")
@@ -853,14 +851,14 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
                       and talked.get(n, 0) < RIPPLE_MAX_TALKS_PER_PERSON
                       and talked.get(target["name"], 0) < RIPPLE_MAX_TALKS_PER_PERSON
                       and not ({n, target["name"]} & busy))
+                start = outbox.slot(now, minute, minute + 5, random.Random(f"{hk}|{rnd_no}|{n}"))
                 if ok and _asleep(target, now.hour):
-                    _post(by_name[n], f"-# 📱 메신저 · {now.hour:02d}:{minute:02d} · {n} → {target['name']}\n{c['opening']}")
+                    _post(by_name[n], f"-# 📱 메신저 · {start.strftime('%H:%M')} · {n} → {target['name']}\n{c['opening']}", at=start)
                     _push_inbox(data, target["name"], f"{n}에게서 온 메시지: {c['opening']}", "메시지")
                 elif ok:
                     how = c.get("how", "메신저")
                     place = d.get("location") or "어딘가"
-                    scene = _conversation(by_name[n], target, str(c["opening"]), how, place,
-                                          at=f"{now.hour:02d}:{minute:02d}")
+                    scene = _conversation(by_name[n], target, str(c["opening"]), how, place, start=start)
                     for who, text in scene.get("gossip", []):
                         _push_inbox(data, who, text, "소문")
                     _scene_triggers(triggers, scene, n, target["name"], how)
@@ -874,7 +872,8 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
             if gp:
                 day_cap = TOWN_GROUP_MAX_POSTS_PER_DAY if gp["group"] == TOWN_GROUP else GROUP_MAX_POSTS_PER_DAY
                 if gcounts.get(gp["group"], 0) < day_cap:
-                    mentioned = _post_group(by_name[n], gp["group"], gp["text"], data, agents)
+                    mentioned = _post_group(by_name[n], gp["group"], gp["text"], data, agents,
+                                            at=outbox.slot(now, minute, minute + 5, random.Random(f"{hk}|{rnd_no}|g|{n}")))
                     _group_triggers(triggers, by_name[n], gp, mentioned, agents, now.hour, rnd)
                     gcounts[gp["group"]] = gcounts.get(gp["group"], 0) + 1
     if total:
@@ -921,19 +920,17 @@ def _parse_meeting(raw, scopes: list[str]) -> dict | None:
 
 
 # ===================================================================== 대화
-def _post(agent: dict, text: str) -> None:
-    if not runtime.has_agent_sender():
-        print(f"[에이전트] (채널 미설정) {agent['name']}: {text}")
-        return
-    try:
-        runtime.send_as(agent.get("account", ""), agent["name"], text, agent.get("avatar_url", ""))
-    except Exception as e:  # noqa: BLE001
-        print(f"[경고] {agent['name']} 메시지 전송 실패: {e}")
+def _post(agent: dict, text: str, at: datetime | None = None) -> None:
+    """그 인물로 에이전트 채널에 올린다. at이 있으면 그 시각에 (예약함 - 사람이 하듯 차례대로)."""
+    outbox.schedule(at, "agent", account=agent.get("account", ""), name=agent["name"], text=text,
+                    avatar=agent.get("avatar_url", ""))
 
 
-def _pause() -> None:
+def _pause(live: bool = False) -> None:
+    """바로 보내는 글 사이의 타자 치는 시간. 대화는 예약해서 보낼 땐 시각이 이미 벌어져 있으니 기다리지 않고,
+    모임/투표(live=True)처럼 지금 그 자리에서 진행되는 건 늘 기다린다."""
     lo, hi = TYPING_DELAY
-    if hi > 0:
+    if hi > 0 and (live or not outbox.paced()):
         time.sleep(random.uniform(lo, max(lo, hi)))
 
 
@@ -1021,12 +1018,18 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
     return picked[:GOSSIP_MAX_RECIPIENTS]
 
 
-def _conversation(a: dict, b: dict, opening: str, how: str, place: str, at: str = "") -> dict:
-    """a가 먼저 말을 걸고 b와 번갈아 말한다. 각자 자기 계정으로 채널에 올린다. at: 머리줄에 쓸 시각(파급 라운드는 HH:20 등)."""
+def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: datetime | None = None) -> dict:
+    """
+    a가 먼저 말을 걸고 b와 번갈아 말한다. 각자 자기 계정으로 채널에 올린다.
+    start: 이 대화가 시작되는 이야기 속 시각 - 첫 마디는 그때, 다음 마디는 글 길이만큼 20~90초(메신저는 40~180초) 뒤에
+    올라가도록 예약한다. 다른 곳의 대화와 시간표가 겹치면 채널에서 자연스럽게 섞인다.
+    """
     now = now_kst()
-    header = f"-# {'📱 메신저' if how == '메신저' else '📍 ' + place} · {at or now.strftime('%H:%M')} · {a['name']} → {b['name']}"
+    t = start or now
+    rnd = random.Random(f"{t.isoformat()}|{a['name']}|{b['name']}")
+    header = f"-# {'📱 메신저' if how == '메신저' else '📍 ' + place} · {t.strftime('%H:%M')} · {a['name']} → {b['name']}"
     transcript = [{"speaker": a["name"], "line": opening.strip()[:300]}]
-    _post(a, f"{header}\n{transcript[0]['line']}")
+    _post(a, f"{header}\n{transcript[0]['line']}", at=t if start else None)
     outs: dict[str, dict] = {}
     speakers = [b, a]
     for i in range(MAX_TURNS - 1):
@@ -1037,9 +1040,10 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, at: str 
         if not out:
             break
         line = str(out["say"]).strip()[:300]
+        t = t + outbox.gap(transcript[-1]["line"] + line, rnd, messenger=(how == "메신저"))
         transcript.append({"speaker": sp["name"], "line": line})
         outs[sp["name"]] = out
-        _post(sp, line)
+        _post(sp, line, at=t if start else None)
         if out.get("end"):
             break
 
@@ -1149,14 +1153,8 @@ def _next_speaker(people: list[dict], transcript: list[dict], rnd: random.Random
     return rnd.choice([p for p in pool if counts[p["name"]] == least])
 
 
-def _post_as(name: str, text: str) -> None:
-    if not runtime.has_agent_sender():
-        print(f"[에이전트] (채널 미설정) {name}: {text}")
-        return
-    try:
-        runtime.send_as("", name, text, "")
-    except Exception as e:  # noqa: BLE001
-        print(f"[경고] {name} 메시지 전송 실패: {e}")
+def _post_as(name: str, text: str, at: datetime | None = None) -> None:
+    outbox.schedule(at, "agent", account="", name=name, text=text, avatar="")
 
 
 MEETING_MAX_ROUNDS = 5     # 결론이 안 나면 이만큼 다시 모이고, 마지막 모임 끝에 투표로 정한다
@@ -1200,7 +1198,7 @@ def _vote_once(people: list[dict], topic: str, candidates: list[str], talk: str,
         reason = str((res or {}).get("reason") or "").strip()[:120]
         out.append((p["name"], choice, reason))
         _post(p, f"🗳️ **{choice}**" + (f" - {reason}" if reason else ""))
-        _pause()
+        _pause(live=True)
     return out
 
 
@@ -1274,7 +1272,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
     for i in range(turns):
         sp = _next_speaker(people, transcript, rnd)
         if transcript:
-            _pause()
+            _pause(live=True)
         out = _meeting_turn(sp, topic, place, people, transcript, last_turn=(i == turns - 1), context=context)
         if not out:
             continue
@@ -1674,13 +1672,14 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         target = by_name.get(c["to"])
         if not target or name in busy_now or target["name"] in busy_now:
             continue
+        start = outbox.slot(now, 5, 17, random.Random(f"{hk}|{name}"))  # 이번 시간 앞쪽 어딘가에서 시작
         if _asleep(target, now.hour):
             # 자고 있으면 메시지만 남긴다 - 깨어나서 받은편지함에서 본다
-            _post(by_name[name], f"-# 📱 메신저 · {now.strftime('%H:%M')} · {name} → {target['name']}\n{c['opening']}")
+            _post(by_name[name], f"-# 📱 메신저 · {start.strftime('%H:%M')} · {name} → {target['name']}\n{c['opening']}", at=start)
             _push_inbox(data, target["name"], f"{name}에게서 온 메시지: {c['opening']}", "메시지")
         else:
             place = d.get("location") or "어딘가"
-            scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place)
+            scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place, start=start)
             for who, text in scene.get("gossip", []):
                 _push_inbox(data, who, text, "소문")
                 print(f"[에이전트] 소문: {who} <- {text}")
@@ -1711,7 +1710,8 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         day_cap = TOWN_GROUP_MAX_POSTS_PER_DAY if gp["group"] == TOWN_GROUP else GROUP_MAX_POSTS_PER_DAY
         if counts.get(gp["group"], 0) >= day_cap:
             continue
-        mentioned = _post_group(by_name[name], gp["group"], gp["text"], data, agents)
+        mentioned = _post_group(by_name[name], gp["group"], gp["text"], data, agents,
+                                at=outbox.slot(now, 6, 18, random.Random(f"{hk}|group|{name}")))
         _group_triggers(hour_triggers, by_name[name], gp, mentioned, agents, now.hour, random.Random(f"{hk}|group"))
         data.setdefault(name, {}).setdefault("decision", d)["group_done"] = True
         counts[gp["group"]] = counts.get(gp["group"], 0) + 1
@@ -1824,12 +1824,10 @@ def post_town_view(states: dict | None = None) -> None:
     if not runtime.has_agent_sender():
         print("[에이전트] (채널 미설정) 지금 동네는\n" + "\n".join(chunks))
         return
-    for text in chunks:
-        try:
-            runtime.send_as("", "동네 소식", text, "")
-        except Exception as e:  # noqa: BLE001
-            print(f"[경고] 동네 풍경 전송 실패: {e}")
-            return
+    # 그 시간의 대화들이 차례대로 올라간 뒤 끝 무렵에 (예약함)
+    at = outbox.slot(now, 56, 57, random.Random(f"{now.isoformat()}|view")) if outbox.paced() else None
+    for i, text in enumerate(chunks):
+        outbox.schedule(at + timedelta(seconds=i) if at else None, "agent", account="", name="동네 소식", text=text, avatar="")
 
 
 # ===================================================================== 다른 곳에서 쓰는 요약
