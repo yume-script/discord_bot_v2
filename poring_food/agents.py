@@ -465,11 +465,49 @@ def _desk_staff(data: dict, now) -> dict | None:
     return {"state": d.get("state", "") if fresh else "", "energy": lv.get("energy", 0.6), "stress": lv.get("stress", 0.4)}
 
 
-ARCADE_NAME = "🎰 봇 오락실"
+ARCADE_NAME = f"🎰 {arcade.PLACE}"
+
+
+def _arcade_manager(by_name: dict, player: str, now) -> dict | None:
+    """지금 가게를 보고 있는 오락기 주인 (실적 자리 담당 - 처음엔 오윤). 손님 본인이거나 자는 중이면 None."""
+    name = kpi.holder("arcade") or arcade.MANAGER
+    m = by_name.get(name)
+    if not m or name == player or _asleep(m, now.hour):
+        return None
+    return m
+
+
+def _arcade_comment(manager: dict, player: str, r: dict, now) -> dict | None:
+    """주인이 손님의 한 판을 보고 한마디 (LLM 1회). {"say", "cut_off", "group_post"}."""
+    st = arcade.today_stats(now)
+    mine = int((st.get("by") or {}).get(player, 0))
+    sign = "+" if r["change"] >= 0 else ""
+    user = (
+        "\n\n".join(b for b in (
+            f"[지금] {now.strftime('%H:%M')}, 내 가게(골목 LP바)의 봇 오락기 앞.",
+            life.prompt_block(manager["name"]),
+            memory.prompt_block(manager["name"], [player], k=3),
+        ) if b) + "\n\n"
+        f"단골 {j(player, '이')} 방금 {r['game']}에 {r['bet']:,}원을 걸어서 {sign}{r['change']:,}원 "
+        f"(오늘 이 손님 손익 {mine:+,}원, 오늘 가게 매출 {int(st.get('revenue', 0)):+,}원).\n"
+        f"결과: {r['result'].splitlines()[0]}\n\n"
+        f"{manager['name']}로서 이 손님에게 한마디 해라 (1문장, 가게 주인으로서 - 축하든 위로든 놀림이든 성격대로). "
+        "오늘 너무 많이 잃었거나 계속 잃는 손님이면 오늘은 그만하라고 하고 cut_off를 true로 (가게 주인으로서 말린다). "
+        f"손님이 크게 땄으면(20만 원 이상) 동네 단톡방에 알릴 글을 group_post에, 아니면 null.\n" + _voice(manager, player)
+        + '\n반드시 JSON으로만 응답:\n{"say": "한마디", "cut_off": true/false, "group_post": null 또는 "단톡방 글(1문장)"}'
+    )
+    out = llm_json(_system(manager), user, temperature=0.9, timeout=DECIDE_TIMEOUT_SEC,
+                   tag=f"오락기 주인 {manager['name']}", agent=manager["name"])
+    if not out or not str(out.get("say") or "").strip():
+        return None
+    gp = str(out.get("group_post") or "").strip()
+    return {"say": str(out["say"]).strip()[:200], "cut_off": bool(out.get("cut_off")),
+            "group_post": gp[:200] if gp and abs(r["change"]) >= arcade.BIG else ""}
 
 
 def _handle_arcade(decisions: dict, by_name: dict, data: dict, now, hk: str, triggers: dict) -> None:
-    """game을 고른 사람이 개인시간이면 한 판 한다: 친 명령(그 사람) -> 결과(오락실)를 채널에 올리고, 크게 따거나 잃으면 반응 거리."""
+    """game을 고른 사람이 개인시간이면 한 판 한다: 친 명령(그 사람) -> 결과(오락기) -> 주인 한마디를 채널에 올리고,
+    크게 따거나 잃으면 반응 거리. 주인은 너무 잃는 손님을 오늘 그만 받을 수 있고, 대박은 동네 단톡방에 알린다."""
     for name, d in decisions.items():
         g = d.get("game")
         if not g or d.get("game_done") or d.get("state") != "개인시간" or name not in by_name:
@@ -480,15 +518,31 @@ def _handle_arcade(decisions: dict, by_name: dict, data: dict, now, hk: str, tri
         if not r:
             continue
         t = outbox.slot(now, 20, 55, random.Random(f"{hk}|arcade|{name}"))
-        _post(by_name[name], f"-# 🎰 봇 오락실 · {t.strftime('%H:%M')} · {name}\n{r['command']}", at=t)
+        _post(by_name[name], f"-# 🎰 {arcade.PLACE} · {t.strftime('%H:%M')} · {name}\n{r['command']}", at=t)
         outbox.schedule(t + timedelta(seconds=4), "agent", account="", name=ARCADE_NAME,
                         text=f"-# 🎰 {name}의 {r['game']}\n{r['result']}", avatar="")
         sign = "+" if r["change"] >= 0 else ""
-        note = f"봇 오락실 {r['game']}에 {r['bet']:,}원 걸어서 {sign}{r['change']:,}원 (지금 {r['money']:,}원)"
+        note = f"{arcade.PLACE}에서 {r['game']}에 {r['bet']:,}원 걸어서 {sign}{r['change']:,}원 (지금 {r['money']:,}원)"
         _push_inbox(data, name, note, "오락", quiet=True)
         chronicle.record_event("오락", f"{name} {r['game']} {sign}{r['change']:,}원", note, [name], private=True)
         if abs(r["change"]) >= arcade.BIG:
             _add_trigger(triggers, name, f"방금 {note}", f"오락:{name}")
+        m = _arcade_manager(by_name, name, now)
+        c = _arcade_comment(m, name, r, now) if m else None
+        if not c:
+            continue
+        t2 = t + timedelta(seconds=25)
+        _post(m, f"-# 🎰 {arcade.PLACE} · {t2.strftime('%H:%M')} · {m['name']} → {name}\n{c['say']}", at=t2)
+        _push_inbox(data, name, f"{m['name']}(오락기 주인)이 한마디: {c['say']}", "오락", quiet=True)
+        if c["cut_off"]:
+            arcade.cut_off(name, now)
+            _push_inbox(data, name, f"{m['name']}이 오늘은 오락기 그만하라고 해서 더 못 한다", "오락", quiet=True)
+            print(f"[오락실] {m['name']}이 {name}에게 오늘은 그만 - {c['say']}")
+        if c["group_post"] and TOWN_GROUP in (m.get("groups") or []):
+            _post_group(m, TOWN_GROUP, c["group_post"], data, list(by_name.values()), at=t2 + timedelta(seconds=60))
+        if abs(r["change"]) >= arcade.BIG:
+            memory.remember(m["name"], f"내 가게 오락기에서 {j(name, '이')} {abs(r['change']):,}원을 "
+                                       f"{'땄다' if r['change'] > 0 else '잃었다'}", 5, [name], "가게")
 
 
 def _kpi_announcer(company: str, agents: list[dict], roster: list[dict]) -> dict | None:

@@ -262,7 +262,7 @@ def test_agent_plays_bot_game_in_free_time(fake_llm, monkeypatch, caplog):
     def handler(system, user):
         out = _handler(system, user)
         if "이번 한 시간 동안" in user and "'홍두식'" in system:
-            seen["rule"] = "봇 오락실" in user
+            seen["rule"] = "봇 미니게임" in user
             out.update(state="개인시간", contact=None, game={"name": "주사위", "bet": 5000})
         return out
 
