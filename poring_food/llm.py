@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+from collections import deque
 
 import requests
 
@@ -37,9 +39,57 @@ AGENT_MODEL_REASONING = os.getenv("PORING_AGENT_MODEL_REASONING", "low").strip()
 AGENT_MODEL_COOLDOWN_SEC = 60  # 인물 전용 모델이 429를 내면 이만큼은 기본 모델로 (분당 한도가 풀릴 때까지)
 AGENT_MODEL_FORBIDDEN_SEC = 1800  # 401/403(키/계정 거부)이면 오래 쉰다 - 매 호출마다 실패하고 기본 모델로 다시 부르는 낭비를 막는다
 _agent_model_blocked: dict[str, float] = {}
+# 인물 전용 모델의 분당 토큰 예산 - 무료 키 묶음(예: groq 키 5개 x 분당 8,000)을 429 없이 꽉 채워 쓰게 봇이 미리 센다.
+# 최근 60초에 쓴(또는 쓰는 중인) 토큰 + 이번 호출 예상이 예산을 넘으면, 자리가 날 때까지 잠깐 기다리고(최대
+# AGENT_MODEL_WAIT_SEC초) 그래도 안 나면 그 호출만 기본 모델로. 키를 늘리면 PORING_AGENT_MODEL_TPM만 올리면 된다. 0이면 끔.
+AGENT_MODEL_TPM = int(os.getenv("PORING_AGENT_MODEL_TPM", "40000"))
+AGENT_MODEL_TPM_SAFETY = 0.85     # 예상이 빗나가도 한도를 안 넘게 여유
+AGENT_MODEL_WAIT_SEC = float(os.getenv("PORING_AGENT_MODEL_WAIT_SEC", "15"))
+AGENT_MODEL_OUT_TOKENS = 700      # 응답(생각 토큰 포함) 예상
+CHARS_PER_TOKEN = 1.6             # 한국어 프롬프트 글자당 토큰 (대략)
+_budget_lock = threading.Lock()
+_budget: dict[str, deque] = {}    # 모델 -> deque[[시각, 토큰]]
+
+
+def estimate_tokens(system: str, user: str) -> int:
+    return int((len(system) + len(user)) / CHARS_PER_TOKEN) + AGENT_MODEL_OUT_TOKENS
+
+
+def _window_used(q: deque, now: float) -> int:
+    while q and now - q[0][0] >= 60:
+        q.popleft()
+    return sum(e[1] for e in q)
+
+
+def _reserve(model: str, tokens: int, wait: float | None = None) -> list | None:
+    """예산 안이면 자리를 잡고 그 항목을 돌려준다 (나중에 실제 토큰으로 고친다). 끝내 자리가 없으면 None."""
+    if AGENT_MODEL_TPM <= 0:
+        return [time.time(), 0]
+    cap = AGENT_MODEL_TPM * AGENT_MODEL_TPM_SAFETY
+    deadline = time.time() + (AGENT_MODEL_WAIT_SEC if wait is None else wait)
+    while True:
+        with _budget_lock:
+            now = time.time()
+            q = _budget.setdefault(model, deque())
+            used = _window_used(q, now)
+            if used + tokens <= cap or (not q and tokens > cap):
+                entry = [now, tokens]
+                q.append(entry)
+                return entry
+            # 가장 오래된 기록이 60초 창을 벗어날 때까지
+            free_at = q[0][0] + 60 if q else now
+        if free_at > deadline:
+            return None
+        time.sleep(max(0.2, min(free_at - time.time(), deadline - time.time())))
+
+
+def _settle(entry: list, tokens: int) -> None:
+    with _budget_lock:
+        entry[1] = max(0, int(tokens))
 # 이번 회차 호출 결과 - 이상 감지(health.py)가 회차 시작에 비우고 끝에 본다. {"상태코드:모델": 횟수} (연결 실패는 0)
 ERRORS: dict[str, int] = {}
 OK: dict[str, int] = {}
+_last = threading.local()  # 이 스레드의 마지막 호출이 쓴 토큰 (예산 정산용)
 
 
 def _count(table: dict, key: str) -> None:
@@ -123,6 +173,7 @@ def _call(model: str, source: str, system: str, user: str, temperature: float, t
         usage = (body.get("usage") or {}) if isinstance(body, dict) else {}
         llm_usage.record(source, True, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
         _count(OK, model)
+        _last.tokens = int(usage.get("total_tokens") or (usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)))
         data = json.loads(body["choices"][0]["message"]["content"])
         return (data if isinstance(data, dict) else None), 200
     except Exception as e:  # noqa: BLE001
@@ -137,9 +188,18 @@ def llm_json(system: str, user: str, *, temperature: float = 0.8, timeout: int =
         return None
     global _no_retry_until, _smart_blocked_day
     own = agent_model(agent)
+    entry = None
     if own and own != LLM_MODEL and time.time() >= _agent_model_blocked.get(own, 0):
+        est = estimate_tokens(system, user)
+        entry = _reserve(own, est)
+        if entry is None:
+            print(f"[LLM] {tag}: {own} 분당 토큰 예산({AGENT_MODEL_TPM:,}) 꽉 참 - 이번만 기본 모델로")
+    if entry is not None:
         extra = {"reasoning_effort": AGENT_MODEL_REASONING} if AGENT_MODEL_REASONING else None
+        _last.tokens = 0
         out, status = _call(own, f"{SOURCE}({own})", system, user, temperature, timeout, tag, extra)
+        # 실제 쓴 토큰으로 고친다 (거절/연결 실패면 안 쓴 것, 응답 형식만 틀렸으면 예상치 그대로)
+        _settle(entry, getattr(_last, "tokens", 0) or (est if status == 200 else 0))
         if out is not None:
             return out
         if status == 429:
