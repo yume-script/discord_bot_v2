@@ -73,7 +73,7 @@ VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
 GROUP_COMPANY = "포링푸드 (Poring Food)"
 GROUP_NAME = "포링푸드 단톡방"
 TOWN_GROUP = "동네 단톡방"
-GROUP_HEADERS = {TOWN_GROUP: "-# 🏘️ 동네 단톡방"}  # 다른 글과 같은 채널을 쓰는 단톡방은 머리줄로 구분
+GROUP_HEADERS = {TOWN_GROUP: "-# 🏘️ 동네 단톡방", GROUP_NAME: "-# 💬 포링푸드 단톡방"}  # 글마다 머리줄(+시각)로 출처 표시
 GROUP_PATH = os.path.join(STATE_DIR, "group_chat.jsonl")
 GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))            # 회사 단톡방 하루 상한
 TOWN_GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_TOWN_GROUP_MAX_POSTS_PER_DAY", "24"))  # 동네 단톡방(멤버가 많다)
@@ -361,9 +361,9 @@ def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dic
     """단톡방에 올리고 기록한다(at: 올릴 시각 - 예약함). 이름이 불린 멤버는 받은편지함으로 깨운다.
     반환: 이름이 불린 멤버 (파급 라운드용)."""
     now = at or now_kst()
-    header = GROUP_HEADERS.get(group)
+    header = f"{GROUP_HEADERS.get(group) or '-# 💬 ' + group} · {now.strftime('%H:%M')} · {agent['name']}"
     outbox.schedule(at, "agent", account=agent.get("account", ""), name=agent["name"],
-                    text=f"{header}\n{text}" if header else text, avatar=agent.get("avatar_url", ""),
+                    text=f"{header}\n{text}", avatar=agent.get("avatar_url", ""),
                     channel_id=_group_channel(group))
     with open(GROUP_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps({"at": now.isoformat(timespec="minutes"), "group": group, "name": agent["name"],
@@ -1018,6 +1018,11 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
     return picked[:GOSSIP_MAX_RECIPIENTS]
 
 
+def _talk_header(how: str, place: str, t: datetime, speaker: str, listener: str) -> str:
+    """대화 한 마디의 출처: 📱 메신저 · 11:14 · 지성현 → 권민우 / 📍 카페 오후세시 · 11:14 · 홍두식 → 윤혜진."""
+    return f"-# {'📱 메신저' if how == '메신저' else '📍 ' + place} · {t.strftime('%H:%M')} · {speaker} → {listener}"
+
+
 def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: datetime | None = None) -> dict:
     """
     a가 먼저 말을 걸고 b와 번갈아 말한다. 각자 자기 계정으로 채널에 올린다.
@@ -1027,9 +1032,8 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
     now = now_kst()
     t = start or now
     rnd = random.Random(f"{t.isoformat()}|{a['name']}|{b['name']}")
-    header = f"-# {'📱 메신저' if how == '메신저' else '📍 ' + place} · {t.strftime('%H:%M')} · {a['name']} → {b['name']}"
     transcript = [{"speaker": a["name"], "line": opening.strip()[:300]}]
-    _post(a, f"{header}\n{transcript[0]['line']}", at=t if start else None)
+    _post(a, f"{_talk_header(how, place, t, a['name'], b['name'])}\n{transcript[0]['line']}", at=t if start else None)
     outs: dict[str, dict] = {}
     speakers = [b, a]
     for i in range(MAX_TURNS - 1):
@@ -1043,7 +1047,8 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
         t = t + outbox.gap(transcript[-1]["line"] + line, rnd, messenger=(how == "메신저"))
         transcript.append({"speaker": sp["name"], "line": line})
         outs[sp["name"]] = out
-        _post(sp, line, at=t if start else None)
+        # 마디마다 출처 머리줄 - 다른 곳 대화와 섞여 올라가도 어디서 누가 누구에게 하는 말인지 보이게
+        _post(sp, f"{_talk_header(how, place, t, sp['name'], other['name'])}\n{line}", at=t if start else None)
         if out.get("end"):
             break
 
@@ -1197,7 +1202,8 @@ def _vote_once(people: list[dict], topic: str, candidates: list[str], talk: str,
             continue
         reason = str((res or {}).get("reason") or "").strip()[:120]
         out.append((p["name"], choice, reason))
-        _post(p, f"🗳️ **{choice}**" + (f" - {reason}" if reason else ""))
+        _post(p, f"-# 🗳️ {'결선 ' if runoff else ''}투표 · {now_kst().strftime('%H:%M')} · {topic[:30]}\n🗳️ **{choice}**"
+              + (f" - {reason}" if reason else ""))
         _pause(live=True)
     return out
 
@@ -1280,7 +1286,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
         transcript.append({"speaker": sp["name"], "line": line, "stance": str(out.get("stance") or "")[:10]})
         if str(out.get("proposal") or "").strip():
             proposals.append(f"{sp['name']}: {str(out['proposal']).strip()[:80]}")
-        _post(sp, line)
+        _post(sp, f"-# 🏛️ {place} · {now_kst().strftime('%H:%M')} · {topic[:30]}\n{line}")
     result["lines"] = len(transcript)
     if not transcript:
         return result
