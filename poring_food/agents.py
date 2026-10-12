@@ -27,8 +27,8 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import (characters, chronicle, kpi, life, memory, milestones, newcomers, novelty, outbox, projects, rotation, runtime,
-               signals, townmap, world)
+from . import (arcade, characters, chronicle, kpi, life, memory, milestones, newcomers, novelty, outbox, projects, rotation,
+               runtime, signals, townmap, world)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -465,6 +465,32 @@ def _desk_staff(data: dict, now) -> dict | None:
     return {"state": d.get("state", "") if fresh else "", "energy": lv.get("energy", 0.6), "stress": lv.get("stress", 0.4)}
 
 
+ARCADE_NAME = "🎰 봇 오락실"
+
+
+def _handle_arcade(decisions: dict, by_name: dict, data: dict, now, hk: str, triggers: dict) -> None:
+    """game을 고른 사람이 개인시간이면 한 판 한다: 친 명령(그 사람) -> 결과(오락실)를 채널에 올리고, 크게 따거나 잃으면 반응 거리."""
+    for name, d in decisions.items():
+        g = d.get("game")
+        if not g or d.get("game_done") or d.get("state") != "개인시간" or name not in by_name:
+            continue
+        d["game_done"] = True
+        data.setdefault(name, {}).setdefault("decision", d)["game_done"] = True
+        r = arcade.play(name, g, now)
+        if not r:
+            continue
+        t = outbox.slot(now, 20, 55, random.Random(f"{hk}|arcade|{name}"))
+        _post(by_name[name], f"-# 🎰 봇 오락실 · {t.strftime('%H:%M')} · {name}\n{r['command']}", at=t)
+        outbox.schedule(t + timedelta(seconds=4), "agent", account="", name=ARCADE_NAME,
+                        text=f"-# 🎰 {name}의 {r['game']}\n{r['result']}", avatar="")
+        sign = "+" if r["change"] >= 0 else ""
+        note = f"봇 오락실 {r['game']}에 {r['bet']:,}원 걸어서 {sign}{r['change']:,}원 (지금 {r['money']:,}원)"
+        _push_inbox(data, name, note, "오락", quiet=True)
+        chronicle.record_event("오락", f"{name} {r['game']} {sign}{r['change']:,}원", note, [name], private=True)
+        if abs(r["change"]) >= arcade.BIG:
+            _add_trigger(triggers, name, f"방금 {note}", f"오락:{name}")
+
+
 def _kpi_announcer(company: str, agents: list[dict], roster: list[dict]) -> dict | None:
     """실적 발표할 부서장: 그 소속 에이전트 중 부장 (생산기획부 먼저), 없으면 아무 에이전트."""
     rank = {c["name"]: c for c in roster}
@@ -677,13 +703,15 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
     if my_projects:
         meeting_spec += (f', "project_work": null 또는 {{"project": "{"|".join(p["title"] for p in my_projects)}", '
                          '"did": "이번 시간에 실제로 한 일 한 줄"}')
+    arcade_rule = arcade.prompt_rule(agent["name"])
+    meeting_spec += arcade.SPEC if arcade_rule else ""
     user = (
         _perception(agent, st, routine_hint, kakao, others) + "\n\n"
         "이번 한 시간 동안 무엇을 할지 정해라.\n"
         "- 다른 사람에게 연락할 이유가 있으면(전할 말, 걱정, 반가움, 부탁, 그냥 수다) contact를 써라. "
         "억지로 매번 연락하지는 마라. 같은 장소에 있을 법하면 how를 '직접', 아니면 '메신저'.\n"
         "- 카톡 대화나 받은 소식으로 마음이 바뀌었으면 state_change에, 오래 기억할 일이면 memory에 적어라.\n"
-        + group_rule + meeting_rule
+        + group_rule + meeting_rule + arcade_rule
         + "- contact의 opening과 group_post의 text는 내가 실제로 하는 말이다. " + _voice(agent) + "\n"
         "반드시 JSON으로만 응답:\n"
         '{"location": "지금 있는 곳", "activity": "하는 일(짧게)", '
@@ -713,6 +741,7 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "meeting": _parse_meeting(out.get("meeting"), scopes),
         "meeting_support": str(out.get("meeting_support") or "").strip()[:80] if pending else "",
         "project_work": _parse_project_work(out.get("project_work"), my_projects),
+        "game": arcade.parse(out.get("game")) if arcade_rule else None,
     }
 
 
@@ -1760,6 +1789,11 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         data.setdefault(name, {}).setdefault("decision", d)["group_done"] = True
         counts[gp["group"]] = counts.get(gp["group"], 0) + 1
         posted += 1
+    # 3.1) 봇 오락실 - 개인시간에 미니게임을 하기로 한 사람 (봇 게임 엔진으로 실제로 한 판)
+    try:
+        _handle_arcade(decisions, by_name, data, now, hk, hour_triggers)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 오락실 처리 실패: {e}")
     # 3.2) 파급 라운드 - 방금 겪은 일에 같은 시간 안에 반응하고, 그게 또 새 대화/글로 이어진다
     try:
         talked = {n: 1 for n in busy_now}
