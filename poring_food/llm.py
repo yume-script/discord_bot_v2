@@ -37,6 +37,13 @@ AGENT_MODEL_REASONING = os.getenv("PORING_AGENT_MODEL_REASONING", "low").strip()
 AGENT_MODEL_COOLDOWN_SEC = 60  # 인물 전용 모델이 429를 내면 이만큼은 기본 모델로 (분당 한도가 풀릴 때까지)
 AGENT_MODEL_FORBIDDEN_SEC = 1800  # 401/403(키/계정 거부)이면 오래 쉰다 - 매 호출마다 실패하고 기본 모델로 다시 부르는 낭비를 막는다
 _agent_model_blocked: dict[str, float] = {}
+# 이번 회차 호출 결과 - 이상 감지(health.py)가 회차 시작에 비우고 끝에 본다. {"상태코드:모델": 횟수} (연결 실패는 0)
+ERRORS: dict[str, int] = {}
+OK: dict[str, int] = {}
+
+
+def _count(table: dict, key: str) -> None:
+    table[key] = table.get(key, 0) + 1
 
 
 def parse_agent_models(raw: str) -> dict[str, str]:
@@ -102,10 +109,12 @@ def _call(model: str, source: str, system: str, user: str, temperature: float, t
         res = _post(model, system, user, temperature, timeout, extra)
     except requests.RequestException as e:
         llm_usage.record(source, ok=False)
+        _count(ERRORS, f"0:{model}")
         print(f"[경고] {tag} 호출 실패: {e}")
         return None, 0
     if res.status_code != 200:
         llm_usage.record(source, ok=False)
+        _count(ERRORS, f"{res.status_code}:{model}")
         print(f"[경고] {tag} 응답 오류: HTTP {res.status_code}" + (f" ({model})" if source != SOURCE else "")
               + (f" - {_reason(res)}" if _reason(res) else ""))
         return None, res.status_code
@@ -113,6 +122,7 @@ def _call(model: str, source: str, system: str, user: str, temperature: float, t
         body = res.json()
         usage = (body.get("usage") or {}) if isinstance(body, dict) else {}
         llm_usage.record(source, True, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+        _count(OK, model)
         data = json.loads(body["choices"][0]["message"]["content"])
         return (data if isinstance(data, dict) else None), 200
     except Exception as e:  # noqa: BLE001

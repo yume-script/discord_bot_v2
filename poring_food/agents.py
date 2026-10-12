@@ -1643,7 +1643,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     started = time.time()
     results = _decide_all(jobs, agents)
     LAST_TICK.clear()
-    LAST_TICK.update(decided=len(jobs), decide_sec=round(time.time() - started))
+    LAST_TICK.update(decided=len(jobs), ok=sum(1 for r in results if r), decide_sec=round(time.time() - started))
     if jobs:
         print(f"[에이전트] 판단 {len(jobs)}명 ({time.time() - started:.0f}초)")
     for (agent, st, _hint, _kakao, new_since), d in zip(jobs, results):
