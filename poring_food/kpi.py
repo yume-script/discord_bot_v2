@@ -14,6 +14,7 @@
 | 연산 처리             | 에린 로지스틱스 기획전략부     | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)        | 최택      |
 | 운영 경비             | 에린 로지스틱스 데이터보안부   | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)      | 동그라미  |
 | 매장 손님 수           | 카페 오후세시                | Tautulli 지금 시청 중인 스트림 수               | 소라      |
+| 오락기 매출            | 광주 동네 상가 (동네 가게)     | 골목 LP바 오락기 - 손님(인물)들이 잃은 돈 - 딴 돈 | 오윤      |
 
 - 담당은 사람이 아니라 자리에 붙는다: 담당자가 교체(rotation.py)로 쉬러 가면 같은 소속·부서의 다른 에이전트가
   인수인계받는다 (처음 담당자가 있으면 그 사람 먼저). 부서에 에이전트가 없으면 그동안 공석.
@@ -44,7 +45,7 @@ import os
 import re
 from datetime import datetime, timedelta
 
-from . import metrics, signals
+from . import arcade, metrics, signals
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -96,6 +97,8 @@ POSTS = [
      "line": "연산 처리", "verb": "처리", "unit": "건", "source": "LiteLLM 오늘 요청 수 (프록시 전체, 못 받으면 봇 집계)"},
     {"id": "llm_cost", "company": ER, "dept": "데이터보안부", "first": "동그라미", "kind": "cost", "metric": "llm_tokens",
      "line": "운영 경비", "unit": "토큰", "source": "LiteLLM 오늘 사용 토큰 (평소보다 적을수록 좋음)"},
+    {"id": "arcade", "company": "광주 동네 상가", "dept": "동네 가게", "first": arcade.MANAGER, "kind": "arcade",
+     "metric": "arcade", "line": "오락기 매출", "unit": "원", "source": f"골목 {arcade.PLACE} - 손님들이 봇 미니게임에서 잃은 돈 - 딴 돈"},
     {"id": "streams", "company": CAFE, "dept": "카페", "first": "소라", "kind": "level", "metric": "streams",
      "line": "매장 손님", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수"},
 ]
@@ -180,6 +183,15 @@ def reading(post: dict, data: dict | None = None) -> dict | None:
     kind, metric = post["kind"], post["metric"]
     if kind == "desk":
         return _desk_reading((data if data is not None else _load()).get("desk") or {})
+    if kind == "arcade":
+        st = arcade.today_stats()
+        plays, rev = int(st.get("plays", 0)), int(st.get("revenue", 0))
+        score = 80 if not plays else int(max(0, min(SCORE_CAP, 100 + rev / 5000)))
+        top = max((st.get("by") or {}).items(), key=lambda kv: kv[1], default=None)
+        text = (f"오늘 {arcade.PLACE} 손님 {plays}판 · 매출 {rev:+,}원" + (f" (제일 많이 딴 손님 {top[0]} {top[1]:+,}원)"
+                                                                       if top and top[1] > 0 else ""))
+        return {"value": rev, "score": score, "text": text,
+                "alert": "오늘 손님들이 크게 따 가서 가게가 적자" if rev <= -arcade.BIG else ""}
     if kind == "count":
         x = metrics.count(metric)
         if not x:
@@ -379,7 +391,7 @@ def record(now: datetime | None = None, desk_staff: dict | None = None) -> None:
                    company=post["company"])
         if post["kind"] in ("count", "cost"):
             rec.update(avg=x.get("avg"), saturated=x.get("saturated", False))
-        rec["score"] = x["score"] if post["kind"] == "desk" else _score(post, rec, _hist_mean(data, post["id"], today))
+        rec["score"] = x["score"] if post["kind"] in ("desk", "arcade") else _score(post, rec, _hist_mean(data, post["id"], today))
         rows[post["id"]] = rec
     cutoff = (now - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
     data["daily"] = {d: r for d, r in daily.items() if d >= cutoff}

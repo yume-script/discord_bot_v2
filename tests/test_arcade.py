@@ -35,8 +35,18 @@ def test_daily_limit(money_dir, monkeypatch):
     assert "블랙잭" in arcade.prompt_rule("소라")
 
 
-def test_handle_arcade_posts_command_and_result(money_dir, monkeypatch):
+def test_handle_arcade_posts_command_result_and_manager_comment(money_dir, monkeypatch, fake_llm):
     monkeypatch.setattr(outbox, "paced", lambda: True)
+    monkeypatch.setattr(agents, "_asleep", lambda a, h: False)
+    calls = []
+
+    def handler(system, user):
+        if "오락기 앞" in user:
+            calls.append(user)
+            return {"say": "오늘은 여기까지.", "cut_off": True, "group_post": "오늘 대박 손님 나왔어요"}
+        return {}
+
+    fake_llm(handler)
     by_name = {a["name"]: a for a in agents.load_agents()}
     now = datetime(2026, 10, 12, 20, 3)
     decisions = {"소라": {"state": "개인시간", "game": {"name": "가위바위보", "bet": 3000, "choice": "보"}},
@@ -45,7 +55,24 @@ def test_handle_arcade_posts_command_and_result(money_dir, monkeypatch):
     agents._handle_arcade(decisions, by_name, data, now, "2026-10-12 20", triggers)
     items = outbox.take_due(now + timedelta(hours=1), limit=20)
     texts = [(it["name"], it["text"]) for it in items]
-    assert ("소라", "-# 🎰 봇 오락실 · " + texts[0][1].split(" · ")[1] + " · 소라\n/보 3000") == texts[0]
+    assert texts[0][0] == "소라" and texts[0][1].startswith(f"-# 🎰 {arcade.PLACE} · ") and texts[0][1].endswith("\n/보 3000")
     assert texts[1][0] == agents.ARCADE_NAME and "변동:" in texts[1][1]
+    assert texts[2][0] == arcade.MANAGER and texts[2][1].endswith(f"{arcade.MANAGER} → 소라\n오늘은 여기까지.")
+    assert len(texts) == 3                                    # 3천 원짜리 판은 대박이 아니라 단톡방엔 안 올린다
     assert not any(n == "김동식" for n, _ in texts)           # 일하는 중이면 안 한다
-    assert any("봇 오락실" in m["text"] for m in data["소라"]["inbox"])
+    assert any(arcade.PLACE in m["text"] for m in data["소라"]["inbox"])
+    assert arcade.is_cut_off("소라", now) and arcade.prompt_rule("소라") == ""   # 주인이 오늘은 그만 받는다
+    assert arcade.play("소라", {"name": "주사위", "bet": 3000, "choice": ""}, now) is None
+    st = arcade.today_stats(now)
+    assert st["plays"] == 1 and st["revenue"] == -st["by"]["소라"]
+
+
+def test_arcade_kpi_post_for_manager(money_dir):
+    from poring_food import characters, kpi
+    kpi.assign(agents.load_agents(), characters.load_roster())
+    assert kpi.holder("arcade") == arcade.MANAGER
+    x = kpi.reading(kpi.POST_BY_ID["arcade"])
+    assert x["score"] == 80 and "손님 0판" in x["text"]      # 손님 없으면 한산
+    arcade._record("소라", -50000, datetime.now())
+    x = kpi.reading(kpi.POST_BY_ID["arcade"])
+    assert x["score"] == 110 and "+50,000원" in x["text"]
