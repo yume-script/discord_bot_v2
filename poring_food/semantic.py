@@ -110,18 +110,20 @@ def process_pending(limit: int = EMBED_BATCH) -> int:
 
 
 def _run_worker() -> None:
-    done, started = 0, time.time()
+    done, busy = 0, 0.0  # busy: 실제로 벡터를 만든 시간만 (기다린 시간은 빼고)
     while True:
         _wake.wait()
+        t0 = time.time()
         n = process_pending()
+        busy += time.time() - t0
         done += n
         with _pending_lock:
             left = len(_pending)
         if not left:
             _wake.clear()
             if done:
-                print(f"[기억] 기억 벡터 {done}개 채움 ({time.time() - started:.0f}초)")
-            done, started = 0, time.time()
+                print(f"[기억] 기억 벡터 {done}개 채움 ({busy:.1f}초)")
+            done, busy = 0, 0.0
         time.sleep(EMBED_PAUSE_SEC if n else 5)
 
 
