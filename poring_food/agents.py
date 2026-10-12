@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from . import (arcade, characters, chronicle, kpi, life, memory, milestones, newcomers, novelty, outbox, projects, rotation,
-               runtime, signals, townmap, world)
+               runtime, signals, townmap, villains, world)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -673,6 +673,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
             + (" - 나도 찬성함" if agent["name"] in t["proposal"]["supporters"] else "") + ")" for t in props))
     parts += [
         chronicle.prompt_block(),
+        villains.prompt_block(name, agent),
         novelty.worn_out(name, now),
         "[최근 내 행동]\n" + ("\n".join(recent) or "- 없음"),
         f"[연락할 수 있는 사람(스스로 사는 사람들)] {others_line}",
@@ -694,6 +695,7 @@ def _system(agent: dict) -> str:
         "- 무엇을 하고 누구에게 연락하고 어떤 편을 들지도 이 사람의 성격과 처지대로 고른다.\n"
         "평소 루틴을 따르는 게 기본이지만, 지금 상태(피곤함/스트레스/설렘 등)와 새로 알게 된 일에 따라 "
         "충분히 벗어날 수 있다. 사람처럼 일관되게, 그러나 기계처럼 똑같지 않게 행동해라."
+        + villains.system_block(agent)
     )
 
 
@@ -1708,6 +1710,12 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
             deliver(name, text, kind, urgent=text.startswith("[내 인생에"))
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 인생 전환점 실패: {e}")
+    # 1-2) 빌런의 수작 - 며칠에 한 번 숨은 목표를 위해 일을 꾸미고, 숨긴 수작은 언젠가 들통난다
+    try:
+        for name, text, kind in villains.tick(agents, roster, now):
+            deliver(name, text, kind, urgent=(kind == "사건"))
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 빌런 수작 실패: {e}")
 
     data = _load_state()
     try:
