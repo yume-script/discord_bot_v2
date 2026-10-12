@@ -11,6 +11,8 @@ class _Resp:
         self._content = content
 
     def json(self):
+        if self.status_code != 200:
+            return {"error": {"message": f"provider says {self.status_code}"}}
         return {"choices": [{"message": {"content": json.dumps(self._content or {"ok": 1})}}],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 2}}
 
@@ -125,3 +127,15 @@ def test_agent_model_routing_and_fallback(monkeypatch):
     assert llm.llm_json("s", "u", agent="소라") == {"model": "base"}
     assert llm.llm_json("s", "u", agent="소라") == {"model": "base"}
     assert calls == ["groq", "base", "base"]
+
+
+def test_agent_model_forbidden_backs_off_long(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="poring_food")
+    calls = _route(monkeypatch, {"groq": [403]})
+    assert llm.llm_json("s", "u", agent="소라") == {"model": "base"}
+    assert llm.llm_json("s", "u", agent="소라") == {"model": "base"}
+    assert calls == ["groq", "base", "base"]  # 거부(403)면 한동안 전용 모델을 아예 안 부른다
+    assert llm._agent_model_blocked["groq"] - llm.time.time() > 600
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    assert "HTTP 403 (groq) - provider says 403" in log  # 이유가 로그에 남는다
