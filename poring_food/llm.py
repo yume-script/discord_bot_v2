@@ -35,6 +35,7 @@ SMART_SOURCE = "포링푸드(상위)"
 _no_retry_until = 0.0
 AGENT_MODEL_REASONING = os.getenv("PORING_AGENT_MODEL_REASONING", "low").strip()
 AGENT_MODEL_COOLDOWN_SEC = 60  # 인물 전용 모델이 429를 내면 이만큼은 기본 모델로 (분당 한도가 풀릴 때까지)
+AGENT_MODEL_FORBIDDEN_SEC = 1800  # 401/403(키/계정 거부)이면 오래 쉰다 - 매 호출마다 실패하고 기본 모델로 다시 부르는 낭비를 막는다
 _agent_model_blocked: dict[str, float] = {}
 
 
@@ -82,6 +83,18 @@ def _post(model: str, system: str, user: str, temperature: float, timeout: int, 
     )
 
 
+def _reason(res) -> str:
+    """오류 응답에서 이유 한 줄 (LiteLLM이 감싼 제공사 메시지 - 키는 들어 있지 않다)."""
+    try:
+        body = res.json()
+        msg = (body.get("error") or {}).get("message") if isinstance(body, dict) else ""
+        msg = msg if isinstance(msg, str) else json.dumps(msg, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        msg = getattr(res, "text", "") or ""
+    msg = " ".join(str(msg).split())
+    return msg[:200]
+
+
 def _call(model: str, source: str, system: str, user: str, temperature: float, timeout: int, tag: str,
           extra: dict | None = None):
     """한 번 부른다. 반환: (dict 또는 None, HTTP 상태 코드 - 연결 실패면 0)."""
@@ -93,7 +106,8 @@ def _call(model: str, source: str, system: str, user: str, temperature: float, t
         return None, 0
     if res.status_code != 200:
         llm_usage.record(source, ok=False)
-        print(f"[경고] {tag} 응답 오류: HTTP {res.status_code}" + (f" ({model})" if source != SOURCE else ""))
+        print(f"[경고] {tag} 응답 오류: HTTP {res.status_code}" + (f" ({model})" if source != SOURCE else "")
+              + (f" - {_reason(res)}" if _reason(res) else ""))
         return None, res.status_code
     try:
         body = res.json()
@@ -120,6 +134,9 @@ def llm_json(system: str, user: str, *, temperature: float = 0.8, timeout: int =
             return out
         if status == 429:
             _agent_model_blocked[own] = time.time() + AGENT_MODEL_COOLDOWN_SEC
+        elif status in (401, 403):
+            _agent_model_blocked[own] = time.time() + AGENT_MODEL_FORBIDDEN_SEC
+            print(f"[LLM] {own}이(가) 요청을 거부함(HTTP {status}) - {AGENT_MODEL_FORBIDDEN_SEC // 60}분 동안 기본 모델로")
         print(f"[LLM] {tag}: {own} 실패 - 기본 모델로 다시")
     today = time.strftime("%Y-%m-%d")
     if (smart and SMART_MODEL and SMART_MODEL != LLM_MODEL and _smart_blocked_day != today

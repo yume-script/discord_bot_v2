@@ -48,10 +48,10 @@ MAX_CONVOS_PER_HOUR = int(os.getenv("PORING_AGENT_CONVOS_PER_HOUR", "3"))       
 STATUS_DIGEST = os.getenv("PORING_AGENT_STATUS_DIGEST", "1") not in ("0", "false", "False", "")
 TYPING_DELAY = (float(os.getenv("PORING_AGENT_DELAY_MIN", "3")), float(os.getenv("PORING_AGENT_DELAY_MAX", "8")))
 DECIDE_TIMEOUT_SEC = 45
-# 매시 판단을 동시에 몇 명씩 할지 - 기본 모델(무료 Gemini는 분당 15회라 1)과 인물 전용 모델(groq 묶음은 여유가 있어 4)을
+# 매시 판단을 동시에 몇 명씩 할지 - 기본 모델(무료 Gemini는 분당 15회라 1)과 인물 전용 모델(groq는 계정당 분당 8000토큰이라 2)을
 # 따로 센다. 판단이 다 끝나야 대화가 시작되므로, 여기가 매시 회차에서 디스코드가 조용한 시간을 정한다.
 DECIDE_PARALLEL = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL", "1"))
-DECIDE_PARALLEL_OWN = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL_OWN", "4"))
+DECIDE_PARALLEL_OWN = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL_OWN", "2"))
 # 시간 안의 파급 라운드 - 대화/소문/단톡방 언급을 겪은 사람이 같은 시간 안에 다시 반응해서(LLM 1회) 새 연락/글로
 # 이어진다. 바퀴 수, 한 시간 반응 판단 상한, 한 사람 반응 상한, 반응으로 생기는 대화 상한 (ROUNDS=0이면 끔)
 RIPPLE_ROUNDS = int(os.getenv("PORING_RIPPLE_ROUNDS", "3"))                     # 연쇄 깊이 (0이면 끔)

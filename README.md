@@ -176,7 +176,7 @@ python app.py
   인물 전용 모델(`PORING_AGENT_MODELS`, 기본 10명 `groq_free:소라,김동식,조이서,오상식,이지안,오동백,권민우,최수연,정명석,리정혁`): 그 인물의 판단/대화/모임 발언/투표는 그 모델로
   (다른 두뇌라 말투와 판단이 확실히 달라지고, 기본 모델 하루 한도도 아낀다). `reasoning_effort=low`로 생각 토큰을 줄이고,
   실패하면 그 호출만 기본 모델로, 429면 1분간 기본 모델로.
-  매시 판단은 동시에 돌린다 - 기본 모델 `PORING_AGENT_DECIDE_PARALLEL`(1)명, 인물 전용 모델 `PORING_AGENT_DECIDE_PARALLEL_OWN`(4)명씩
+  매시 판단은 동시에 돌린다 - 기본 모델 `PORING_AGENT_DECIDE_PARALLEL`(1)명, 인물 전용 모델 `PORING_AGENT_DECIDE_PARALLEL_OWN`(2)명씩
   따로(판단이 다 끝나야 대화가 시작되니 여기가 디스코드가 조용한 시간을 정한다). 판단을 시작할 때 채널에 "🕒 동네 사람 N명이
   이번 한 시간을 정하는 중…" 한 줄(`PORING_AGENT_PROGRESS`), 로그에 `[에이전트] 판단 N명 (초)`.
 - **시간 안의 파급 라운드**: 처음 판단 → 대화/단톡방이 끝나면, 그 시간에 대화한 두 사람·소문을 들은 사람·단톡방에서
