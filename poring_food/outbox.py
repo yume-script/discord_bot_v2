@@ -56,10 +56,12 @@ def _deliver_now(kind: str, p: dict) -> None:
     elif kind == "kakao":
         from . import notifier
         notifier.send_to_local_bot(p["text"])
+    elif kind == "file":  # 그림 - 봇에 안 붙어 있으면 경로만 알린다 (보내는 건 봇의 예약함 처리)
+        print(f"[예약함] (채널 미설정) {p.get('name', '')}: {p.get('text', '')} [그림 {p['path']}]")
 
 
 def schedule(due: datetime | None, kind: str, **payload) -> None:
-    """글 하나를 due 시각에 보내도록 예약 (kind: agent/discord/kakao). 예약을 안 쓰는 환경이면 바로 보낸다."""
+    """글 하나를 due 시각에 보내도록 예약 (kind: agent/discord/kakao/file). 예약을 안 쓰는 환경이면 바로 보낸다."""
     if not paced():
         try:
             _deliver_now(kind, payload)

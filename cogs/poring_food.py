@@ -93,6 +93,9 @@ class PoringFood(commands.Cog):
                         await asyncio.to_thread(notifier.send_to_discord, it["text"])
                 elif it["kind"] == "kakao":
                     await asyncio.to_thread(notifier.send_to_local_bot, it["text"])
+                elif it["kind"] == "file":
+                    await self._send_file_as_agent(it.get("name", "동네 소식"), it["path"], it.get("text", ""),
+                                                   it.get("channel_id", 0))
             except Exception:  # noqa: BLE001 - 한 글이 실패해도 다음 글은 보낸다
                 log.exception("포링푸드 예약 글 전송 실패 (%s)", it.get("kind"))
             await asyncio.sleep(1)
@@ -133,6 +136,25 @@ class PoringFood(commands.Cog):
                 self._webhooks.pop(channel_id, None)
         channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
         await channel.send(f"**{name}**: {text}"[:DISCORD_LIMIT])
+
+    async def _send_file_as_agent(self, name: str, path: str, caption: str = "", channel_id: int = 0) -> None:
+        """그림 한 장을 에이전트 채널에 (웹훅이면 그 이름으로, 안 되면 아메하나가)."""
+        import os
+        if not os.path.exists(path):
+            log.warning("포링푸드 그림 파일이 없음: %s", path)
+            return
+        channel_id = channel_id or settings.PORING_AGENT_CHANNEL_ID
+        hook, thread = await self._agent_webhook(channel_id)
+        if hook is not None:
+            try:
+                kwargs = {"thread": thread} if thread else {}
+                await hook.send(caption[:DISCORD_LIMIT] or None, username=name[:80], file=discord.File(path),
+                                allowed_mentions=discord.AllowedMentions.none(), **kwargs)
+                return
+            except discord.HTTPException as exc:
+                log.warning("포링푸드 그림 웹훅 전송 실패 - 아메하나가 대신 올림: %s", exc)
+        channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
+        await channel.send(caption[:DISCORD_LIMIT] or None, file=discord.File(path))
 
     def _webhook_url_for(self, channel_id: int) -> str:
         if channel_id == settings.PORING_AGENT_CHANNEL_ID:

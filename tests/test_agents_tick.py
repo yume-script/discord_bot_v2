@@ -61,6 +61,7 @@ def test_conversations_per_hour_cap(fake_llm, monkeypatch, caplog):
 def test_town_view_lists_everyone(fake_llm, monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger="poring_food")
     _quiet(monkeypatch)
+    monkeypatch.setattr(agents, "TOWN_MAP", False)  # 글 버전 (그림은 test_town_map_png에서)
     fake_llm(_handler)
     agents.tick(characters.load_roster())
     states = characters.update_all_states(characters.load_roster(), random.Random(1))
@@ -209,3 +210,27 @@ def test_ripple_agent_decides_whether_to_react(fake_llm, monkeypatch, caplog):
     assert m and m.group(2) == "0" and m.group(3) == "0"
     first = re.search(r"파급 1바퀴 \([^)]*\): (.+)", log).group(1).split(", ")
     assert len(set(first) - {"홍두식", "윤혜진"}) >= 1  # 단톡방 글을 본 사람도 반응할지 고민해 본다
+
+
+def test_town_map_png(fake_llm, monkeypatch, tmp_path):
+    """매시 동네 지도 그림: 장소별 사람 + 이번 시간 대화 선. 글꼴을 못 구하는 환경이면 건너뛴다."""
+    import pytest
+    from poring_food import outbox, townmap
+    if not townmap._font_file():
+        pytest.skip("한글 글꼴 없음")
+    monkeypatch.setattr(townmap, "MAP_DIR", str(tmp_path))
+    _quiet(monkeypatch)
+    monkeypatch.setattr(outbox, "paced", lambda: True)
+    fake_llm(_handler)
+    agents.tick(characters.load_roster())
+    states = characters.update_all_states(characters.load_roster(), random.Random(1))
+    snap = agents._town_snapshot(states, agents.names(), set(), agents.now_kst(), 3)
+    assert snap["zones"] and snap["talks"]                       # 이번 시간 대화가 선으로 들어간다
+    agents.post_town_view(states)
+    items = outbox.take_due(agents.now_kst() + agents.timedelta(minutes=80), limit=500)
+    files = [it for it in items if it["kind"] == "file"]
+    assert len(files) == 1 and files[0]["path"].endswith(".png")
+    from PIL import Image
+    im = Image.open(files[0]["path"])
+    assert im.size[0] == townmap.W and im.size[1] > 400
+    assert not [it for it in items if it["kind"] == "agent" and it["name"] == "동네 소식" and "지금 동네는" in it["text"]]

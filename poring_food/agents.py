@@ -27,7 +27,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, chronicle, kpi, life, memory, newcomers, outbox, projects, rotation, runtime, signals, world
+from . import characters, chronicle, kpi, life, memory, newcomers, outbox, projects, rotation, runtime, signals, townmap, world
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -1771,6 +1771,69 @@ def _place_label(loc: str) -> str:
     return "📍 " + (loc[:14] or "어딘가")
 
 
+TOWN_MAP = os.getenv("PORING_TOWN_MAP", "1") not in ("0", "false", "False", "")          # 매시 동네 지도 그림(PNG)
+TOWN_VIEW_TEXT = os.getenv("PORING_TOWN_VIEW_TEXT", "0") not in ("0", "false", "False", "")  # 그림과 함께 글 버전도
+MAP_NPC_PER_ZONE = 18   # 한 구역에 이름을 다 적는 배경 인물 수 (넘으면 "외 N명")
+MAP_SMALL_ZONE = 2      # 이 인원 이하인 곳은 "그 밖의 곳"으로 모은다
+
+
+def _town_snapshot(states: dict, agent_names: set[str], fresh: set[str], now, asleep: int) -> dict:
+    """동네 지도(townmap.render)에 넘길 지금 모습: 장소별 사람, 이번 시간 대화, 속마음, 프로젝트, 모임 제안."""
+    zones: dict[str, list[dict]] = {}
+    seen = set()
+    for info in states.values():
+        name = info.get("name", "")
+        if not name or name in seen or info.get("state") == "자는 중":
+            continue
+        seen.add(name)
+        label = _place_label(info.get("location", ""))
+        zones.setdefault(label, []).append({"name": name, "company": info.get("company", ""),
+                                            "agent": name in agent_names, "fresh": name in fresh})
+    # 한두 명뿐인 곳은 "그 밖의 곳" 한 구역으로 모은다 (그림이 한 칸짜리 구역으로 길어지지 않게) - 회사/집은 그대로
+    keep = {"🏭 포링푸드", "🚚 에린 로지스틱스", "☕ 카페 오후세시", "🏠 집"}
+    others = []
+    for label in [lb for lb in zones if lb not in keep and len(zones[lb]) <= MAP_SMALL_ZONE]:
+        for p in zones.pop(label):
+            others.append({**p, "where": label.split(" ", 1)[-1]})
+    order = [label for _, label in _PLACES]
+    out_zones = []
+    for label in sorted(zones, key=lambda x: (x == "🏠 집", -len(zones[x]), order.index(x) if x in order else len(order), x)):
+        people = sorted(zones[label], key=lambda p: (not p["agent"], p["name"]))
+        npcs = [p for p in people if not p["agent"]]
+        if len(npcs) > MAP_NPC_PER_ZONE:
+            people = [p for p in people if p["agent"]] + npcs[:MAP_NPC_PER_ZONE] + [
+                {"name": f"외 {len(npcs) - MAP_NPC_PER_ZONE}명", "company": "", "agent": False}]
+        out_zones.append({"label": label, "people": people})
+    if others:
+        others.sort(key=lambda p: (not p["agent"], p["where"], p["name"]))
+        out_zones.insert(len(out_zones) - (1 if out_zones and out_zones[-1]["label"] == "🏠 집" else 0),
+                         {"label": "그 밖의 곳", "people": others})
+    talks = []
+    hour = now.strftime("%Y-%m-%dT%H")
+    if os.path.exists(DIALOGUES_PATH):
+        with open(DIALOGUES_PATH, "r", encoding="utf-8") as f:
+            for raw in f:
+                if hour not in raw[:200]:
+                    continue
+                try:
+                    sc = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if sc.get("agents") and str(sc.get("ts", "")).startswith(hour) and len(sc.get("participants") or []) >= 2:
+                    a, b = sc["participants"][:2]
+                    talks.append({"a": a, "b": b, "how": "메신저" if sc.get("location") == "메신저" else "직접",
+                                  "place": sc.get("location", "")})
+    picks = sorted(fresh)
+    random.Random(_hour_key(now) + "|map").shuffle(picks)
+    thoughts = [(n, (current(n) or {}).get("thought", "")) for n in picks]
+    thoughts = [(n, t[:60]) for n, t in thoughts if t][:4]
+    meetings = [f"제안: {t['title']} (찬성 {len(t['proposal']['supporters'])}명)" for t in chronicle.pending_proposals()]
+    return {"when": now.strftime("%Y-%m-%d %H:00"), "stamp": now.strftime("%Y-%m-%d_%H"),
+            "weather": signals.weather_text(), "asleep": asleep, "zones": out_zones, "talks": talks,
+            "thoughts": thoughts, "projects": [(p["title"], p["progress"]) for p in projects.active()],
+            "meetings": meetings}
+
+
 def post_town_view(states: dict | None = None) -> None:
     """
     [매시] "지금 동네는" - 에이전트와 배경 인물 전원이 어디서 뭘 하는지 장소별로 (대화 채널, "동네 소식").
@@ -1817,6 +1880,19 @@ def post_town_view(states: dict | None = None) -> None:
             t = d["thought"]
             thoughts.append(f"💭 {n}: *{(t[:50] + '…') if len(t) > 50 else t}*")
     lines += thoughts[:6]
+    # 그림 한 장 (PNG) - 실패하면(글꼴/Pillow 없음) 아래 글 버전으로
+    at = outbox.slot(now, 56, 57, random.Random(f"{now.isoformat()}|view")) if outbox.paced() else None
+    if TOWN_MAP:
+        try:
+            path = townmap.render(_town_snapshot(states, agent_names, fresh, now, asleep))
+        except Exception as e:  # noqa: BLE001
+            print(f"[경고] 동네 지도 그리기 실패: {e}")
+            path = None
+        if path:
+            outbox.schedule(at, "file", path=path, name="동네 소식",
+                            text=f"-# 🗺️ {now.strftime('%H:%M')} 지금 동네는 - 깨어 있는 {awake}명 · 자는 중 {asleep}명")
+            if not TOWN_VIEW_TEXT:
+                return
     # 한 메시지(2000자)를 넘으면 줄 단위로 나눠 보낸다 (아주 긴 장소 줄은 자른다)
     chunks, cur = [], ""
     for line in lines:
@@ -1831,7 +1907,6 @@ def post_town_view(states: dict | None = None) -> None:
         print("[에이전트] (채널 미설정) 지금 동네는\n" + "\n".join(chunks))
         return
     # 그 시간의 대화들이 차례대로 올라간 뒤 끝 무렵에 (예약함)
-    at = outbox.slot(now, 56, 57, random.Random(f"{now.isoformat()}|view")) if outbox.paced() else None
     for i, text in enumerate(chunks):
         outbox.schedule(at + timedelta(seconds=i) if at else None, "agent", account="", name="동네 소식", text=text, avatar="")
 

@@ -193,6 +193,12 @@ python app.py
   연재 장면(배경 인물)도 디스코드/카톡에 대사 하나씩(`PORING_KAKAO_PER_LINE`). 봇이 5초마다 때가 된 글을 꺼내 보내고
   (`cogs/poring_food.py` drain_outbox), 봇이 꺼졌다 켜지면 90분 넘게 늦은 글은 버린다. 모임/투표는 그 자리에서 진행되는
   일이라 지금처럼 바로 올린다. `PORING_PACED=0`이면 예전처럼 만드는 즉시.
+- **동네 지도 그림 (`poring_food/townmap.py`)**: 매시 HH:56쯤 "지금 동네는"을 PNG 한 장으로 - 장소별 구역에 사람 이름(소속별 색 점,
+  에이전트는 밝게/배경 인물은 흐리게, `*`는 이번 시간 새로 판단), 한두 명뿐인 곳은 "그 밖의 곳"에 "이름(장소)"로, 이번 시간
+  대화한 사람끼리 선(직접 실선/메신저 점선), 아래에 이번 시간 대화 목록·속마음·마을 프로젝트 진행률·모임 제안. LLM 없음.
+  글꼴은 개미 짤과 같은 `storage/assets/NanumGothicCoding.ttf`(없으면 원본 저장소에서 한 번 받음, `PORING_MAP_FONT`로 변경).
+  그림을 못 만들면 예전 글 버전으로. `PORING_TOWN_MAP=0`이면 글만, `PORING_TOWN_VIEW_TEXT=1`이면 그림+글. 최근 72장은
+  `storage/poring_food/townmap/`에 남는다.
 - **기억 의미 검색 (`poring_food/semantic.py`)**: 에이전트가 판단할 때 "지금 상황(새 소식 + 평소 이 시간 루틴)"과 뜻이
   비슷한 기억을 로컬 임베딩(`jhgan/ko-sroberta-multitask`, 라그M 검색과 같은 모델 - API 한도/요금 없음)으로 찾는다.
   단어가 안 겹쳐도("야근" ↔ "밤 11시까지 남아서 보고서") 떠올린다. 판단 중에는 지금 상황 한 줄만 임베딩하고, 벡터가
