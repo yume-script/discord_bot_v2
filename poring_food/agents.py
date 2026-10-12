@@ -27,7 +27,8 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import characters, chronicle, kpi, life, memory, newcomers, outbox, projects, rotation, runtime, signals, townmap, world
+from . import (characters, chronicle, kpi, life, memory, milestones, newcomers, novelty, outbox, projects, rotation, runtime,
+               signals, townmap, world)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -368,6 +369,7 @@ def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dic
     with open(GROUP_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps({"at": now.isoformat(timespec="minutes"), "group": group, "name": agent["name"],
                             "text": text}, ensure_ascii=False) + "\n")
+    novelty.note("단톡방", text, [agent["name"]], at=now)
     mentioned = []
     for other in agents:
         if other is not agent and group in _groups_of(other) and other["name"] in text:
@@ -591,6 +593,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
             + (" - 나도 찬성함" if agent["name"] in t["proposal"]["supporters"] else "") + ")" for t in props))
     parts += [
         chronicle.prompt_block(),
+        novelty.worn_out(name, now),
         "[최근 내 행동]\n" + ("\n".join(recent) or "- 없음"),
         f"[연락할 수 있는 사람(스스로 사는 사람들)] {others_line}",
         signals.format_block(signals.for_company(signals.collect(include_factory=False), agent.get("company", ""))),
@@ -952,7 +955,8 @@ def _pause(live: bool = False) -> None:
         time.sleep(random.uniform(lo, max(lo, hi)))
 
 
-def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict], last_turn: bool) -> dict | None:
+def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict], last_turn: bool,
+          repeat_hint: str = "") -> dict | None:
     name = agent["name"]
     rels = characters.load_relationships()
     roster_ids = {c["name"]: c["id"] for c in characters.load_roster()}
@@ -972,6 +976,7 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
         ) if b) + "\n\n"
         f"지금 {j(other['name'], '와')} {'메신저로' if how == '메신저' else place + '에서 직접'} 대화 중이다.\n"
         f"[지금까지 대화]\n{lines}\n\n"
+        + (f"{repeat_hint}\n\n" if repeat_hint else "") +
         f"{name}로서 다음 한마디를 해라. 상대 속마음은 모른다 - 말과 분위기로만 짐작해라. "
         "지금 하고 있는 일은 '지금' 일로 말하고, 기억 속 일은 날짜를 오늘과 비교해 오늘/어제/며칠 전을 정확히 말해라. "
         "자기가 직접 겪거나 들은 적 없는 남의 회사 내부 사정은 아는 척하지 마라. "
@@ -1054,11 +1059,12 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
     _post(a, f"{_talk_header(how, place, t, a['name'], b['name'])}\n{transcript[0]['line']}", at=t if start else None)
     outs: dict[str, dict] = {}
     speakers = [b, a]
+    repeat_hint = novelty.hint(transcript[0]["line"], [a["name"], b["name"]])  # 둘이 요즘 했던 얘기면 진전시키게
     for i in range(MAX_TURNS - 1):
         sp = speakers[i % 2]
         other = a if sp is b else b
         _pause()
-        out = _turn(sp, other, how, place, transcript, last_turn=(i == MAX_TURNS - 2))
+        out = _turn(sp, other, how, place, transcript, last_turn=(i == MAX_TURNS - 2), repeat_hint=repeat_hint)
         if not out:
             break
         line = str(out["say"]).strip()[:300]
@@ -1106,6 +1112,7 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
     }
     with open(DIALOGUES_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(scene, ensure_ascii=False) + "\n")
+    novelty.note("대화", " ".join(x["line"] for x in transcript[:4]), [a["name"], b["name"]], at=t)
     print(f"[에이전트] 대화 {len(transcript)}마디: {summary}")
     return scene
 
@@ -1611,6 +1618,12 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
             deliver(name, text, kind)
     except Exception as e:  # noqa: BLE001
         print(f"[에러] 세계 엔진 실패: {e}")
+    # 1-1) 인생 전환점 - 하루 몇 명에게 삶의 큰 변화 (당사자는 깨워서 이번 시간에 반응하게)
+    try:
+        for name, text, kind in milestones.tick(agents, roster, now):
+            deliver(name, text, kind, urgent=text.startswith("[내 인생에"))
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 인생 전환점 실패: {e}")
 
     data = _load_state()
     try:
@@ -1643,7 +1656,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     started = time.time()
     results = _decide_all(jobs, agents)
     LAST_TICK.clear()
-    LAST_TICK.update(decided=len(jobs), decide_sec=round(time.time() - started))
+    LAST_TICK.update(decided=len(jobs), ok=sum(1 for r in results if r), decide_sec=round(time.time() - started))
     if jobs:
         print(f"[에이전트] 판단 {len(jobs)}명 ({time.time() - started:.0f}초)")
     for (agent, st, _hint, _kakao, new_since), d in zip(jobs, results):

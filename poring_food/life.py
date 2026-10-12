@@ -167,6 +167,18 @@ def apply_changes(name: str, deltas: dict, reason: str = "", rank: str = "") -> 
     return applied
 
 
+def set_goals(name: str, goals: list[str], rank: str = "") -> list[str]:
+    """목표를 바꾼다 (인생 전환점 - milestones.py). 최대 3개, 빈 건 뺀다."""
+    goals = [str(g).strip()[:40] for g in goals if str(g or "").strip()][:3]
+    if not goals:
+        return []
+    data = _load()
+    st = _ensure(data, name, rank)
+    st["goals"] = goals
+    _save(data)
+    return goals
+
+
 def give_money(name: str, amount: int, reason: str = "", rank: str = "") -> int:
     """규칙으로 정해진 돈 (실적 보너스 등). LLM 출력으로는 부르지 않는다. 반환: 바뀐 뒤 잔액."""
     data = _load()

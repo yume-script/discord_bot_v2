@@ -60,8 +60,12 @@ def _deliver_now(kind: str, p: dict) -> None:
         print(f"[예약함] (채널 미설정) {p.get('name', '')}: {p.get('text', '')} [그림 {p['path']}]")
 
 
+SCHEDULED: dict[str, int] = {}  # 이번 회차에 만든 글 수 (kind별) - 이상 감지(health.py)가 본다
+
+
 def schedule(due: datetime | None, kind: str, **payload) -> None:
     """글 하나를 due 시각에 보내도록 예약 (kind: agent/discord/kakao/file). 예약을 안 쓰는 환경이면 바로 보낸다."""
+    SCHEDULED[kind] = SCHEDULED.get(kind, 0) + 1
     if not paced():
         try:
             _deliver_now(kind, payload)

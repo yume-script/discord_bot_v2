@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from .clock import now_kst
-from . import characters, life, memory, signals
+from . import characters, life, memory, novelty, signals
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
 from .llm import llm_json
@@ -261,6 +261,7 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
         others = [x["name"] for x in cast if x is not c]
         terms = others + [str(states.get(c["id"], {}).get("location", ""))] + ([arc.get("title", "")] if arc else [])
         inner += [life.prompt_block(c["name"]), memory.prompt_block(c["name"], terms, k=3)]
+    inner += [novelty.worn_out(c["name"], now) for c in cast]  # 출연진이 요즘 지겹게 한 얘기 - 또 하지 않게
     inner_block = "\n\n".join(b for b in inner if b)
     arc_block = (
         f"[이번 장면이 이어갈 줄거리: {arc['title']}]\n전제: {arc.get('premise', '')}\n"
@@ -357,6 +358,7 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
         })
 
     title = arc.get("title") if arc else None
+    novelty.note("장면", summary, [c["name"] for c in cast])
     print(f"[스토리] 장면 생성: {summary}")
     return {
         "discord": _format_scene(scene, title, kakao=False),
