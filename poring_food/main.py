@@ -291,6 +291,12 @@ def main():
         news.refresh()
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 뉴스 갱신 실패: {e}")
+    # 실제 시세/환율(한 시간에 한 번)과 오늘 운세(하루 한 번) - 인물들의 /주식 /환율 /운세
+    try:
+        from . import hobbies
+        hobbies.refresh(agents=agents.load_agents())
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 시세/운세 갱신 실패: {e}")
     # 생산(Plex/북오아시스 신규 입고)/판매(Plex 재생)/주문(대화량) 지표도 회차마다 한 번 집계
     try:
         metrics.refresh()

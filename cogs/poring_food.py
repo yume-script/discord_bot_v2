@@ -49,6 +49,7 @@ class PoringFood(commands.Cog):
         # 채널별 (웹훅, 스레드) - 채널이 스레드면 웹훅은 부모 채널 것이고 보낼 때마다 스레드를 지정해야 한다
         self._webhooks: dict[int, tuple[discord.Webhook, discord.Object | None]] = {}
         self._webhook_retry_at: dict[int, float] = {}
+        self._image_tasks: set[asyncio.Task] = set()  # 인물의 /그림, /개미소리 만드는 중 (가비지 컬렉션 방지)
 
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
@@ -96,6 +97,10 @@ class PoringFood(commands.Cog):
                 elif it["kind"] == "file":
                     await self._send_file_as_agent(it.get("name", "동네 소식"), it["path"], it.get("text", ""),
                                                    it.get("channel_id", 0))
+                elif it["kind"] in ("draw", "ant"):  # 인물의 /그림, /개미소리 - 만드는 데 시간이 걸려서 따로 돌린다
+                    task = asyncio.create_task(self._make_and_send_image(it))
+                    self._image_tasks.add(task)
+                    task.add_done_callback(self._image_tasks.discard)
             except Exception:  # noqa: BLE001 - 한 글이 실패해도 다음 글은 보낸다
                 log.exception("포링푸드 예약 글 전송 실패 (%s)", it.get("kind"))
             await asyncio.sleep(1)
@@ -136,6 +141,38 @@ class PoringFood(commands.Cog):
                 self._webhooks.pop(channel_id, None)
         channel = self.bot.get_channel(channel_id) or await self.bot.fetch_channel(channel_id)
         await channel.send(f"**{name}**: {text}"[:DISCORD_LIMIT])
+
+    async def _make_and_send_image(self, it: dict) -> None:
+        """포링푸드 인물의 /그림(봇 이미지 생성 큐) 또는 /개미소리(말풍선 짤)를 만들어 그 인물 이름으로 올린다."""
+        import os
+        from poring_food.config import STATE_DIR
+        name = it.get("name", "동네 사람")
+        try:
+            if it["kind"] == "draw":
+                from ai.image_engine import generate_image
+                from core.concurrency import image_gen_pool
+                from core.user_ref import UserRef
+
+                async def job():
+                    return await generate_image(it["prompt"])
+
+                result = await image_gen_pool.submit(UserRef.from_discord(0, f"포링푸드 {name}"), job)
+                data, ext = result.image_bytes, "png"
+            else:
+                from core import ant_voice
+                data, ext = await ant_voice.generate_ant_voice(it["text"]), "webp"
+            if not data:
+                log.warning("포링푸드 %s 이미지를 못 만듦 (%s)", it["kind"], name)
+                return
+            folder = os.path.join(STATE_DIR, "images")
+            os.makedirs(folder, exist_ok=True)
+            path = os.path.join(folder, f"{it['kind']}_{int(time.time())}_{abs(hash(name)) % 10000}.{ext}")
+            with open(path, "wb") as f:
+                f.write(data)
+            await self._send_file_as_agent(name, path, it.get("caption") or it.get("text", ""), it.get("channel_id", 0))
+            log.info("포링푸드 %s 올림: %s", "그림" if it["kind"] == "draw" else "개미소리", name)
+        except Exception:  # noqa: BLE001 - 그림 하나 실패해도 봇은 계속
+            log.exception("포링푸드 %s 실패 (%s)", it["kind"], name)
 
     async def _send_file_as_agent(self, name: str, path: str, caption: str = "", channel_id: int = 0) -> None:
         """그림 한 장을 에이전트 채널에 (웹훅이면 그 이름으로, 안 되면 아메하나가)."""

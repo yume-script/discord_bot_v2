@@ -58,13 +58,16 @@ def _deliver_now(kind: str, p: dict) -> None:
         notifier.send_to_local_bot(p["text"])
     elif kind == "file":  # 그림 - 봇에 안 붙어 있으면 경로만 알린다 (보내는 건 봇의 예약함 처리)
         print(f"[예약함] (채널 미설정) {p.get('name', '')}: {p.get('text', '')} [그림 {p['path']}]")
+    elif kind in ("draw", "ant"):  # 봇의 /그림, /개미소리로 만들어 올린다 - 봇에 붙어 있을 때만
+        print(f"[예약함] (봇 없음) {kind} {p.get('name', '')}: {p.get('prompt') or p.get('text', '')}")
 
 
 SCHEDULED: dict[str, int] = {}  # 이번 회차에 만든 글 수 (kind별) - 이상 감지(health.py)가 본다
 
 
 def schedule(due: datetime | None, kind: str, **payload) -> None:
-    """글 하나를 due 시각에 보내도록 예약 (kind: agent/discord/kakao/file). 예약을 안 쓰는 환경이면 바로 보낸다."""
+    """글 하나를 due 시각에 보내도록 예약 (kind: agent/discord/kakao/file/draw(봇 /그림)/ant(봇 /개미소리)).
+    예약을 안 쓰는 환경이면 바로 보낸다."""
     SCHEDULED[kind] = SCHEDULED.get(kind, 0) + 1
     if not paced():
         try:
