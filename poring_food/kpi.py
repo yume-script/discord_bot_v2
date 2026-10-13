@@ -8,8 +8,8 @@
 | 영상 라인 입고         | 포링푸드 홍보마케팅부         | Plex 오늘 신규 등록 영상 수                    | 오동백    |
 | 출하량               | 포링푸드 영업기획부           | Tautulli 오늘 재생 수                         | 권민우    |
 | 고객 문의 처리         | 포링푸드 영업지원부           | 가상 손님 문의 처리율 + 실제 봇 대화(VIP 문의) | 최수연    |
-| 설비 가동률            | 포링푸드 생산기획부           | server_status CPU %                         | 정명석    |
-| 창고 적재율            | 포링푸드 물류운송부           | server_status 디스크 사용률 (낮을수록 좋다)     | 이지안    |
+| 설비 가동률            | 포링푸드 생산기획부           | server_status 서버(머신) 전체 CPU %            | 정명석    |
+| 창고 적재율            | 포링푸드 물류운송부           | server_status 로컬 디스크 전체 사용률 (낮을수록) | 이지안    |
 | 설비 안정성            | 에린 로지스틱스 시설관리부     | server_status 연속 가동일 / 멈춘 서비스 수      | 리정혁    |
 | 연산 처리             | 에린 로지스틱스 기획전략부     | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)        | 최택      |
 | 운영 경비             | 에린 로지스틱스 데이터보안부   | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)      | 동그라미  |
@@ -88,9 +88,9 @@ POSTS = [
     {"id": "orders", "company": PF, "dept": "영업지원부", "first": "최수연", "kind": "desk", "metric": "orders",
      "line": "고객 문의 처리", "verb": "문의", "unit": "건", "source": "손님 문의 창구 (실제 봇 대화는 VIP 문의)"},
     {"id": "facility_cpu", "company": PF, "dept": "생산기획부", "first": "정명석", "kind": "level", "metric": "cpu",
-     "line": "설비 가동률", "unit": "%", "source": "server_status CPU 사용률"},
+     "line": "설비 가동률", "unit": "%", "source": "server_status 서버 전체 CPU 사용률"},
     {"id": "facility_disk", "company": PF, "dept": "물류운송부", "first": "이지안", "kind": "disk", "metric": "disk",
-     "line": "창고 적재율", "unit": "%", "source": "server_status 디스크 사용률"},
+     "line": "창고 적재율", "unit": "%", "source": "server_status 서버 로컬 디스크 전체 사용률"},
     {"id": "facility_stability", "company": ER, "dept": "시설관리부", "first": "리정혁", "kind": "stability",
      "metric": "stability", "line": "설비 안정성", "unit": "점", "source": "server_status 연속 가동일 / 멈춘 서비스"},
     {"id": "llm_requests", "company": ER, "dept": "기획전략부", "first": "최택", "kind": "count", "metric": "llm_requests",

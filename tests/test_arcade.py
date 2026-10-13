@@ -61,7 +61,7 @@ def test_handle_arcade_posts_command_result_and_manager_comment(money_dir, monke
     assert len(texts) == 3                                    # 3천 원짜리 판은 대박이 아니라 단톡방엔 안 올린다
     assert not any(n == "김동식" for n, _ in texts)           # 일하는 중이면 안 한다
     assert any(arcade.PLACE in m["text"] for m in data["소라"]["inbox"])
-    assert arcade.is_cut_off("소라", now) and arcade.prompt_rule("소라") == ""   # 주인이 오늘은 그만 받는다
+    assert arcade.is_cut_off("소라", now) and arcade.prompt_rule("소라", now) == ""   # 주인이 오늘은 그만 받는다
     assert arcade.play("소라", {"name": "주사위", "bet": 3000, "choice": ""}, now) is None
     st = arcade.today_stats(now)
     assert st["plays"] == 1 and st["revenue"] == -st["by"]["소라"]

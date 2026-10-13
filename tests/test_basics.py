@@ -65,3 +65,18 @@ def test_facility_temp_shown_as_fahrenheit_converted(monkeypatch):
     assert "설비 온도 35°C" in line and "과열" not in line
     monkeypatch.setattr(mcp_signals, "FACILITY_TEMP_AS_F", False)
     assert "설비 과열 경보" in mcp_signals.describe_facility(status)
+
+
+def test_facility_uses_whole_server_numbers():
+    """설비 가동률/작업장 혼잡도/창고 적재율은 서버 전체 값 (CPU=머신 전체, 디스크=로컬 디스크 전체 합)."""
+    from poring_food import mcp_signals
+    status = {"cpu": {"host_percent": 42.0, "container_percent_of_machine": 3.0},
+              "memory": {"used_percent": 55.0},
+              "disks": [{"used_percent": 93.0}, {"used_percent": 20.0}],
+              "disk_total": {"used_percent": 31.5}}
+    nums = mcp_signals.facility_numbers(status)
+    assert (nums["cpu"], nums["mem"], nums["disk"]) == (42.0, 55.0, 31.5)
+    line = mcp_signals.describe_facility(status)
+    assert "창고 적재율 31.5%" in line and "포화" not in line
+    old = {"cpu": {"container_percent_of_machine": 3.0}, "disks": [{"used_percent": 93.0}]}  # 예전 MCP 응답
+    assert mcp_signals.facility_numbers(old)["disk"] == 93.0 and mcp_signals.facility_numbers(old)["cpu"] == 3.0
