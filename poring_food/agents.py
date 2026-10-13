@@ -27,8 +27,8 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import (arcade, characters, chronicle, kpi, life, memory, milestones, newcomers, novelty, outbox, projects, rotation,
-               news, runtime, signals, townmap, villains, world)
+from . import (arcade, characters, chronicle, hobbies, kpi, life, memory, milestones, newcomers, novelty, outbox, projects,
+               rotation, news, runtime, signals, townmap, villains, world)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -545,6 +545,66 @@ def _handle_arcade(decisions: dict, by_name: dict, data: dict, now, hk: str, tri
                                        f"{'땄다' if r['change'] > 0 else '잃었다'}", 5, [name], "가게")
 
 
+STOCK_APP = "📈 증권 앱"
+FORTUNE_NAME = "🔮 오늘의 운세"
+
+
+def _handle_hobbies(decisions: dict, by_name: dict, data: dict, now, hk: str, triggers: dict) -> None:
+    """판단에서 고른 /주식 /그림 /개미소리를 실제로 하고, 아침엔 몇 명이 /운세를 친다. 친 명령은 그 사람 이름으로,
+    결과는 봇(증권 앱/운세/그림/개미 짤)으로 차례대로 올린다."""
+    for name, d in decisions.items():
+        a = by_name.get(name)
+        if not a or d.get("hobby_done"):
+            continue
+        d["hobby_done"] = True
+        data.setdefault(name, {}).setdefault("decision", d)["hobby_done"] = True
+        rnd = random.Random(f"{hk}|hobby|{name}")
+        if d.get("stock") and d.get("state") != "자는 중":
+            r = hobbies.trade(name, d["stock"], now)
+            if r:
+                t = outbox.slot(now, 8, 50, rnd)
+                _post(a, f"-# 📈 주식 · {t.strftime('%H:%M')} · {name}\n{r['command']}", at=t)
+                outbox.schedule(t + timedelta(seconds=3), "agent", account="", name=STOCK_APP,
+                                text=f"-# 📈 {name}의 주문\n{r['result']}", avatar="")
+                _push_inbox(data, name, f"주식 {r['result']}", "주식", quiet=True)
+                chronicle.record_event("주식", f"{name} {r['command']}", r["result"], [name], private=True)
+                if abs(r["change"]) >= hobbies.BIG_MOVE:
+                    memory.remember(name, f"주식으로 {abs(r['change']):,}원을 {'벌었다' if r['change'] > 0 else '잃었다'}",
+                                    7, [], "주식")
+                    _add_trigger(triggers, name, f"방금 {r['result']}", f"주식:{name}")
+        if d.get("drawing") and name in hobbies.ARTISTS and hobbies.use(now, "draw", name):
+            g = d["drawing"]
+            t = outbox.slot(now, 15, 45, rnd)
+            _post(a, f"-# 🎨 그림 · {t.strftime('%H:%M')} · {name}\n/그림 {g['prompt'][:80]}", at=t)
+            outbox.schedule(t + timedelta(seconds=5), "draw", name=name, prompt=hobbies.clean_prompt(g["prompt"]),
+                            text=f"-# 🎨 {name}의 그림 · {t.strftime('%H:%M')}\n**{g['title']}**", channel_id=0)
+            memory.remember(name, f"'{g['title']}'을(를) 그려서 올렸다", 5, [], "그림")
+            novelty.note("단톡방", f"{name}의 그림 {g['title']}", [name], at=t)
+            _add_trigger(triggers, name, f"방금 그림 '{g['title']}'을 그려 올렸다", f"그림:{name}")
+            print(f"[그림] {name}: {g['title']}")
+        if d.get("ant_voice") and a.get("company") in hobbies.OFFICE and hobbies.use(now, "ant", name):
+            text = d["ant_voice"]
+            ch = _group_channel(GROUP_NAME) if a.get("company") == GROUP_COMPANY else 0
+            t = outbox.slot(now, 10, 50, rnd)
+            outbox.schedule(t, "agent", account=a.get("account", ""), name=name, avatar=a.get("avatar_url", ""),
+                            text=f"-# 🐜 개미소리 · {t.strftime('%H:%M')} · {name}\n/개미소리 {text}", channel_id=ch)
+            outbox.schedule(t + timedelta(seconds=4), "ant", name=name, text=text,
+                            caption=f"-# 🐜 {name}의 외침", channel_id=ch)
+            print(f"[개미소리] {name}: {text}")
+    for a, text in hobbies.fortune_posts(list(by_name.values()), now):
+        z = hobbies.zodiac(a)
+        t = outbox.slot(now, 5, 25, random.Random(f"{hk}|fortune|{a['name']}"))
+        _post(a, f"-# 🔮 운세 · {t.strftime('%H:%M')} · {a['name']}\n/운세 {z}띠", at=t)
+        outbox.schedule(t + timedelta(seconds=3), "agent", account="", name=FORTUNE_NAME,
+                        text=f"-# 🔮 {z}띠 오늘의 운세\n{text}", avatar="")
+    for name, delta in hobbies.daily_moods(now):
+        if name in by_name and abs(delta) >= 50_000:
+            _push_inbox(data, name, f"오늘 장 마감 - 내 주식 평가손익 {delta:+,}원", "주식", quiet=abs(delta) < hobbies.BIG_MOVE)
+            if abs(delta) >= hobbies.BIG_MOVE:
+                memory.remember(name, f"주식이 하루에 {delta:+,}원 움직였다", 6, [], "주식")
+                _add_trigger(triggers, name, f"오늘 내 주식이 {delta:+,}원", f"주식장:{name}")
+
+
 def _kpi_announcer(company: str, agents: list[dict], roster: list[dict]) -> dict | None:
     """실적 발표할 부서장: 그 소속 에이전트 중 부장 (생산기획부 먼저), 없으면 아무 에이전트."""
     rank = {c["name"]: c for c in roster}
@@ -675,6 +735,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         chronicle.prompt_block(),
         villains.prompt_block(name, agent),
         news.prompt_block(agent, now),
+        hobbies.prompt_block(agent, now),
         novelty.worn_out(name, now),
         "[최근 내 행동]\n" + ("\n".join(recent) or "- 없음"),
         f"[연락할 수 있는 사람(스스로 사는 사람들)] {others_line}",
@@ -762,6 +823,9 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
                          '"did": "이번 시간에 실제로 한 일 한 줄"}')
     arcade_rule = arcade.prompt_rule(agent["name"])
     meeting_spec += arcade.SPEC if arcade_rule else ""
+    hobby_rule, hobby_spec = hobbies.rules_and_spec(agent)  # /주식 /그림 /개미소리
+    arcade_rule += hobby_rule
+    meeting_spec += hobby_spec
     user = (
         _perception(agent, st, routine_hint, kakao, others) + "\n\n"
         "이번 한 시간 동안 무엇을 할지 정해라.\n"
@@ -798,7 +862,8 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "meeting": _parse_meeting(out.get("meeting"), scopes),
         "meeting_support": str(out.get("meeting_support") or "").strip()[:80] if pending else "",
         "project_work": _parse_project_work(out.get("project_work"), my_projects),
-        "game": arcade.parse(out.get("game")) if arcade_rule else None,
+        "game": arcade.parse(out.get("game")) if "game" in meeting_spec else None,
+        **(hobbies.parse(out, agent) if hobby_spec else {}),
     }
 
 
@@ -1857,6 +1922,11 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         _handle_arcade(decisions, by_name, data, now, hk, hour_triggers)
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 오락실 처리 실패: {e}")
+    # 3.15) 봇 명령어 - /주식 /그림 /개미소리 (판단에서 고른 사람) + 아침 /운세 몇 명 + 장 마감 뒤 주식 손익
+    try:
+        _handle_hobbies(decisions, by_name, data, now, hk, hour_triggers)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 봇 명령어 처리 실패: {e}")
     # 3.2) 파급 라운드 - 방금 겪은 일에 같은 시간 안에 반응하고, 그게 또 새 대화/글로 이어진다
     try:
         talked = {n: 1 for n in busy_now}
