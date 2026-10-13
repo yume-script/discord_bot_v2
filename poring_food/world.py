@@ -22,7 +22,7 @@ import json
 import os
 import uuid
 
-from . import chronicle, life, memory, novelty, projects
+from . import chronicle, life, memory, news, novelty, projects
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -95,6 +95,7 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         + (projects.public_block() + "\n\n" if projects.public_block() else "") +
         "[최근에 세상에서 있었던 일]\n" + ("\n".join(f"- {e.get('date', '')} {e.get('hour', '')}시 {e.get('title', '')}" for e in recent_log[-8:]) or "- 없음") + "\n\n"
         + novelty.kind_balance(recent_log, now) + "\n" + novelty.calendar_hint(now) + "\n\n"
+        + (news.world_block(now) + "\n\n" if news.world_block(now) else "") +
         "오늘 일어날 사건 4~8개를 정해라:\n"
         "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 회사 전체/동네 사건으로 여러 명에게 닿게 하고,"
         " 개인 사건은 최근에 사건이 없던 사람 위주로.\n"
@@ -113,6 +114,12 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
     if not out:
         return []
     valid_targets = {a["name"] for a in agents} | set(companies) | {TOWN}
+    return _parse_events(out, agents, valid_targets, first_hour, 8)
+
+
+def _parse_events(out: dict, agents: list[dict], valid_targets: set, first_hour: int, limit: int,
+                  extra: dict | None = None) -> list[dict]:
+    """LLM이 낸 사건 목록 -> 계획 항목 (시각/대상/제목이 맞는 것만)."""
     events = []
     for e in out.get("events") or []:
         if not isinstance(e, dict):
@@ -138,9 +145,46 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
             "released": False, "confirmed": not rumor,
             # 에이전트 개인에게만 일어난 일 - 다른 사람(다른 에이전트/배경 인물)은 모른다
             "private": all(t in {a["name"] for a in agents} for t in targets),
+            **(extra or {}),
         })
     events.sort(key=lambda x: x["hour"])
-    return events[:8]
+    return events[:limit]
+
+
+# ===================================================================== 뉴스가 들어오면 그날 계획에 사건 추가
+NEWS_MIN_NEW = 3        # 새 뉴스가 이만큼은 들어와야 계획을 다시 본다 (자잘한 변화로 LLM을 부르지 않게)
+NEWS_MAX_EVENTS = 2
+
+
+def _news_events(now, agents: list[dict], roster: list[dict], new_items: list[dict], plan: list[dict]) -> list[dict]:
+    """[하루 중] 새로 들어온 실제 뉴스에 반응하는 사건 0~2개를 남은 시간에 더한다 (LLM 1회). 이미 정한 사건은 그대로."""
+    first_hour = now.hour
+    if first_hour > LAST_EVENT_HOUR or not new_items:
+        return []
+    companies = sorted({c["company"] for c in roster})
+    lines = "\n".join(f"- {news._line(i)}" for i in new_items[:12])
+    planned = "\n".join(f"- {e['hour']}시 {e['title']}" for e in plan) or "- 없음"
+    system = ("너는 가상 세계의 '세계 엔진'이다. 방금 바깥 세상(실제 한국)에 새 뉴스가 들어왔다. 이 도시 사람들의 삶에 "
+              "그 뉴스가 닿는 사건을 일으킨다. 어떻게 풀릴지는 정하지 마라.")
+    user = (
+        f"지금: {now:%Y-%m-%d %H}시. 사건은 {first_hour}~{LAST_EVENT_HOUR}시 사이에만.\n\n"
+        f"[방금 들어온 실제 뉴스/검색어]\n{lines}\n\n"
+        f"[오늘 이미 정해 둔 사건 - 겹치지 않게]\n{planned}\n\n"
+        f"[사람/회사/장소] 에이전트: {', '.join(a['name'] for a in agents)} / 회사: {', '.join(companies)}, {TOWN}\n"
+        f"{novelty.kind_balance([], now).splitlines()[0]}\n\n"
+        f"이 뉴스들 중 이 도시 사람들과 이어질 만한 것으로 사건 0~{NEWS_MAX_EVENTS}개를 정해라 (어울리는 게 없으면 빈 목록):\n"
+        "- 뉴스 자체를 지어내거나 바꾸지 말고, 뉴스가 이 동네/회사/사람에게 미치는 영향(가격, 장사, 업무, 수다거리, 계획 변경)으로.\n"
+        "- 실존 인물을 등장시키지 마라. 정치/혐오/참사 소재 금지.\n"
+        "반드시 JSON으로만 응답:\n"
+        '{"events": [{"hour": 정수, "kind": "사건 종류", "title": "사건 제목", "detail": "실제로 일어난 일 1~2문장", '
+        '"news": "이어진 뉴스 제목", "rumor": "", "targets": ["에이전트/회사/동네"], "visibility": "direct", '
+        '"effects": {"stress|happiness|...": -0.2~0.2}}]}'
+    )
+    out = llm_json(system, user, temperature=0.85, timeout=PLAN_TIMEOUT_SEC, tag="세계 엔진(뉴스)")
+    if not out:
+        return []
+    valid_targets = {a["name"] for a in agents} | set(companies) | {TOWN}
+    return _parse_events(out, agents, valid_targets, first_hour, NEWS_MAX_EVENTS, extra={"from_news": True})
 
 
 # ===================================================================== 발생
@@ -177,9 +221,23 @@ def tick(agents: list[dict], roster: list[dict], signals_block: str = "") -> lis
             return []
         log = data.get("log", [])
         plan = _plan_day(now, agents, roster, signals_block, log)
-        data = {"date": today, "plan": plan, "log": log, "manual": data.get("manual", {})}
+        data = {"date": today, "plan": plan, "log": log, "manual": data.get("manual", {}),
+                "news_seen": [i["title"] for i in news.current(now)]}  # 계획 때 본 뉴스
         _save(data)
         print(f"[세계] 오늘 사건 {len(plan)}개 계획 (에이전트에게는 비밀): {[(e['hour'], e['title']) for e in plan]}")
+    else:
+        # 하루 중 새 뉴스가 들어왔으면(news.py 7/12/18시) 남은 시간에 뉴스에 반응하는 사건을 더한다
+        fresh = news.current(now)
+        seen = set(data.get("news_seen") or [])
+        new = [i for i in fresh if i["title"] not in seen]
+        if len(new) >= NEWS_MIN_NEW:
+            data["news_seen"] = (list(seen) + [i["title"] for i in new])[-400:]
+            _save(data)  # LLM이 실패해도 같은 뉴스로 매시 다시 부르지 않게
+            added = _news_events(now, agents, roster, new, data.get("plan", []))
+            if added:
+                data["plan"] = sorted(data.get("plan", []) + added, key=lambda x: x["hour"])
+                _save(data)
+                print(f"[세계] 새 뉴스로 사건 {len(added)}개 추가: {[(e['hour'], e['title']) for e in added]}")
 
     agent_names = {a["name"] for a in agents}
     deliveries: list[tuple[str, str, str]] = []
