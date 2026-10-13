@@ -27,8 +27,8 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import (arcade, characters, chronicle, hobbies, kpi, life, memory, milestones, newcomers, novelty, outbox, projects,
-               rotation, news, runtime, signals, townmap, villains, world)
+from . import (arcade, characters, chronicle, hobbies, kpi, life, live, memory, milestones, newcomers, novelty, outbox,
+               projects, rotation, news, runtime, signals, townmap, villains, world)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -965,8 +965,17 @@ def _group_triggers(triggers: dict, poster: dict, gp: dict, mentioned: list[str]
         _add_trigger(triggers, w, f"{gp['group']}에 {poster['name']}의 새 글을 봤다: {gp['text']}", src)
 
 
+def _ripple_state(data: dict, hk: str) -> dict:
+    """이번 시간 파급 상한 집계 - 회차와 준실시간 대화(live.py)가 한 시간 동안 같이 쓴다."""
+    rs = data.get("_ripple") or {}
+    if rs.get("hour") != hk:
+        rs = {"hour": hk, "total": 0, "reacted": {}, "convos": 0, "talked": {}}
+        data["_ripple"] = rs
+    return rs
+
+
 def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, hk: str,
-            talked: dict[str, int], convo: dict, gcounts: dict) -> int:
+            talked: dict[str, int], convo: dict, gcounts: dict, depth: int = 0) -> int:
     """
     [파급 라운드] 이번 시간에 대화/소문/단톡방을 겪은 사람들이 반응할지 말지 스스로 따져 보고(가만히/연락/단톡방/계획 변경),
     그 반응(새 대화/글)이 또 다음 바퀴의 반응 거리가 된다. 연쇄 깊이 RIPPLE_ROUNDS바퀴, 한 시간 반응 RIPPLE_MAX_REACTIONS번,
@@ -975,10 +984,14 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
     """
     if RIPPLE_ROUNDS <= 0:
         return 0
-    reacted: dict[str, int] = {}
-    total = ripple_convos = acted = 0
-    for rnd_no in range(RIPPLE_ROUNDS):
-        minute = RIPPLE_MINUTES[min(rnd_no, len(RIPPLE_MINUTES) - 1)]
+    rs = _ripple_state(data, hk)
+    reacted: dict[str, int] = rs["reacted"]
+    start_total, start_convos = rs["total"], rs["convos"]
+    total, ripple_convos, acted = rs["total"], rs["convos"], 0
+    live_mode = live.active()
+    for rnd_no in range(depth, RIPPLE_ROUNDS):
+        # 준실시간이면 '지금'부터 몇 분 뒤 (예전엔 한 시간 안의 정해진 분: 20/35/50)
+        minute = (min(59, now.minute + 2) if live_mode else RIPPLE_MINUTES[min(rnd_no, len(RIPPLE_MINUTES) - 1)])
         rnd = random.Random(f"{hk}|{rnd_no}")
         people = [n for n in triggers if n in by_name and not _asleep(by_name[n], now.hour)]
         rnd.shuffle(people)
@@ -1032,10 +1045,14 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
                 elif ok:
                     how = c.get("how", "메신저")
                     place = d.get("location") or "어딘가"
-                    scene = _conversation(by_name[n], target, str(c["opening"]), how, place, start=start)
-                    for who, text in scene.get("gossip", []):
-                        _push_inbox(data, who, text, "소문")
-                    _scene_triggers(triggers, scene, n, target["name"], how)
+                    if live_mode:  # 그 시각에 만든다 - 대화가 끝나면 거기서 다음 바퀴 반응
+                        live.enqueue(start, "convo", a=n, b=target["name"], opening=str(c["opening"]), how=how,
+                                     place=place, depth=rnd_no + 1, hk=hk)
+                    else:
+                        scene = _conversation(by_name[n], target, str(c["opening"]), how, place, start=start)
+                        for who, text in scene.get("gossip", []):
+                            _push_inbox(data, who, text, "소문")
+                        _scene_triggers(triggers, scene, n, target["name"], how)
                     talked[n] = talked.get(n, 0) + 1
                     talked[target["name"]] = talked.get(target["name"], 0) + 1
                     busy |= {n, target["name"]}
@@ -1049,9 +1066,51 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
                                             at=outbox.slot(now, minute, minute + 5, random.Random(f"{hk}|{rnd_no}|g|{n}")))
                     _group_triggers(triggers, by_name[n], gp, mentioned, agents, now.hour, rnd)
                     gcounts[gp["group"]] = gcounts.get(gp["group"], 0) + 1
-    if total:
-        print(f"[에이전트] 파급 라운드: 반응 고민 {total}번, 행동 {acted}번, 새 대화 {ripple_convos}개")
-    return total
+    rs.update(total=total, convos=ripple_convos)
+    if total > start_total:
+        print(f"[에이전트] 파급 라운드: 반응 고민 {total - start_total}번, 행동 {acted}번, 새 대화 {ripple_convos - start_convos}개"
+              f" (이번 시간 반응 대화 {ripple_convos}개)")
+    return total - start_total
+
+
+def run_live_conversation(job: dict) -> dict | None:
+    """[live.py - 봇이 그 시각에, 잠금 안에서] 판단/파급 반응이 정해 둔 대화 하나를 지금 만들어 바로 올리고,
+    끝나면 그 자리에서 다음 바퀴 파급 반응을 고민한다 (시간당 상한은 _ripple_state로 회차와 같이 센다)."""
+    agents = load_agents()
+    by_name = {a["name"]: a for a in agents}
+    a, b = by_name.get(job.get("a")), by_name.get(job.get("b"))
+    if not a or not b:
+        return None
+    now = now_kst()
+    hk = _hour_key(now)
+    data = _load_state()
+    if _asleep(b, now.hour):  # 그새 잠들었으면 메시지만
+        _post(a, f"-# 📱 메신저 · {now.strftime('%H:%M')} · {a['name']} → {b['name']}\n{job['opening']}")
+        _push_inbox(data, b["name"], f"{a['name']}에게서 온 메시지: {job['opening']}", "메시지")
+        _save_state(data)
+        return None
+    # 판단 뒤에 생긴 일로 장소가 바뀌었으면 지금 장소로
+    place = (data.get(a["name"], {}).get("decision") or {}).get("location") or job.get("place") or "어딘가"
+    how = job.get("how", "메신저")
+    scene = _conversation(a, b, str(job["opening"]), how, place, start=now)
+    for who, text in scene.get("gossip", []):
+        _push_inbox(data, who, text, "소문")
+        print(f"[에이전트] 소문: {who} <- {text}")
+    triggers: dict = {}
+    _scene_triggers(triggers, scene, a["name"], b["name"], how)
+    convo = data.setdefault("_convos", {})
+    gc = data.setdefault("_group", {})
+    if gc.get("date") != now.strftime("%Y-%m-%d"):
+        gc.clear()
+        gc.update({"date": now.strftime("%Y-%m-%d"), "counts": {}})
+    try:
+        talked = _ripple_state(data, hk)["talked"]
+        _ripple(triggers, by_name, agents, data, now, hk, talked, convo, gc.setdefault("counts", {}),
+                depth=int(job.get("depth", 0)))
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 파급 반응 실패: {e}")
+    _save_state(data)
+    return scene
 
 
 def _decide_all(jobs: list[tuple], agents: list[dict]) -> list[dict | None]:
@@ -1088,6 +1147,8 @@ def _parse_meeting(raw, scopes: list[str]) -> dict | None:
     except (TypeError, ValueError):
         hour = MEETING_AUTO_HOUR
     scope = raw.get("scope") if raw.get("scope") in scopes else scopes[0]
+    # 이미 지났거나 지금인 시각에 모이자고 하면 다음 시간으로 (예: 15:30에 "15시에 모이자")
+    hour = max(hour, now_kst().hour + 1)
     return {"topic": topic, "why": str(raw.get("why") or "").strip()[:120], "scope": scope,
             "hour": max(9, min(22, hour))}
 
@@ -1880,11 +1941,15 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
             _push_inbox(data, target["name"], f"{name}에게서 온 메시지: {c['opening']}", "메시지")
         else:
             place = d.get("location") or "어딘가"
-            scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place, start=start)
-            for who, text in scene.get("gossip", []):
-                _push_inbox(data, who, text, "소문")
-                print(f"[에이전트] 소문: {who} <- {text}")
-            _scene_triggers(hour_triggers, scene, name, target["name"], c.get("how", "메신저"))
+            if live.active():  # 준실시간: 대화는 그 시각에 만든다 (그때의 시각/상태로 - live.py)
+                live.enqueue(start, "convo", a=name, b=target["name"], opening=str(c["opening"]),
+                             how=c.get("how", "메신저"), place=place, depth=0, hk=hk)
+            else:
+                scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place, start=start)
+                for who, text in scene.get("gossip", []):
+                    _push_inbox(data, who, text, "소문")
+                    print(f"[에이전트] 소문: {who} <- {text}")
+                _scene_triggers(hour_triggers, scene, name, target["name"], c.get("how", "메신저"))
         busy_now |= {name, target["name"]}
         c["done"] = True
         data.setdefault(name, {}).setdefault("decision", d)["contact"] = c
@@ -1929,7 +1994,9 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         print(f"[경고] 봇 명령어 처리 실패: {e}")
     # 3.2) 파급 라운드 - 방금 겪은 일에 같은 시간 안에 반응하고, 그게 또 새 대화/글로 이어진다
     try:
-        talked = {n: 1 for n in busy_now}
+        talked = _ripple_state(data, hk)["talked"]
+        for n in busy_now:
+            talked[n] = max(talked.get(n, 0), 1)
         _ripple(hour_triggers, by_name, agents, data, now, hk, talked, convo, counts)
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 파급 라운드 실패: {e}")

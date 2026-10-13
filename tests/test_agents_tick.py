@@ -39,6 +39,15 @@ def _quiet(monkeypatch):
     monkeypatch.setattr(agents, "load_agents", awake)
 
 
+def run_live_jobs(minutes: int = 30) -> int:
+    """준실시간 대화 작업(live.py)을 시각이 된 만큼 다 돌린다 (테스트용)."""
+    from poring_food import live
+    n, until = 0, agents.now_kst() + agents.timedelta(minutes=minutes)
+    while live.run_one(until):
+        n += 1
+    return n
+
+
 def _talks(caplog):
     lines = [r.getMessage() for r in caplog.records if "마디:" in r.getMessage()]
     caplog.clear()
@@ -64,6 +73,7 @@ def test_town_view_lists_everyone(fake_llm, monkeypatch, caplog):
     monkeypatch.setattr(agents, "TOWN_MAP", False)  # 글 버전 (그림은 test_town_map_png에서)
     fake_llm(_handler)
     agents.tick(characters.load_roster())
+    run_live_jobs()                                              # 준실시간: 대화는 그 시각에 만들어진다
     states = characters.update_all_states(characters.load_roster(), random.Random(1))
     caplog.clear()
     agents.post_town_view(states)
@@ -223,6 +233,7 @@ def test_town_map_png(fake_llm, monkeypatch, tmp_path):
     monkeypatch.setattr(outbox, "paced", lambda: True)
     fake_llm(_handler)
     agents.tick(characters.load_roster())
+    run_live_jobs()                                              # 준실시간: 대화는 그 시각에 만들어진다
     states = characters.update_all_states(characters.load_roster(), random.Random(1))
     snap = agents._town_snapshot(states, agents.names(), set(), agents.now_kst(), 3)
     assert snap["zones"] and snap["talks"]                       # 이번 시간 대화가 선으로 들어간다
@@ -272,3 +283,33 @@ def test_agent_plays_bot_game_in_free_time(fake_llm, monkeypatch, caplog):
     assert seen["rule"]
     assert any("[오락실] 홍두식 /주사위 5000" in r.getMessage() for r in caplog.records)
     assert int(life.get("홍두식")["money"]) != before or any("+0원" in r.getMessage() for r in caplog.records)
+
+
+def test_live_conversations_are_made_at_their_own_time(fake_llm, monkeypatch, caplog):
+    """준실시간: 회차는 대화를 작업으로만 넣고, 대화는 그 시각의 '지금'으로 만들어진다. 반응 상한은 회차와 같이 센다."""
+    from datetime import datetime
+    from poring_food import live, outbox
+    caplog.set_level(logging.INFO, logger="poring_food")
+    _quiet(monkeypatch)
+    monkeypatch.setattr(outbox, "paced", lambda: True)
+    seen_times = []
+
+    def handler(system, user):
+        out = _handler(system, user)
+        if "다음 한마디" in user:
+            seen_times.append(re.search(r"\d{2}:\d{2}", user.split("[지금 나]")[1]).group(0))
+        return out
+
+    fake_llm(handler)
+    t0 = datetime(2026, 10, 13, 15, 3)
+    monkeypatch.setattr(agents, "now_kst", lambda: t0)
+    agents.tick(characters.load_roster())
+    assert not _talks(caplog)                                    # 회차 안에서는 대화를 만들지 않는다
+    assert live.pending() == agents.MAX_CONVOS_PER_HOUR
+    t1 = t0.replace(minute=17)
+    monkeypatch.setattr(agents, "now_kst", lambda: t1)
+    n = 0
+    while live.run_one(t1):
+        n += 1
+    assert n == agents.MAX_CONVOS_PER_HOUR and len(_talks(caplog)) == n
+    assert seen_times and set(seen_times) == {"15:17"}           # 15:03이 아니라 대화하는 그 시각
