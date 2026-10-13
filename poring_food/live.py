@@ -75,6 +75,26 @@ def take_one(now: datetime | None = None) -> dict | None:
     return {"id": row[0], "due": row[1], "kind": row[2], **json.loads(row[3])}
 
 
+def pending_pair(a: str, b: str) -> bool:
+    """두 사람의 대화 작업이 이미 기다리는 중인지 (어느 쪽이 먼저 걸든) - 같은 두 사람 대화가 둘 생기지 않게."""
+    conn = _conn()
+    try:
+        rows = conn.execute("SELECT payload FROM live_jobs WHERE done=0 AND kind='convo'").fetchall()
+    finally:
+        conn.close()
+    pair = {a, b}
+    return any({p.get("a"), p.get("b")} == pair for p in (json.loads(r[0]) for r in rows))
+
+
+def enqueue_convo(due: datetime, a: str, b: str, **payload) -> bool:
+    """대화 작업 하나 (같은 두 사람 대화가 이미 기다리는 중이면 안 넣는다). 반환: 넣었는지."""
+    if pending_pair(a, b):
+        print(f"[실시간] {a}↔{b} 대화가 이미 잡혀 있어서 건너뜀")
+        return False
+    enqueue(due, "convo", a=a, b=b, **payload)
+    return True
+
+
 def pending(hour_key: str | None = None) -> int:
     conn = _conn()
     try:
