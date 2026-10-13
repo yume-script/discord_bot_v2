@@ -67,3 +67,37 @@ def test_fetch_failure_keeps_previous():
     news.refresh(t, _fake)
     assert not news.refresh(t.replace(hour=12), lambda: [])
     assert news.current(t.replace(hour=12))                                 # 직전 것을 계속 쓴다
+
+
+def test_world_adds_events_when_new_news_arrives(fake_llm, monkeypatch):
+    """하루 계획을 세운 뒤 새 뉴스가 들어오면 남은 시간에 뉴스에 반응하는 사건을 더한다 (기존 계획은 그대로)."""
+    from poring_food import agents, characters, world
+    calls = []
+
+    def handler(system, user):
+        if "새 뉴스가 들어왔다" in system:
+            calls.append(user)
+            return {"events": [{"hour": 13, "kind": "돈/경제", "title": "배달 수수료 얘기로 상인회 술렁",
+                                "detail": "수수료 뉴스에 동네 가게들이 모였다.", "targets": ["동네"], "visibility": "direct"}]}
+        if "세계 엔진" in system:
+            return {"events": [{"hour": 15, "title": "원래 사건", "detail": "x", "targets": ["동네"], "visibility": "direct"}]}
+        return {}
+
+    fake_llm(handler)
+    ags, roster = agents.load_agents(), characters.load_roster()
+    t7 = datetime(2026, 10, 13, 7, 3)
+    monkeypatch.setattr(world, "now_kst", lambda: t7)
+    news.refresh(t7, lambda: news.parse_trends(TRENDS))
+    world.tick(ags, roster)                                      # 하루 계획 (이때 본 뉴스는 '본 것')
+    assert not calls
+    t13 = t7.replace(hour=13)
+    monkeypatch.setattr(world, "now_kst", lambda: t13)
+    news.refresh(t13, _fake)                                     # 12시 몫 새 뉴스
+    out = world.tick(ags, roster)
+    assert len(calls) == 1 and "배달앱 수수료" in calls[0] and "원래 사건" in calls[0]
+    plan = world._load()["plan"]
+    assert [e["title"] for e in plan] == ["배달 수수료 얘기로 상인회 술렁", "원래 사건"]
+    assert plan[0]["from_news"] and plan[0]["released"]          # 13시 사건이라 바로 터진다
+    assert any("수수료 뉴스" in text for _, text, _ in out)
+    world.tick(ags, roster)                                      # 같은 뉴스로는 다시 안 부른다
+    assert len(calls) == 1

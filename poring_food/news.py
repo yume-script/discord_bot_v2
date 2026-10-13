@@ -10,7 +10,7 @@
 - 처음 본 지 FRESH_DAYS일 지난 제목은 빠진다 (같은 뉴스를 며칠씩 우려먹지 않게).
 - 쓰는 곳:
   · 인물 판단: 그 사람 관심 분야(회사/성격으로 정함)에 맞는 뉴스 2~3개 + 검색어 하나 (prompt_block)
-  · 세계 엔진: 하루 계획 때 오늘 헤드라인 (world_block) - 실제 뉴스에 반응하는 마을 사건
+  · 세계 엔진: 하루 계획 때 오늘 헤드라인 (world_block), 하루 중 새 뉴스가 들어오면 남은 시간에 사건 추가(world._news_events)
   · 바깥 세상 신호의 "오늘 세상의 화제" (topic_line) - 예전엔 LLM이 지어낸 화제 하나였다
 저장: storage/poring_food/news.json {"slot", "fetched", "items": [...], "seen": {제목: 처음 본 날}}
 """
