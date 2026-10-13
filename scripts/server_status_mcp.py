@@ -17,6 +17,8 @@
 
 [환경변수(선택)]
   STATUS_DISK_PATHS  기본 "/,/mnt,/docker"  (같은 파티션이면 한 항목으로 합친다)
+  STATUS_TOTAL_FSTYPES 기본 "ext2,ext3,ext4,xfs,btrfs,zfs,f2fs" - 서버 전체 디스크(disk_total)에 넣는 로컬 파일시스템 종류
+                       (네트워크/클라우드 마운트(nfs, cifs, fuse.rclone 등)와 tmpfs/overlay 같은 가상 파일시스템은 뺀다)
   STATUS_SERVICES    기본 "discord_bot_v2,cron,docker,ssh"
 """
 import glob
@@ -150,6 +152,45 @@ def _disks() -> list:
     return list(seen.values())
 
 
+_TOTAL_FSTYPES = {t.strip() for t in os.getenv("STATUS_TOTAL_FSTYPES", "ext2,ext3,ext4,xfs,btrfs,zfs,f2fs").split(",")
+                  if t.strip()}
+_SKIP_PREFIXES = ("/proc", "/sys", "/dev", "/run", "/snap", "/boot/efi")
+
+
+def _disk_total() -> dict | None:
+    """서버 전체 디스크: /proc/mounts의 로컬 파일시스템을 전부(같은 장치는 한 번) 합친 사용률.
+    파티션 하나가 차 있어도 서버 전체 창고가 찬 건 아니라서, 공장 '창고 적재율'은 이 값을 쓴다."""
+    seen, total, used, free, mounts = set(), 0, 0, 0, []
+    try:
+        with open("/proc/mounts") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        mnt, fstype = parts[1].replace("\\040", " "), parts[2]
+        if fstype not in _TOTAL_FSTYPES or mnt.startswith(_SKIP_PREFIXES):
+            continue
+        try:
+            dev = os.stat(mnt).st_dev
+            u = shutil.disk_usage(mnt)
+        except OSError:
+            continue
+        if dev in seen:
+            continue
+        seen.add(dev)
+        total, used, free = total + u.total, used + u.used, free + u.free
+        mounts.append(mnt)
+    if not mounts:
+        return None
+    gb = 1024 ** 3
+    return {"mounts": mounts, "total_gb": round(total / gb, 1), "used_gb": round(used / gb, 1),
+            "free_gb": round(free / gb, 1),
+            "used_percent": round(used / (used + free) * 100, 1) if (used + free) else None}
+
+
 def _temperatures():
     """센서(thermal zone)별 온도. 최댓값 하나만 주면 어느 센서인지 몰라서 오해하기 쉽다
     (예: x86_pkg_temp는 CPU 패키지지만 acpitz 같은 값은 실제 열과 무관하게 고정값일 수 있음)."""
@@ -199,7 +240,8 @@ def get_system_status() -> dict:
     있을 때), 가동시간을 한 번에 조회합니다. CPU는 세 가지로 나뉩니다: host_percent(머신 전체 -
     이 서버가 컨테이너면 다른 게스트 부하까지 포함), vm_guest_percent(그중 가상머신이 쓴 몫),
     container_cores_used(이 서버 자신이 쓴 CPU, 코어 1개=1.0). 머신은 바쁜데 이 서버 몫이 낮으면
-    부하의 원인은 이 서버 밖입니다."""
+    부하의 원인은 이 서버 밖입니다. disk_total은 서버의 로컬 디스크 전체를 합친 사용률입니다
+    (disks는 STATUS_DISK_PATHS 파티션별)."""
     mem, swap = _meminfo()
     try:
         load = dict(zip(("1min", "5min", "15min"), (round(x, 2) for x in os.getloadavg())))
@@ -212,6 +254,7 @@ def get_system_status() -> dict:
         "memory": mem,
         "swap": swap,
         "disks": _disks(),
+        "disk_total": _disk_total(),
         "temperature_c": _temperatures(),
     }
 

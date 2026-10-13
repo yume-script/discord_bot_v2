@@ -132,18 +132,30 @@ def _uptime_days(uptime) -> float | None:
     return days + h / 24 + mi / 1440
 
 
+def _server_totals(status: dict) -> tuple:
+    """공장 설비 = 서버 전체 값: (설비 가동률=머신 전체 CPU %, 작업장 혼잡도=메모리 %, 창고 적재율=로컬 디스크 전체 %).
+    [변경] 예전엔 CPU를 이 컨테이너 몫으로, 디스크를 가장 꽉 찬 파티션으로 봐서 창고가 늘 포화처럼 보였다.
+    서버가 서버 전체 값을 안 주면(예전 MCP) 예전 값으로 대신한다."""
+    cpu = _get(status, "cpu", "host_percent")
+    if cpu is None:
+        cpu = _get(status, "cpu", "container_percent_of_machine")
+    mem = _get(status, "memory", "used_percent")
+    disk = _get(status, "disk_total", "used_percent")
+    if disk is None:
+        disks = [d.get("used_percent") for d in status.get("disks") or [] if isinstance(d, dict)]
+        disks = [d for d in disks if isinstance(d, (int, float))]
+        disk = max(disks) if disks else None
+    return cpu, mem, disk
+
+
 def facility_numbers(status: dict, services: dict | None = None) -> dict:
     """get_system_status(+get_service_status) 결과 -> 담당 실적(kpi.py)용 숫자. 없는 값은 빠진다.
     {"cpu", "mem", "disk", "temp"(이야기용 섭씨), "uptime_days", "down": [멈춘 서비스 수]}"""
     if not isinstance(status, dict) or not status:
         return {}
-    cpu = _get(status, "cpu", "container_percent_of_machine")
-    if cpu is None:
-        cpu = _get(status, "cpu", "host_percent")
-    disks = [d.get("used_percent") for d in status.get("disks") or [] if isinstance(d, dict)]
-    disks = [d for d in disks if isinstance(d, (int, float))]
+    cpu, mem, disk = _server_totals(status)
     temp = _get(status, "temperature_c", "max")
-    out = {"cpu": cpu, "mem": _get(status, "memory", "used_percent"), "disk": max(disks) if disks else None,
+    out = {"cpu": cpu, "mem": mem, "disk": disk,
            "temp": _story_temp(temp) if isinstance(temp, (int, float)) else None,
            "uptime_days": _uptime_days(status.get("uptime"))}
     out = {k: round(float(v), 2) for k, v in out.items() if isinstance(v, (int, float))}
@@ -157,13 +169,7 @@ def describe_facility(status: dict, services: dict | None = None) -> str:
     """get_system_status(+get_service_status) 결과 -> 공장 설비 한 줄. 값이 없으면 빈 문자열."""
     if not isinstance(status, dict) or not status:
         return ""
-    cpu = _get(status, "cpu", "container_percent_of_machine")
-    if cpu is None:
-        cpu = _get(status, "cpu", "host_percent")
-    mem = _get(status, "memory", "used_percent")
-    disks = [d.get("used_percent") for d in status.get("disks") or [] if isinstance(d, dict)]
-    disks = [d for d in disks if isinstance(d, (int, float))]
-    disk = max(disks) if disks else None
+    cpu, mem, disk = _server_totals(status)
     temp = _get(status, "temperature_c", "max")
     if isinstance(temp, (int, float)):
         temp = _story_temp(temp)

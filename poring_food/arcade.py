@@ -96,9 +96,9 @@ GAMES = {
 }
 
 
-def prompt_rule(name: str) -> str:
-    """판단 프롬프트에 넣는 규칙 (오늘 다 했으면 "")."""
-    if not ENABLED or plays_today(name) >= MAX_PLAYS_PER_DAY or is_cut_off(name):
+def prompt_rule(name: str, now: datetime | None = None) -> str:
+    """판단 프롬프트에 넣는 규칙 (오늘 다 했거나 주인이 그만 받기로 했으면 "")."""
+    if not ENABLED or plays_today(name) >= MAX_PLAYS_PER_DAY or is_cut_off(name, now):
         return ""
     money = int(life.get(name).get("money", 0))
     games = ", ".join(f"{g}({'/'.join(c)})" if c else g for g, (_, c, _) in GAMES.items())
