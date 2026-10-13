@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from . import (arcade, characters, chronicle, kpi, life, memory, milestones, newcomers, novelty, outbox, projects, rotation,
-               runtime, signals, townmap, villains, world)
+               news, runtime, signals, townmap, villains, world)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -674,6 +674,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
     parts += [
         chronicle.prompt_block(),
         villains.prompt_block(name, agent),
+        news.prompt_block(agent, now),
         novelty.worn_out(name, now),
         "[최근 내 행동]\n" + ("\n".join(recent) or "- 없음"),
         f"[연락할 수 있는 사람(스스로 사는 사람들)] {others_line}",

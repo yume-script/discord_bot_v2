@@ -19,6 +19,7 @@ from . import characters
 from . import signals
 from . import story
 from . import outbox
+from . import news
 from .config import INTERACTION_HOURS
 
 # [신규] 애순이가 매시간 스포트라이트(=디스코드/카톡으로 방송)를 독점하지 않고, 깨어있는
@@ -285,6 +286,11 @@ def main():
         signals.refresh_live()
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 외부 신호 갱신 실패: {e}")
+    # 바깥 세상 뉴스 - 실제 검색어(Google 트렌드)/헤드라인(Google 뉴스), 하루 3번 (실패하면 직전 것)
+    try:
+        news.refresh()
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 뉴스 갱신 실패: {e}")
     # 생산(Plex/북오아시스 신규 입고)/판매(Plex 재생)/주문(대화량) 지표도 회차마다 한 번 집계
     try:
         metrics.refresh()

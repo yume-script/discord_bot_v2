@@ -6,7 +6,7 @@
 
 | 실제 신호                        | 이야기 속 의미 (LLM에게 알려주는 대응)         |
 |----------------------------------|-----------------------------------------------|
-| 광주 날씨(기상청 MCP) / 오늘의 화제 | 출근길·점심 수다·회식 분위기                    |
+| 광주 날씨(기상청 MCP) / 오늘의 화제(실제 검색어·뉴스, news.py) | 출근길·점심 수다·회식 분위기 |
 | 서버 상태 MCP(서버 전체 CPU/메모리/디스크 합계/온도) | 공장 설비 가동률·작업장 혼잡도·창고 적재율·과열 |
 | 카톡 브릿지 서버 상태             | 포링푸드 공장 라인 가동/정지                    |
 | Plex/북오아시스 신규 등록 (metrics) | 생산량(신규 입고)                              |
@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 
 from config import settings
 
-from . import checker, mcp_signals, metrics, processor, world
+from . import checker, mcp_signals, metrics, news, processor, world
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import BOOKOASIS_STATE_PATH, STATE_DIR
 
@@ -119,7 +119,7 @@ def refresh_daily_topic() -> None:
     """오늘의 화제(뉴스/스포츠/영화 등)를 하루 한 번 갱신한다."""
     cache = _load_cache()
     today = datetime.now(KST).strftime("%Y-%m-%d")
-    if cache.get("topic", {}).get("date") == today:
+    if cache.get("topic", {}).get("date") == today or news.current():  # 실제 뉴스가 있으면 LLM 화제는 안 만든다
         return
     topic = processor.fetch_daily_topic()
     if topic:
@@ -189,8 +189,12 @@ def collect(include_factory: bool = True) -> dict:
     if weather:
         signals["weather"] = weather
 
+    # 오늘 세상의 화제: 실제 검색어/뉴스 제목(news.py). 못 받았으면 예전처럼 LLM이 고른 화제 하나
+    topic_news = news.topic_line(now)
     topic = cache.get("topic", {})
-    if topic.get("date") == now.strftime("%Y-%m-%d") and topic.get("topic_title"):
+    if topic_news:
+        signals["topic"] = topic_news
+    elif topic.get("date") == now.strftime("%Y-%m-%d") and topic.get("topic_title"):
         signals["topic"] = f"{topic['topic_title']} - {topic.get('topic_summary', '')}"
 
     if include_factory:
