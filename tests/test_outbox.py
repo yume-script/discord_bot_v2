@@ -44,8 +44,10 @@ def test_tick_paces_conversations_through_the_hour(fake_llm, monkeypatch):
     _quiet(monkeypatch)
     monkeypatch.setattr(outbox, "paced", lambda: True)
     fake_llm(_handler)
+    from tests.test_agents_tick import run_live_jobs
     start = agents.now_kst()
     agents.tick(characters.load_roster())
+    assert run_live_jobs() >= 2                                    # 준실시간: 대화는 그 시각에 만들어진다
     items = outbox.take_due(start + timedelta(minutes=80), limit=500)
     talks = [it for it in items if it["name"] not in ("동네 소식",)]
     assert len(talks) >= 4

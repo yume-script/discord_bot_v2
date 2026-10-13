@@ -6,7 +6,9 @@
 - 디스코드 방송은 PORING_DISCORD_CHANNEL_ID가 있으면 봇 계정이 그 채널에 직접 올리고,
   없으면 예전 웹훅(PORING_DISCORD_WEBHOOK_URL)으로 보낸다(poring_food/notifier.py).
 - 봇이 꺼져 있던 시간의 회차는 건너뛴다(밀린 회차를 몰아서 돌리지 않음).
-- 대화/단톡방/연재 장면은 회차가 만들어 둔 시각대로 예약함(poring_food/outbox.py)에서 몇 초마다 꺼내 차례대로 올린다
+- 에이전트 대화는 준실시간(poring_food/live.py): 회차는 누가 언제 누구와 얘기할지만 정하고, 대화는 그 시각에 20초마다
+  돌아가는 live_runner가 만들어 바로 올린다 (그 순간의 시각/상태로 - 한 시간 전 기준이라 문맥/시각이 어긋나던 문제).
+- 단톡방/연재 장면은 회차가 만들어 둔 시각대로 예약함(poring_food/outbox.py)에서 몇 초마다 꺼내 차례대로 올린다
   (한 시간치 대화가 몇 분 사이에 몰려 올라오지 않게, 다른 곳 대화가 중간에 섞이게).
 - 관리자는 /포링푸드실행 으로 지금 바로 한 회차를 돌려볼 수 있다(이전 회차가 도는 중이면 거절).
 - 관리자 개입 (세계 밖에서 조종):
@@ -62,6 +64,7 @@ class PoringFood(commands.Cog):
         if settings.PORING_FOOD_ENABLED:
             self.hourly.start()
             self.drain_outbox.start()
+            self.live_runner.start()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
                      settings.PORING_DISCORD_CHANNEL_ID or ("웹훅" if settings.PORING_DISCORD_WEBHOOK_URL else "없음"),
@@ -72,6 +75,7 @@ class PoringFood(commands.Cog):
     async def cog_unload(self) -> None:
         self.hourly.cancel()
         self.drain_outbox.cancel()
+        self.live_runner.cancel()
 
     @tasks.loop(seconds=5)
     async def drain_outbox(self) -> None:
@@ -104,6 +108,23 @@ class PoringFood(commands.Cog):
             except Exception:  # noqa: BLE001 - 한 글이 실패해도 다음 글은 보낸다
                 log.exception("포링푸드 예약 글 전송 실패 (%s)", it.get("kind"))
             await asyncio.sleep(1)
+
+    @tasks.loop(seconds=20)
+    async def live_runner(self) -> None:
+        """준실시간 대화(poring_food/live.py): 시각이 된 대화 하나를 지금 만들어 바로 올린다.
+        회차/모임과 같은 잠금 - 회차가 도는 중이면 이번엔 건너뛰고, 대화 하나가 도는 동안엔 회차가 기다린다."""
+        if self._lock.locked():
+            return
+        from poring_food import live
+        async with self._lock:
+            try:
+                await asyncio.to_thread(live.run_one)
+            except Exception:  # noqa: BLE001
+                log.exception("포링푸드 실시간 대화 실패")
+
+    @live_runner.before_loop
+    async def _before_live(self) -> None:
+        await self.bot.wait_until_ready()
 
     @drain_outbox.before_loop
     async def _before_drain(self) -> None:

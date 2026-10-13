@@ -102,7 +102,7 @@ def problems(seconds: float, failed: bool, now: datetime) -> dict[str, str]:
     decided, ok = int(agents.LAST_TICK.get("decided", 0)), int(agents.LAST_TICK.get("ok", 0))
     if decided >= 3 and ok * 2 < decided:
         out["decide_fail"] = f"판단 실패가 많음 ({decided}명 중 {ok}명만 성공) - 대부분 '평소 루틴'으로 대신함, 위 LLM 상태 확인 필요"
-    made = sum(outbox.SCHEDULED.get(k, 0) for k in ("agent", "discord"))
+    made = sum(outbox.SCHEDULED.get(k, 0) for k in ("agent", "discord", "live"))  # live: 그 시각에 만들 대화 작업
     explained = any(c in out for c in ("tick_fail", "litellm_down", "litellm_error", "base_quota", "decide_fail"))
     if now.hour in WAKE_HOURS and made == 0 and not explained:  # 원인이 이미 위에 나왔으면 따로 안 알린다
         out["silent"] = "대화/글이 하나도 안 만들어짐 - 판단이 전부 '가만히'거나 LLM이 응답을 못 하는 중"
