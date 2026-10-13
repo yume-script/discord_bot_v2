@@ -313,3 +313,37 @@ def test_live_conversations_are_made_at_their_own_time(fake_llm, monkeypatch, ca
         n += 1
     assert n == agents.MAX_CONVOS_PER_HOUR and len(_talks(caplog)) == n
     assert seen_times and set(seen_times) == {"15:17"}           # 15:03이 아니라 대화하는 그 시각
+
+
+def test_live_no_duplicate_or_overlapping_pair_conversations(fake_llm, monkeypatch):
+    """같은 두 사람 대화는 하나만 잡히고, 아직 마디가 올라가는 중인 사람의 대화는 뒤로 미뤄지고,
+    방금 대화한 상대에게 반응으로 또 연락하지 않는다 (두 대화가 섞여 보이던 버그)."""
+    from datetime import datetime, timedelta
+    from poring_food import live, outbox
+    _quiet(monkeypatch)
+    monkeypatch.setattr(outbox, "paced", lambda: True)
+
+    def handler(system, user):
+        if "방금 이번 시간에 일어난 일" in user:   # 반응: 방금 대화한 상대에게 또 연락하려 함
+            me = re.search(r"'([^']+)'", system).group(1)
+            other = PAIRS.get(me) or next((k for k, v in PAIRS.items() if v == me), "")
+            return {"consider": "또 할 말", "matters": 8, "react": "연락",
+                    "contact": {"to": other, "how": "메신저", "opening": "또 나야"}, "thought": "흠"}
+        return _handler(system, user)
+
+    fake_llm(handler)
+    t = datetime(2026, 10, 13, 20, 10)
+    monkeypatch.setattr(agents, "now_kst", lambda: t)
+    assert live.enqueue_convo(t, "홍두식", "윤혜진", opening="쌤", how="메신저", place="골목", depth=0, hk="x")
+    assert not live.enqueue_convo(t, "윤혜진", "홍두식", opening="두식씨", how="메신저", place="골목", depth=0, hk="x")
+    assert live.run_one(t)
+    assert not live.pending_pair("홍두식", "윤혜진")                # 반응으로 같은 두 사람 대화가 또 잡히지 않음
+    # 홍두식이 아직 대화 중(마디가 올라가는 중)이면 다른 사람과의 대화는 그 뒤로
+    live.enqueue_convo(t, "양관식", "홍두식", opening="두식아", how="직접", place="단밤", depth=0, hk="x")
+    jobs_before = live.pending()
+    live.run_one(t)
+    ends = agents._load_state()["_talking"]["홍두식"]
+    assert ends > t.isoformat() and live.pending() == jobs_before   # 미뤄서 다시 들어감
+    later = datetime.fromisoformat(ends) + timedelta(minutes=1)
+    monkeypatch.setattr(agents, "now_kst", lambda: later)
+    assert live.run_one(later) and not live.pending_pair("양관식", "홍두식")

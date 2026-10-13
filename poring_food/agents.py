@@ -975,7 +975,7 @@ def _ripple_state(data: dict, hk: str) -> dict:
 
 
 def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, hk: str,
-            talked: dict[str, int], convo: dict, gcounts: dict, depth: int = 0) -> int:
+            talked: dict[str, int], convo: dict, gcounts: dict, depth: int = 0, avoid: set | None = None) -> int:
     """
     [파급 라운드] 이번 시간에 대화/소문/단톡방을 겪은 사람들이 반응할지 말지 스스로 따져 보고(가만히/연락/단톡방/계획 변경),
     그 반응(새 대화/글)이 또 다음 바퀴의 반응 거리가 된다. 연쇄 깊이 RIPPLE_ROUNDS바퀴, 한 시간 반응 RIPPLE_MAX_REACTIONS번,
@@ -1037,22 +1037,26 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
                 ok = (target and ripple_convos < RIPPLE_CONVOS_PER_HOUR
                       and talked.get(n, 0) < RIPPLE_MAX_TALKS_PER_PERSON
                       and talked.get(target["name"], 0) < RIPPLE_MAX_TALKS_PER_PERSON
-                      and not ({n, target["name"]} & busy))
+                      and not ({n, target["name"]} & busy)
+                      and {n, target["name"]} != (avoid or set()))   # 방금 대화한 두 사람이 또 대화하지 않게
                 start = outbox.slot(now, minute, minute + 5, random.Random(f"{hk}|{rnd_no}|{n}"))
+                made = False
                 if ok and _asleep(target, now.hour):
                     _post(by_name[n], f"-# 📱 메신저 · {start.strftime('%H:%M')} · {n} → {target['name']}\n{c['opening']}", at=start)
                     _push_inbox(data, target["name"], f"{n}에게서 온 메시지: {c['opening']}", "메시지")
                 elif ok:
                     how = c.get("how", "메신저")
                     place = d.get("location") or "어딘가"
+                    made = True
                     if live_mode:  # 그 시각에 만든다 - 대화가 끝나면 거기서 다음 바퀴 반응
-                        live.enqueue(start, "convo", a=n, b=target["name"], opening=str(c["opening"]), how=how,
-                                     place=place, depth=rnd_no + 1, hk=hk)
+                        made = live.enqueue_convo(start, n, target["name"], opening=str(c["opening"]), how=how,
+                                                  place=place, depth=rnd_no + 1, hk=hk)
                     else:
                         scene = _conversation(by_name[n], target, str(c["opening"]), how, place, start=start)
                         for who, text in scene.get("gossip", []):
                             _push_inbox(data, who, text, "소문")
                         _scene_triggers(triggers, scene, n, target["name"], how)
+                if ok and made and not _asleep(target, now.hour):
                     talked[n] = talked.get(n, 0) + 1
                     talked[target["name"]] = talked.get(target["name"], 0) + 1
                     busy |= {n, target["name"]}
@@ -1089,10 +1093,20 @@ def run_live_conversation(job: dict) -> dict | None:
         _push_inbox(data, b["name"], f"{a['name']}에게서 온 메시지: {job['opening']}", "메시지")
         _save_state(data)
         return None
+    # 둘 중 누가 아직 다른 대화의 마디를 올리는 중이면 그게 끝난 뒤로 미룬다 (대화 두 개가 섞여 보이지 않게)
+    busy_until = data.setdefault("_talking", {})
+    until = max((busy_until.get(n, "") for n in (a["name"], b["name"])), default="")
+    if until and until > now.isoformat(timespec="seconds"):
+        later = datetime.fromisoformat(until) + timedelta(seconds=30)
+        live.enqueue(later, "convo", **{k: v for k, v in job.items() if k not in ("id", "due", "kind")})
+        print(f"[실시간] {a['name']}↔{b['name']} 대화는 앞 대화가 끝난 {later:%H:%M} 뒤로 미룸")
+        return None
     # 판단 뒤에 생긴 일로 장소가 바뀌었으면 지금 장소로
     place = (data.get(a["name"], {}).get("decision") or {}).get("location") or job.get("place") or "어딘가"
     how = job.get("how", "메신저")
     scene = _conversation(a, b, str(job["opening"]), how, place, start=now)
+    for n in (a["name"], b["name"]):
+        busy_until[n] = scene.get("ends_at") or now.isoformat(timespec="seconds")
     for who, text in scene.get("gossip", []):
         _push_inbox(data, who, text, "소문")
         print(f"[에이전트] 소문: {who} <- {text}")
@@ -1106,7 +1120,7 @@ def run_live_conversation(job: dict) -> dict | None:
     try:
         talked = _ripple_state(data, hk)["talked"]
         _ripple(triggers, by_name, agents, data, now, hk, talked, convo, gc.setdefault("counts", {}),
-                depth=int(job.get("depth", 0)))
+                depth=int(job.get("depth", 0)), avoid={a["name"], b["name"]})
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 파급 반응 실패: {e}")
     _save_state(data)
@@ -1322,6 +1336,7 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
         "id": uuid.uuid4().hex[:12], "ts": now.isoformat(timespec="seconds"), "hour": now.hour,
         "location": "메신저" if how == "메신저" else place, "participants": [a["name"], b["name"]],
         "arc_id": None, "lines": transcript, "narration": "", "summary": summary, "agents": True,
+        "ends_at": t.isoformat(timespec="seconds"),  # 마지막 마디가 올라가는 시각 (준실시간: 그때까지 두 사람은 대화 중)
     }
     with open(DIALOGUES_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps(scene, ensure_ascii=False) + "\n")
@@ -1942,8 +1957,9 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         else:
             place = d.get("location") or "어딘가"
             if live.active():  # 준실시간: 대화는 그 시각에 만든다 (그때의 시각/상태로 - live.py)
-                live.enqueue(start, "convo", a=name, b=target["name"], opening=str(c["opening"]),
-                             how=c.get("how", "메신저"), place=place, depth=0, hk=hk)
+                if not live.enqueue_convo(start, name, target["name"], opening=str(c["opening"]),
+                                          how=c.get("how", "메신저"), place=place, depth=0, hk=hk):
+                    continue
             else:
                 scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place, start=start)
                 for who, text in scene.get("gossip", []):
