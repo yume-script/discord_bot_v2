@@ -615,6 +615,70 @@ def _handle_hobbies(decisions: dict, by_name: dict, data: dict, now, hk: str, tr
                 _add_trigger(triggers, name, f"오늘 내 주식이 {delta:+,}원", f"주식장:{name}")
 
 
+# ===================================================================== 명단 (관리자 조회 /포링푸드명단)
+COMPANY_LABEL = {"포링푸드 (Poring Food)": "🏭 포링푸드", "에린 로지스틱스 (Erinn Logistics)": "🚚 에린 로지스틱스",
+                 "카페 오후세시": "☕ 카페 오후세시", "광주 동네 상가": "🏘️ 동네"}
+
+
+def staff_overview(company_filter: str = "") -> list[str]:
+    """지금 스스로 사는 인물들의 소속/자리/맡은 일/고정 여부/지금 하는 일을 소속별로. 반환: 디스코드 메시지 조각들."""
+    ags = load_agents()
+    roster = characters.load_roster()
+    now = now_kst()
+    h = handover._load()
+    since = (now - timedelta(days=handover.SHOW_DAYS)).strftime("%Y-%m-%d")
+    groups: dict[str, list[str]] = {}
+    for a in ags:
+        company = a.get("company", "")
+        label = COMPANY_LABEL.get(company, company or "기타")
+        if company_filter and company_filter not in label and company_filter not in company:
+            continue
+        seat = handover.seat(a["name"], roster).split(" ", 1)
+        seat = seat[1] if len(seat) > 1 else ""
+        tags = []
+        if a.get("account"):
+            tags.append("🔒계정")
+        if a.get("role"):
+            tags.append(f"🔒{a['role']}")
+        if villains.is_villain(a):
+            tags.append("😈빌런")
+        elif a.get("fixed"):
+            tags.append("🔒고정")
+        if rotation.is_promoted(a["name"]):
+            tags.append("🔄교체로 나섬")
+        jobs = [p["line"] for p in kpi.posts_of(a["name"])]
+        if a["name"] in hobbies.ARTISTS:
+            jobs.append("화가(/그림)")
+        line = f"• **{a['name']}**" + (f" - {seat}" if seat else "") + (f" {' '.join(tags)}" if tags else "")
+        if jobs:
+            line += f"\n  　맡은 일: {', '.join(jobs)}"
+        n = (h.get("notes") or {}).get(a["name"])
+        if n and n.get("date", "") >= since:
+            line += f"\n  　인수인계: {n['date'][5:].replace('-', '/')} 전임 {n['from']}"
+        d = active(a["name"])
+        if d:
+            line += f"\n  　지금: {d.get('location', '')}에서 {d.get('activity', '')} ({d.get('state', '')})"
+        groups.setdefault(label, []).append(line)
+    if not groups:
+        return ["해당하는 소속에 지금 스스로 사는 사람이 없어요."]
+    pages = [f"👥 **포링푸드 세계 명단** ({now:%m/%d %H:%M}, {sum(len(v) for v in groups.values())}명)"]
+    for label in sorted(groups, key=lambda x: list(COMPANY_LABEL.values()).index(x) if x in COMPANY_LABEL.values() else 99):
+        block = f"\n**{label}** ({len(groups[label])}명)\n" + "\n".join(groups[label])
+        if len(pages[-1]) + len(block) > 1900:
+            pages.append(block.lstrip("\n"))
+        else:
+            pages[-1] += "\n" + block
+    recent = [x for x in (h.get("log") or []) if x.get("date", "") >= since][-5:]
+    if recent:
+        tail = "\n**🔄 최근 교체** (사람은 바뀌어도 자리는 그대로)\n" + "\n".join(
+            f"• {x['date'][5:].replace('-', '/')} {x.get('seat') or x.get('company', '')}: {x['out']} → {x['in']}" for x in recent)
+        if len(pages[-1]) + len(tail) > 1900:
+            pages.append(tail.lstrip("\n"))
+        else:
+            pages[-1] += "\n" + tail
+    return pages
+
+
 def _kpi_announcer(company: str, agents: list[dict], roster: list[dict]) -> dict | None:
     """실적 발표할 부서장: 그 소속 에이전트 중 부장 (생산기획부 먼저), 없으면 아무 에이전트."""
     rank = {c["name"]: c for c in roster}

@@ -54,3 +54,18 @@ def test_villain_retargets_successor(fake_llm):
     ags.append({"name": "한석율", "company": "포링푸드 (Poring Food)"})
     villains.tick(ags, [], datetime(2026, 10, 14, 11, 3))
     assert "한석율" in seen["targets"] and "김동식" not in seen["targets"]
+
+
+def test_staff_overview_lists_seats_jobs_and_flags():
+    from poring_food import characters, kpi
+    kpi.assign(agents.load_agents(), characters.load_roster())
+    pages = agents.staff_overview()
+    text = "\n".join(pages)
+    assert "포링푸드 세계 명단" in text and "🏭 포링푸드" in text and "🏘️ 동네" in text
+    assert "**장대희**" in text and "😈빌런" in text                 # 빌런 표시
+    assert "**애순이**" in text and "🔒계정" in text                 # 디스코드 계정 = 고정
+    assert "맡은 일: 일반/웹툰 라인" in text                          # 실적 자리
+    assert all(len(p) <= 2000 for p in pages)
+    only = "\n".join(agents.staff_overview("에린"))
+    assert "🚚 에린 로지스틱스" in only and "🏭 포링푸드" not in only
+    assert agents.staff_overview("없는소속") == ["해당하는 소속에 지금 스스로 사는 사람이 없어요."]
