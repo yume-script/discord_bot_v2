@@ -173,6 +173,13 @@ python app.py
 - **채널 하나로 통일** (`PORING_ONE_CHANNEL`, 기본 켬): 매시 일지/장면, 에이전트 대화, 책방 단톡방(📚)/극장 단톡방(🎬)/
   동네 단톡방(🏘️)이 모두 에이전트 대화 채널(`PORING_AGENT_CHANNEL_ID`, 비우면 `PORING_DISCORD_CHANNEL_ID`) 하나에
   머리줄로 구분돼 올라간다. 예전처럼 채널을 나누려면 `PORING_ONE_CHANNEL=0`.
+- **상영 알림 웹훅**: `PORING_WEBHOOK_PORT` + `PORING_WEBHOOK_TOKEN`을 넣으면 봇이 `POST /plex`(헤더 `X-Poring-Token`)를 받아
+  Tautulli가 재생 시작 순간 보내는 알림으로 상영 알림을 올린다(JSON 형식은 `plex_watch.TAUTULLI_BODY` - 시청자 계정은 안 보냄).
+  켜져 있으면 1분 확인은 10분(`PORING_PLEX_WATCH_FALLBACK_SEC`)마다 웹훅이 빠뜨린 것 줍기용으로만.
+- **책방 손님 알림** (`poring_food/book_watch.py`): 북오아시스엔 웹훅이 없어서 10분(`PORING_BOOK_WATCH_SEC`)마다
+  `run_readonly_query`로 서재별 `user_progress` 최근 20건(책/쪽수/마지막 읽은 시각, 계정은 안 가져옴)을 본다. 새로 읽은 기록이
+  있으면 애순이가 동네 단톡방에 📚 한마디(같은 작품은 3시간에 한 번, 시간당 3개, 자는 시간엔 기록만, 처음은 기준만).
+  성인 서재는 제목 없이 "심야 서고에 손님"으로 김동식이 책방 단톡방에만 - 동네 사람 판단에는 안 들어간다.
 - **골목 설비** (`poring_food/facilities.py`): 매시 회차 시작 때 docker MCP(`docker_local`=관리사무소동, `docker_bookoasis`=
   책방·극장 건물)의 `list_containers`로 컨테이너가 켜져 있는지만 본다(로그는 안 봄). 컨테이너 = 골목 설비: litellm-proxy/db
   (관리사무소 전산실/장부 창고), docker-warproxy(골목 우체국), vaultwarden(골목 열쇠집), bookoasis/mariadb/redis(책방 서가 전산/

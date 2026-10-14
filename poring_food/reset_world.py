@@ -22,7 +22,7 @@ from . import worldcfg
 from .clock import now_kst
 from .config import STATE_DIR
 
-KEEP = {"news.json", "market.json", "signals_cache.json", "metrics.json", "bookoasis_state.json", "plex_watch.json", "facilities.json",
+KEEP = {"news.json", "market.json", "signals_cache.json", "metrics.json", "bookoasis_state.json", "plex_watch.json", "facilities.json", "book_watch.json",
         ".names_v2_migrated", ".names_v3_migrated"}
 
 
