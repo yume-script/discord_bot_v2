@@ -22,7 +22,7 @@ import os
 import random
 from datetime import datetime, timedelta
 
-from . import chronicle, life, memory, novelty, world
+from . import chronicle, handover, life, memory, novelty, world
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -143,7 +143,9 @@ def tick(agents: list[dict], roster: list[dict], now: datetime | None = None) ->
         last = rec.get("last")
         if last and (now.date() - datetime.strptime(last, "%Y-%m-%d").date()).days < SCHEME_EVERY_DAYS:
             continue
-        targets = [t for t in agent["villain"].get("targets") or [] if t in names and t != name]
+        # 노리던 사람이 교체로 쉬러 갔으면 그 자리를 이어받은 사람을 노린다 (handover.successor)
+        targets = list(dict.fromkeys(handover.successor(t, names) for t in agent["villain"].get("targets") or []))
+        targets = [t for t in targets if t and t != name]
         if not targets:
             continue
         rec["last"] = today  # 실패해도 오늘은 다시 안 꾸민다

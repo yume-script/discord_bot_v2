@@ -27,8 +27,8 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import (arcade, characters, chronicle, hobbies, kpi, life, live, memory, milestones, newcomers, novelty, outbox,
-               projects, rotation, news, runtime, signals, townmap, villains, world)
+from . import (arcade, characters, chronicle, handover, hobbies, kpi, life, live, memory, milestones, newcomers, novelty,
+               outbox, projects, rotation, news, runtime, signals, townmap, villains, world)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -107,9 +107,19 @@ def _base_agents() -> list[dict]:
 
 def _rotate(now) -> None:
     """[하루 한 번] 소속별로 에이전트 한 명 <-> 배경 인물 한 명 교체, 채널/연대기/당사자 기억에 남긴다."""
+    held = {a["name"]: [f"{p['line']} ({p['source']})" for p in kpi.posts_of(a["name"])] for a in load_agents()}
     swaps = rotation.tick(_base_agents(), MAX_AGENTS)
     if not swaps:
         return
+    # 자리 인수인계 - 사람이 바뀌어도 그 자리의 이야기(하던 일/약속/다툼/받은 소식)가 이어지게 (handover.py)
+    data = _load_state()
+    current = load_agents()
+    for company, out_name, in_name in swaps:
+        try:
+            handover.run(out_name, in_name, company, data, current, _push_inbox, now, held.get(out_name))
+        except Exception as e:  # noqa: BLE001 - 인수인계가 실패해도 교체는 그대로
+            print(f"[경고] 인수인계 실패 ({out_name}->{in_name}): {e}")
+    _save_state(data)
     lines = [f"-# 🔄 {now.month}/{now.day} 오늘의 얼굴들"]
     for company, out_name, in_name in swaps:
         label = "동네" if company == rotation.TOWN_COMPANY else company.split(" ")[0]
@@ -734,6 +744,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
     parts += [
         chronicle.prompt_block(),
         villains.prompt_block(name, agent),
+        handover.prompt_block(name, agent.get("company", ""), now),
         news.prompt_block(agent, now),
         hobbies.prompt_block(agent, now),
         novelty.worn_out(name, now),
