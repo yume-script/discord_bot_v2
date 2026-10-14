@@ -250,7 +250,11 @@ def inject_event(target_list: list[str], detail: str, title: str = "") -> list[s
         deliver(name, text, kind, urgent=True)
     if out and len(out) > 1:
         # 여러 사람에게 닿은 일은 끝날 때까지 "아직 끝나지 않은 일"로 모두의 지각에 남긴다 (날짜가 바뀌어도)
-        chronicle.open_thread(title or detail[:40], detail)
+        # 범위: 회사 하나만 대상이면 그 회사 안의 일, 동네/여러 회사면 동네에 공개, 사람만 지정이면 글에서 짐작
+        comps = {chronicle.norm_scope(t) for t in target_list if chronicle.norm_scope(t)}
+        town = any(t == world.TOWN for t in target_list)
+        scope = None if not comps and not town else ("" if town or len(comps) > 1 else comps.pop())
+        chronicle.open_thread(title or detail[:40], detail, scope=scope)
     return [name for name, _, _ in out]
 
 
@@ -806,7 +810,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
             f"찬성: {', '.join(t['proposal']['supporters'])}"
             + (" - 나도 찬성함" if agent["name"] in t["proposal"]["supporters"] else "") + ")" for t in props))
     parts += [
-        chronicle.prompt_block(),
+        chronicle.prompt_block(agent.get("company", "")),
         villains.prompt_block(name, agent),
         handover.prompt_block(name, agent.get("company", ""), now),
         news.prompt_block(agent, now),
@@ -831,8 +835,24 @@ def _system(agent: dict) -> str:
         "상담원처럼 공손하게 바꾸지 마라. 설명하거나 요약하는 말투도 금지.\n"
         "- 무엇을 하고 누구에게 연락하고 어떤 편을 들지도 이 사람의 성격과 처지대로 고른다.\n"
         "평소 루틴을 따르는 게 기본이지만, 지금 상태(피곤함/스트레스/설렘 등)와 새로 알게 된 일에 따라 "
-        "충분히 벗어날 수 있다. 사람처럼 일관되게, 그러나 기계처럼 똑같지 않게 행동해라."
+        "충분히 벗어날 수 있다. 사람처럼 일관되게, 그러나 기계처럼 똑같지 않게 행동해라.\n"
+        + _knowledge_rule(agent)
         + villains.system_block(agent)
+    )
+
+
+def _knowledge_rule(agent: dict) -> str:
+    """정보 칸막이 - 다른 회사/조직 안의 일은 모른다 (동네 사람이 포링푸드 실적/수치 조작을 들먹이는 건 넌센스)."""
+    company = agent.get("company", "")
+    mine = company.split(" (")[0] if company in chronicle.OFFICES else ""
+    others = [c.split(" (")[0] for c in chronicle.OFFICES if c != company]
+    return (
+        "[아는 것의 한계]\n"
+        f"- {'나는 ' + mine + ' 사람이다. ' if mine else '나는 회사 사람이 아니다. '}"
+        f"{', '.join(others)} 같은 다른 회사 안의 일(실적, 인사, 수치, 보고서, 사내 다툼, 사내 소문)은 모른다 - "
+        "내가 직접 겪었거나, 그 회사 사람에게 직접 들었거나, 받은 소식에 있는 것만 안다.\n"
+        "- 모르는 남의 회사 일을 아는 척하거나, 그걸로 따지거나 협박하지 마라. 다른 회사 사람과는 그 사람과 나 사이의 일"
+        "(동네 일, 가게, 이웃, 취미, 바깥 뉴스)로 얘기한다.\n"
     )
 
 
@@ -1325,8 +1345,14 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
     quote = line["line"][:80]
     rnd = random.Random(f"{now_kst().isoformat()}|{a['name']}|{b['name']}")
     picked = []
+    # 회사 안의 얘기(같은 회사 두 사람이 사무실/메신저에서): 그 회사 동료 말고는 들을 길이 없다 - 동네로 새지 않는다
+    office = a.get("company") if a.get("company") == b.get("company") and a.get("company") in chronicle.OFFICES else ""
+    office_talk = bool(office) and (how == "메신저" or "사무실" in place or "회의실" in place
+                                    or office.split(" (")[0] in place)
     for other in load_agents():
         if other["name"] in (a["name"], b["name"]):
+            continue
+        if office_talk and other.get("company") != office:
             continue
         od = active(other["name"]) or {}
         if how != "메신저" and _same_place(od.get("location", ""), place):
@@ -1453,7 +1479,7 @@ def _meeting_turn(agent: dict, topic: str, place: str, people: list[dict], trans
             f"[지금] {now_kst().strftime('%m월 %d일 %H:%M')} {place}에서 열린 모임에 와 있다.",
             life.prompt_block(name),
             memory.prompt_block(name, [p["name"] for p in people] + topic.split()[:4], k=4),
-            chronicle.prompt_block(),
+            chronicle.prompt_block(agent.get("company", "")),
         ) if b) + "\n\n"
         f"[모임 주제] {topic}\n" + (f"{context}\n" if context else "") + f"[같이 온 사람] {others}\n[지금까지 오간 말]\n{lines}\n\n"
         f"{name}로서 이 모임에서 다음 발언을 해라. 내 성격/처지/기억대로 - 구체적인 안을 내거나, 남의 안에 찬성/반대하거나, "
@@ -1755,7 +1781,8 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
         place = MEETING_PLACE if m["scope"] == TOWN_SCOPE else f"{agent.get('company', '').split(' ')[0]} 회의실"
         # 찬성 10명(본인 포함)이면 잡힌다 - 범위 인원이 그보다 적으면(작은 회사) 그 인원 전원
         needed = min(chronicle.SUPPORT_NEEDED, len(members))
-        why_not = chronicle.propose_meeting(m["topic"], name, m["scope"], members, m["hour"], place, m["why"], now, needed)
+        why_not = chronicle.propose_meeting(m["topic"], name, m["scope"], members, m["hour"], place, m["why"], now, needed,
+                                            company=agent.get("company", "") if m["scope"] == COMPANY_SCOPE else "")
         d["meeting_done"] = True
         data.setdefault(name, {}).setdefault("decision", d)["meeting_done"] = True
         if why_not:

@@ -94,7 +94,7 @@ def run(out_name: str, in_name: str, company: str, data: dict, agents: list[dict
     seat_name = seat(out_name, roster) or seat(in_name, roster)
     st_out = data.get(out_name) or {}
     inbox = [m for m in st_out.get("inbox", []) if not m.get("quiet")]
-    threads = [t["title"] for t in chronicle.open_threads()
+    threads = [t["title"] for t in chronicle.open_threads(company or None)
                if out_name in t["title"] or any(out_name in (u.get("note") or "") for u in t.get("updates", [])[-3:])]
     note = _note(out_name, in_name, seat_name, inbox, threads, kpi_posts or [])
     h = _load()
