@@ -95,3 +95,12 @@ def test_shop_groups_and_one_channel(monkeypatch):
     assert agents._groups_of(_by("애순이"))[0] == "책방 단톡방"
     assert agents._groups_of(_by("오동백")) == ["극장 단톡방"]
     assert {agents._group_channel(g) for g in ("책방 단톡방", "극장 단톡방", "동네 단톡방")} == {777}
+
+
+def test_talk_header_shows_what_speaker_does():
+    from datetime import datetime
+    h = agents._talk_header("메신저", "", datetime(2026, 10, 14, 14, 36), "윤윤제", "양관식")
+    assert h == "-# (거리 골목 이웃들 변호사) 📱 메신저 · 14:36 · 윤윤제 → 양관식"
+    assert agents.role_tag("김동식") == "(책방 심야 서고 과장)"
+    assert agents.role_tag("소라") == "(극장 로비 카페 사장)"
+    assert agents.role_tag("없는사람") == ""
