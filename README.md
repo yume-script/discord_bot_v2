@@ -173,6 +173,12 @@ python app.py
 - **채널 하나로 통일** (`PORING_ONE_CHANNEL`, 기본 켬): 매시 일지/장면, 에이전트 대화, 책방 단톡방(📚)/극장 단톡방(🎬)/
   동네 단톡방(🏘️)이 모두 에이전트 대화 채널(`PORING_AGENT_CHANNEL_ID`, 비우면 `PORING_DISCORD_CHANNEL_ID`) 하나에
   머리줄로 구분돼 올라간다. 예전처럼 채널을 나누려면 `PORING_ONE_CHANNEL=0`.
+- **골목 설비** (`poring_food/facilities.py`): 매시 회차 시작 때 docker MCP(`docker_local`=관리사무소동, `docker_bookoasis`=
+  책방·극장 건물)의 `list_containers`로 컨테이너가 켜져 있는지만 본다(로그는 안 봄). 컨테이너 = 골목 설비: litellm-proxy/db
+  (관리사무소 전산실/장부 창고), docker-warproxy(골목 우체국), vaultwarden(골목 열쇠집), bookoasis/mariadb/redis(책방 서가 전산/
+  장부/계산대), tautulli(극장 매표 집계기), flaskfarm(극장 필름 배급소). 멈추면 "OO 문 닫음" 사건(그 가게 사람들 또는 동네 전체,
+  다시 열릴 때까지 진행 중인 일), 다시 켜지면 "다시 문 엶", 재시작만 했으면 "잠깐 멈춤", 한 건물 설비가 전부 재시작되면 "정전"
+  하나로. 처음 조회는 기준만, 조회 실패한 서버는 건너뛴다. 끄려면 `PORING_FACILITIES=0`.
 - **세계 초기화** (`poring_food/reset_world.py`): 상태 폴더를 `storage/poring_food_archive_<날짜시각>/`에 그대로 백업하고
   이야기 기록(기억/연대기/관계/상태/실적/빌런/예약함)을 지운 뒤 1일차로 시작한다. 실제 데이터 캐시(뉴스/시세/날씨/실측 지표/
   북오아시스·Plex 본 목록)는 남긴다. 첫 주는 세계 엔진이 하루 계획 때 `worldcfg.SEEDS`(개업 떡, 창고 칸 나누기 반상회, 첫 심야

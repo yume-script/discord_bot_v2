@@ -303,6 +303,13 @@ def main():
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 생산 지표 갱신 실패: {e}")
 
+    # 골목 설비(실제 docker 컨테이너) - 멈추거나 다시 켜지면 "가게 휴업/정전" 사건 (판단 전에 받은편지함으로)
+    try:
+        from . import facilities
+        facilities.check()
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 골목 설비 확인 실패: {e}")
+
     # [3단계] LLM 에이전트(애순이/소라...) - 세계 엔진 사건 전달 → 각자 판단 → 서로 연락/대화.
     # 애순이의 규칙 일정은 "평소 루틴" 참고로 넘기고, 판단에 실패하면 그대로 대신 쓴다.
     location, activity, focus, state, is_sleeping = processor.get_aesun_detailed_schedule()
