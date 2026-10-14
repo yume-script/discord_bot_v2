@@ -128,12 +128,13 @@ class PoringFood(commands.Cog):
     @tasks.loop(seconds=60)
     async def plex_watch(self) -> None:
         """Plex 상영 알림(poring_food/plex_watch.py): 새로 재생이 시작되면 동네 단톡방에 알린다.
-        회차/실시간 대화가 도는 중이면 이번엔 건너뛴다 (본 것으로 기록하기 전이라 다음 분에 다시 잡힌다)."""
+        재생 확인은 매분 하고, 새 재생이 있을 때만 회차/실시간 대화와 같은 잠금을 기다렸다가 알린다
+        (예전엔 잠금이 잡혀 있으면 건너뛰었는데, 실시간 대화가 거의 늘 잠금을 잡고 있어서 한 번도 못 돌았다)."""
         from poring_food import plex_watch
-        if not plex_watch.ENABLED or self._lock.locked():
+        if not plex_watch.ENABLED:
             return
         sessions = await asyncio.to_thread(plex_watch.fetch)
-        if sessions is None:
+        if not sessions or not await asyncio.to_thread(plex_watch.has_new, sessions):
             return
         async with self._lock:
             try:
