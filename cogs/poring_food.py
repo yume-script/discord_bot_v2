@@ -66,6 +66,7 @@ class PoringFood(commands.Cog):
             self.hourly.start()
             self.drain_outbox.start()
             self.live_runner.start()
+            self.plex_watch.start()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
                      settings.PORING_DISCORD_CHANNEL_ID or ("웹훅" if settings.PORING_DISCORD_WEBHOOK_URL else "없음"),
@@ -77,6 +78,7 @@ class PoringFood(commands.Cog):
         self.hourly.cancel()
         self.drain_outbox.cancel()
         self.live_runner.cancel()
+        self.plex_watch.cancel()
 
     @tasks.loop(seconds=5)
     async def drain_outbox(self) -> None:
@@ -122,6 +124,26 @@ class PoringFood(commands.Cog):
                 await asyncio.to_thread(live.run_one)
             except Exception:  # noqa: BLE001
                 log.exception("포링푸드 실시간 대화 실패")
+
+    @tasks.loop(seconds=60)
+    async def plex_watch(self) -> None:
+        """Plex 상영 알림(poring_food/plex_watch.py): 새로 재생이 시작되면 동네 단톡방에 알린다.
+        회차/실시간 대화가 도는 중이면 이번엔 건너뛴다 (본 것으로 기록하기 전이라 다음 분에 다시 잡힌다)."""
+        from poring_food import plex_watch
+        if not plex_watch.ENABLED or self._lock.locked():
+            return
+        sessions = await asyncio.to_thread(plex_watch.fetch)
+        if sessions is None:
+            return
+        async with self._lock:
+            try:
+                await asyncio.to_thread(plex_watch.process, sessions)
+            except Exception:  # noqa: BLE001
+                log.exception("포링푸드 상영 알림 실패")
+
+    @plex_watch.before_loop
+    async def _before_plex(self) -> None:
+        await self.bot.wait_until_ready()
 
     @live_runner.before_loop
     async def _before_live(self) -> None:
