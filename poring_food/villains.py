@@ -167,8 +167,10 @@ def tick(agents: list[dict], roster: list[dict], now: datetime | None = None) ->
             for who, _, _ in world.inject(world_title, rumor, [_company_or_town(agent)], agents, roster, kind="빌런"):
                 if who not in (name, target):
                     out.append((who, rumor, "소문"))
+        # 사내 수작은 그 회사 사람만 안다 (동네 빌런의 수작은 동네 일)
+        scope = _company_or_town(agent)
         chronicle.open_thread(f"{target}을(를) 둘러싼 일: {title}" if hidden else f"{name}의 수작: {title}",
-                              rumor or action)
+                              rumor or action, scope="" if scope == world.TOWN else scope)
         memory.remember(name, f"{j(target, '을')} 노리고 {title} - {s.get('inner') or action}", 7, [target], "속셈")
         novelty.note("사건", f"{title} - {action}", [name, target])
         rec["schemes"] = (rec.get("schemes") or []) + [{

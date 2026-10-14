@@ -23,7 +23,7 @@ import os
 import uuid
 from datetime import datetime, timedelta
 
-from . import store
+from . import characters, store
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -129,8 +129,59 @@ def similar(a: str, b: str) -> bool:
     return len(x & y) / min(len(x), len(y)) >= 0.6
 
 
-def open_thread(title: str, note: str = "") -> dict:
-    """진행 중인 일을 연다 (같은 제목의 열린 일이 있으면 거기에 메모만 덧붙인다)."""
+# ---------------------------------------------------------------- 정보 칸막이 (누가 아는 일인가)
+# 회사 안의 일(실적/인사/수치/사내 다툼/빌런의 사내 수작)은 그 회사 사람만 안다. 동네 사람이 포링푸드 사내 일을 아는 건 넌센스.
+# scope: "" = 동네에 공개된 일(모두가 앎), 그 밖엔 회사 이름 (그 회사 사람만 앎)
+OFFICES = ("포링푸드 (Poring Food)", "에린 로지스틱스 (Erinn Logistics)")
+_SHORT = {"포링푸드": OFFICES[0], "에린": OFFICES[1]}
+
+
+def norm_scope(scope: str | None) -> str:
+    """'포링푸드'/'에린 로지스틱스'/'회사 이름 그대로' -> 회사 이름, 그 밖(동네/카페/빈칸) -> ""."""
+    s = str(scope or "").strip()
+    if s in OFFICES:
+        return s
+    for k, v in _SHORT.items():
+        if s.startswith(k):
+            return v
+    return ""
+
+
+def infer_scope(text: str) -> str:
+    """scope 없이 열린 일(예전 기록, 세계 엔진 사건)의 범위를 글에서 짐작한다:
+    회사 이름이 나오면 그 회사, 나오는 사람이 모두 같은 회사 사람이면 그 회사, 아니면 동네."""
+    text = text or ""
+    named = {v for k, v in _SHORT.items() if k in text}
+    if len(named) == 1:
+        return named.pop()
+    if named:
+        return ""
+    try:
+        roster = characters.load_roster()
+    except Exception:  # noqa: BLE001 - 조직도를 못 읽으면 동네 일로 (기존 동작)
+        return ""
+    comps = {c["company"] for c in roster if len(c["name"]) >= 2 and c["name"] in text}
+    return comps.pop() if len(comps) == 1 and next(iter(comps)) in OFFICES else ""
+
+
+def _scope_of(t: dict) -> str:
+    if "scope" in t:
+        return t["scope"] or ""
+    return infer_scope(t.get("title", "") + " " + " ".join(u.get("note", "") for u in (t.get("updates") or [])[:2]))
+
+
+def visible(t: dict, company: str | None) -> bool:
+    """company=None은 전지적 시점(세계 엔진/관리자). 그 밖엔 동네 일 + 우리 회사 일만."""
+    if company is None:
+        return True
+    sc = _scope_of(t)
+    return not sc or sc == company
+
+
+def open_thread(title: str, note: str = "", scope: str | None = None) -> dict:
+    """진행 중인 일을 연다 (같은 제목의 열린 일이 있으면 거기에 메모만 덧붙인다).
+    scope: 회사 이름이면 그 회사 사람만 아는 일, ""면 동네 공개, None이면 글에서 짐작."""
+    sc = norm_scope(scope) if scope is not None else infer_scope(f"{title} {note}")
     threads = _load_threads()
     now = now_kst().isoformat(timespec="minutes")
     for t in threads:
@@ -139,11 +190,11 @@ def open_thread(title: str, note: str = "") -> dict:
                 t.setdefault("updates", []).append({"at": now, "note": note[:300]})
             _save_threads(threads)
             return t
-    t = {"id": uuid.uuid4().hex[:8], "title": title[:80], "status": "open", "since": now,
+    t = {"id": uuid.uuid4().hex[:8], "title": title[:80], "status": "open", "since": now, "scope": sc,
          "updates": [{"at": now, "note": note[:300]}] if note else [], "resolution": ""}
     threads.append(t)
     _save_threads(threads)
-    print(f"[연대기] 진행 중인 일 시작: {t['title']}")
+    print(f"[연대기] 진행 중인 일 시작: {t['title']}" + (f" ({sc.split(' (')[0]} 안의 일)" if sc else ""))
     return t
 
 
@@ -244,7 +295,7 @@ def _today_count(key: str, now: datetime) -> int:
 
 
 def propose_meeting(topic: str, by: str, scope: str, members: list[str], hour: int, place: str, why: str,
-                    now: datetime, needed: int = SUPPORT_NEEDED) -> str:
+                    now: datetime, needed: int = SUPPORT_NEEDED, company: str = "") -> str:
     """모임 제안을 받는다. 반환: "" (받음) 또는 거절 이유."""
     if _today_count("proposed_at", now) >= PROPOSALS_PER_DAY:
         return "오늘 제안이 너무 많음"
@@ -257,7 +308,7 @@ def propose_meeting(topic: str, by: str, scope: str, members: list[str], hour: i
             return f"이미 정해진 일 ('{t['title']}')"
         if t["status"] == "open":
             topic = t["title"]  # 같은 일을 다르게 부른 것 - 이미 있는 진행 중인 일에 제안을 붙인다
-    open_thread(topic, f"{j(by, '가')} 모임을 제안함 - {why}")
+    open_thread(topic, f"{j(by, '가')} 모임을 제안함 - {why}", scope=company)
     threads = _load_threads()
     for t in threads:
         if t["status"] == "open" and _same(t["title"], topic):
@@ -345,13 +396,13 @@ def expire_proposals(now: datetime) -> list[dict]:
     return gone
 
 
-def facts() -> list[dict]:
-    """영구히 정해진 것들 (모임/투표 결론) - 지워지지 않는다."""
-    return [t for t in _load_threads() if t["status"] == "resolved" and t.get("permanent")]
+def facts(company: str | None = None) -> list[dict]:
+    """영구히 정해진 것들 (모임/투표 결론) - 지워지지 않는다. company를 주면 그 사람이 아는 것만."""
+    return [t for t in _load_threads() if t["status"] == "resolved" and t.get("permanent") and visible(t, company)]
 
 
-def open_threads() -> list[dict]:
-    return [t for t in _load_threads() if t["status"] == "open"]
+def open_threads(company: str | None = None) -> list[dict]:
+    return [t for t in _load_threads() if t["status"] == "open" and visible(t, company)]
 
 
 def all_threads() -> list[dict]:
@@ -405,16 +456,21 @@ def _summarize_day(date: str) -> dict | None:
               "지어내지 말고, 원본에 없는 결론을 만들지 마라.")
     user = (
         f"[날짜] {date}\n\n{raw or '(기록 없음)'}\n\n"
-        "[진행 중인 일]\n" + ("\n".join(f"- {t['title']}" + (f" (최근: {t['updates'][-1]['note']})" if t.get('updates') else "")
+        "[진행 중인 일]\n" + ("\n".join(f"- {t['title']}" + (f" [{_scope_of(t).split(' (')[0]} 안의 일]" if _scope_of(t) else "")
+                                    + (f" (최근: {t['updates'][-1]['note']})" if t.get('updates') else "")
                                     for t in threads) or "- 없음") + "\n\n"
         "이 하루를 연대기로 정리해라. 반드시 JSON으로만 응답:\n"
         '{"summary": "그날의 주요 사건과 흐름 4~8문장 (누가 무엇을 했고 어떻게 됐는지, 사람 이름 그대로)", '
-        '"public": "동네 사람들이 다 알 만한 공개된 일만 2~5문장 - 속마음, 1:1 대화의 사적인 내용, 한 사람에게만 일어난 일, '
-        '회사 내부 기밀은 빼라", '
+        '"public": "동네 사람 누구나 알 만한 공개된 일만 2~5문장 - 속마음, 1:1 대화의 사적인 내용, 한 사람에게만 일어난 일, '
+        '회사 안의 일(실적/인사/수치/사내 다툼/사내 소문)은 절대 넣지 마라", '
+        '"company": {"포링푸드": "포링푸드 사람들끼리만 아는 사내 일 1~3문장 (없으면 빈 문자열)", '
+        '"에린 로지스틱스": "에린 로지스틱스 사람들끼리만 아는 사내 일 1~3문장 (없으면 빈 문자열)"}, '
         '"highlights": ["기억할 만한 일 한 줄", ...최대 5개], '
         '"threads": [{"title": "진행 중인 일 제목(기존 제목 그대로 또는 새로 생긴 공개된 일)", '
-        '"status": "open 또는 resolved", "note": "오늘 어떻게 진행됐는지 한 줄 (해결됐으면 결론)"}]}\n'
-        "threads는 동네/회사 사람들이 함께 아는 공개된 일만 (개인 비밀이나 속마음은 넣지 마라)."
+        '"status": "open 또는 resolved", "note": "오늘 어떻게 진행됐는지 한 줄 (해결됐으면 결론)", '
+        '"scope": "동네 (동네에 다 알려진 일) 또는 포링푸드 / 에린 로지스틱스 (그 회사 안의 일)"}]}\n'
+        "threads는 함께 아는 일만 (개인 비밀이나 속마음은 넣지 마라). 회사 안의 일은 반드시 scope에 그 회사를 써라 - "
+        "그 회사 사람만 안다."
     )
     out = llm_json(system, user, temperature=0.4, timeout=SUMMARY_TIMEOUT_SEC, tag="연대기", smart=True)
     if not out or not str(out.get("summary") or "").strip():
@@ -431,9 +487,11 @@ def _summarize_day(date: str) -> dict | None:
         if any(t["status"] == "resolved" and _same(t["title"], title) and t.get("resolved_at", "") >= week_ago
                for t in _load_threads()):
             continue
-        open_thread(title, note)
+        open_thread(title, note, scope=str(t["scope"]) if t.get("scope") else None)
+    comp = out.get("company") if isinstance(out.get("company"), dict) else {}
+    comp = {norm_scope(k): str(v).strip()[:600] for k, v in comp.items() if norm_scope(k) and str(v or "").strip()}
     return {"kind": "day", "key": date, "text": str(out["summary"]).strip()[:1500],
-            "public": str(out.get("public") or "").strip()[:800],
+            "public": str(out.get("public") or "").strip()[:800], "company": comp,
             "highlights": [str(h)[:150] for h in (out.get("highlights") or [])][:5],
             "at": now_kst().isoformat(timespec="minutes")}
 
@@ -489,9 +547,10 @@ def tick() -> None:
 
 
 # ===================================================================== 읽기
-def prompt_block() -> str:
+def prompt_block(company: str | None = None) -> str:
     """에이전트 지각/세계 엔진용: 최근 며칠 공개 요약 + 지난주/지난달 + 진행 중인 일.
-    전체 요약(text)은 사적인 대화/개인 사건까지 담겨 있어서 관리자 조회에만 쓰고, 여기엔 공개본(public)만."""
+    전체 요약(text)은 사적인 대화/개인 사건까지 담겨 있어서 관리자 조회에만 쓰고, 여기엔 공개본(public)만.
+    company: 그 사람 소속 - 동네 공개 일 + 우리 회사 안의 일만 (None이면 전지적 시점: 세계 엔진)."""
     chron = [c for c in _chronicle() if c.get("public")]
     days = [c for c in chron if c.get("kind") == "day"][-RECENT_DAYS:]
     week = next((c for c in reversed(chron) if c.get("kind") == "week"), None)
@@ -503,17 +562,24 @@ def prompt_block() -> str:
         lines.append(f"- 지난주({week['key']}): {week['public'][:400]}")
     for c in days:
         lines.append(f"- {c['key'][5:].replace('-', '/')}: {c['public'][:400]}")
-    threads = open_threads()[-MAX_OPEN_THREADS:]
+        for k, v in (c.get("company") or {}).items():
+            if company is None or k == company:
+                lines.append(f"  · ({k.split(' (')[0]} 안) {v[:300]}")
+    threads = open_threads(company)[-MAX_OPEN_THREADS:]
     since = (now_kst() - timedelta(days=RECENT_DAYS)).isoformat()
     done = [t for t in all_threads() if t["status"] == "resolved" and t.get("resolved_at", "") >= since
-            and not t.get("permanent")]
-    fixed = facts()[-MAX_FACTS:]
+            and not t.get("permanent") and visible(t, company)]
+    fixed = facts(company)[-MAX_FACTS:]
+
+    def _tag(t: dict) -> str:
+        sc = _scope_of(t)
+        return f" [{sc.split(' (')[0]} 안의 일]" if sc else ""
     out = []
     if lines:
         out.append("[최근 이 도시에서 있었던 일 - 연대기]\n" + "\n".join(lines))
     if threads:
-        out.append("[아직 끝나지 않은 일 - 모두가 알고 있다]\n" + "\n".join(
-            f"- {t['title']} ({t['since'][5:10].replace('-', '/')}부터)"
+        out.append("[아직 끝나지 않은 일 - " + ("모두" if company is None else "나도") + " 알고 있다]\n" + "\n".join(
+            f"- {t['title']}{_tag(t)} ({t['since'][5:10].replace('-', '/')}부터)"
             + (f": {t['updates'][-1]['note']}" if t.get("updates") else "")
             + (f" [{t['meeting']['round']}차 모임까지 결론 없음 - 다시 모이기로 함]" if t.get("meeting_next") else "")
             for t in threads))
