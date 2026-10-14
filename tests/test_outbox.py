@@ -54,7 +54,7 @@ def test_tick_paces_conversations_through_the_hour(fake_llm, monkeypatch):
     dues = [datetime.fromisoformat(it["due"]) for it in talks]
     assert dues == sorted(dues)                                   # 시각 순서대로 나온다
     assert dues[-1] - dues[0] >= timedelta(seconds=20)             # 한꺼번에가 아니라 시간을 두고
-    headers = [it for it in talks if it["text"].startswith("-# 📍") or it["text"].startswith("-# 📱")]
+    headers = [it for it in talks if "📍" in it["text"].split("\n")[0] or "📱" in it["text"].split("\n")[0]]
     assert len(headers) >= 2                                      # 대화 여러 개가 각자 시간표로
     assert all(it["text"].startswith("-# ") for it in talks)       # 모든 마디에 출처 머리줄 (어디서 누가 누구에게)
     assert any(" → " in it["text"].split("\n")[0] for it in talks[1:])

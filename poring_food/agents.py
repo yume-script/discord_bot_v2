@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import re
 import sqlite3
 import time
 import uuid
@@ -1146,7 +1147,7 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
                 start = outbox.slot(now, minute, minute + 5, random.Random(f"{hk}|{rnd_no}|{n}"))
                 made = False
                 if ok and _asleep(target, now.hour):
-                    _post(by_name[n], f"-# 📱 메신저 · {start.strftime('%H:%M')} · {n} → {target['name']}\n{c['opening']}", at=start)
+                    _post(by_name[n], f"{_talk_header('메신저', '', start, n, target['name'])}\n{c['opening']}", at=start)
                     _push_inbox(data, target["name"], f"{n}에게서 온 메시지: {c['opening']}", "메시지")
                 elif ok:
                     how = c.get("how", "메신저")
@@ -1193,7 +1194,7 @@ def run_live_conversation(job: dict) -> dict | None:
     hk = _hour_key(now)
     data = _load_state()
     if _asleep(b, now.hour):  # 그새 잠들었으면 메시지만
-        _post(a, f"-# 📱 메신저 · {now.strftime('%H:%M')} · {a['name']} → {b['name']}\n{job['opening']}")
+        _post(a, f"{_talk_header('메신저', '', now, a['name'], b['name'])}\n{job['opening']}")
         _push_inbox(data, b["name"], f"{a['name']}에게서 온 메시지: {job['opening']}", "메시지")
         _save_state(data)
         return None
@@ -1378,9 +1379,27 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
     return picked[:GOSSIP_MAX_RECIPIENTS]
 
 
+_SHOP_SHORT = {worldcfg.BOOK: "책방", worldcfg.CINEMA: "극장", worldcfg.STREET: "거리"}
+
+
+def role_tag(name: str, roster: list[dict] | None = None) -> str:
+    """말한 사람이 뭐 하는 사람인지 짧게: '(책방 심야 서고 과장)', '(거리 골목 이웃들 변호사)'. 조직도에 없으면 ""."""
+    c = next((r for r in (roster if roster is not None else characters.load_roster()) if r["name"] == name), None)
+    if not c:
+        return ""
+    company = c.get("company", "")
+    dept = re.sub(r"\s*\(.*?\)", "", c.get("dept", "")).strip()   # '새 이웃 (드라마 제목)' -> '새 이웃'
+    parts = [_SHOP_SHORT.get(company, worldcfg.short(company)), dept, c.get("rank", "")]
+    out = " ".join(dict.fromkeys(x for x in parts if x))
+    return f"({out})" if out else ""
+
+
 def _talk_header(how: str, place: str, t: datetime, speaker: str, listener: str) -> str:
-    """대화 한 마디의 출처: 📱 메신저 · 11:14 · 지성현 → 권민우 / 📍 카페 오후세시 · 11:14 · 홍두식 → 윤혜진."""
-    return f"-# {'📱 메신저' if how == '메신저' else '📍 ' + place} · {t.strftime('%H:%M')} · {speaker} → {listener}"
+    """대화 한 마디의 출처 (말한 사람이 뭐 하는 사람인지 앞에):
+    (거리 골목 이웃들 변호사) 📱 메신저 · 14:36 · 윤윤제 → 양관식 / (극장 로비 카페 사장) 📍 카페 오후세시 · 11:14 · 소라 → 홍두식."""
+    role = role_tag(speaker)
+    return (f"-# {role + ' ' if role else ''}{'📱 메신저' if how == '메신저' else '📍 ' + place} · "
+            f"{t.strftime('%H:%M')} · {speaker} → {listener}")
 
 
 def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: datetime | None = None) -> dict:
@@ -2063,7 +2082,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         start = outbox.slot(now, 5, 17, random.Random(f"{hk}|{name}"))  # 이번 시간 앞쪽 어딘가에서 시작
         if _asleep(target, now.hour):
             # 자고 있으면 메시지만 남긴다 - 깨어나서 받은편지함에서 본다
-            _post(by_name[name], f"-# 📱 메신저 · {start.strftime('%H:%M')} · {name} → {target['name']}\n{c['opening']}", at=start)
+            _post(by_name[name], f"{_talk_header('메신저', '', start, name, target['name'])}\n{c['opening']}", at=start)
             _push_inbox(data, target["name"], f"{name}에게서 온 메시지: {c['opening']}", "메시지")
         else:
             place = d.get("location") or "어딘가"
