@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from . import (arcade, book_watch, characters, chronicle, facilities, handover, hobbies, kpi, life, live, memory, milestones, newcomers, novelty,
-               outbox, plex_watch, projects, rotation, news, runtime, signals, townmap, villains, world, worldcfg)
+               outbox, plex_watch, projects, rotation, news, runtime, signals, street_mail, townmap, villains, world, worldcfg)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -824,6 +824,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         news.prompt_block(agent, now),
         plex_watch.prompt_block(now),
         facilities.prompt_block(),
+        street_mail.prompt_block(now),
         book_watch.prompt_block(agent.get("company", ""), now),
         hobbies.prompt_block(agent, now),
         novelty.worn_out(name, now),

@@ -154,6 +154,25 @@ class PoringFood(commands.Cog):
             except Exception:  # noqa: BLE001
                 log.exception("포링푸드 상영 알림 실패")
 
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message) -> None:
+        """📣│알림방의 메일 관리 Apps Script 알림 -> 골목 청소/우체통 (poring_food/street_mail.py). 웹훅 메시지만 본다."""
+        from poring_food import street_mail
+        if (not settings.PORING_FOOD_ENABLED or not street_mail.ENABLED or not message.webhook_id
+                or message.channel.id != street_mail.CHANNEL_ID):
+            return
+        ev = street_mail.parse(message.author.name, message.content)
+        if ev:
+            asyncio.create_task(self._street_mail(ev))
+
+    async def _street_mail(self, ev: dict) -> None:
+        from poring_food import street_mail
+        async with self._lock:  # 회차/실시간 대화가 도는 중이면 끝날 때까지 기다렸다가 (상태 파일이 겹치지 않게)
+            try:
+                await asyncio.to_thread(street_mail.handle, ev)
+            except Exception:  # noqa: BLE001
+                log.exception("포링푸드 골목 소식 처리 실패 (%s)", ev.get("kind"))
+
     async def _start_webhook(self) -> None:
         """Tautulli 웹훅 수신 (PORING_WEBHOOK_PORT + PORING_WEBHOOK_TOKEN이 있을 때만).
         POST /plex, 헤더 X-Poring-Token - 재생 시작 순간 상영 알림 (poring_food/plex_watch.py)."""
