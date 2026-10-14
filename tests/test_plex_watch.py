@@ -78,3 +78,21 @@ def test_has_new_and_fetch_status(monkeypatch):
         {"response": {"result": "error", "message": "Invalid apikey", "data": {}}}))
     assert plex_watch.fetch() is None
     assert "Invalid apikey" in plex_watch._last_status
+
+
+def test_tautulli_webhook_payload(fake_llm, monkeypatch):
+    monkeypatch.setattr(agents, "_group_channel", lambda g: 123)
+    fake_llm(lambda system, user: {"text": "상영 시작!"})
+    body = json.loads(plex_watch.TAUTULLI_BODY.replace("{action}", "play").replace("{session_key}", "9")
+                      .replace("{rating_key}", "77").replace("{media_type}", "episode").replace("{title}", "무빙 - 첫 만남")
+                      .replace("{show_name}", "무빙").replace("{season_num}", "1").replace("{episode_num}", "3")
+                      .replace("{year}", "2023").replace("{library_name}", "드라마").replace("{content_rating}", "15"))
+    s = plex_watch.parse_tautulli(body)
+    assert s["state"] == "playing" and s["title"] == "첫 만남" and "friendly_name" not in s
+    assert plex_watch.describe(s)["title"] == "무빙 1시즌 3화"
+    assert plex_watch.parse_tautulli({**body, "action": "stop"}) is None
+    now = datetime(2026, 10, 14, 15, 0)
+    assert plex_watch.process([s], now)                                  # 웹훅으로 알림
+    poll = {"session_key": "9", "rating_key": "77", "state": "playing", "media_type": "episode",
+            "grandparent_title": "무빙", "parent_media_index": 1, "media_index": 3}
+    assert not plex_watch.has_new([poll])                                # 1분 확인이 같은 재생을 또 알리지 않는다

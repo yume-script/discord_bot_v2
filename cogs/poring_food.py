@@ -53,6 +53,8 @@ class PoringFood(commands.Cog):
         self._webhooks: dict[int, tuple[discord.Webhook, discord.Object | None]] = {}
         self._webhook_retry_at: dict[int, float] = {}
         self._image_tasks: set[asyncio.Task] = set()  # 인물의 /그림, /개미소리 만드는 중 (가비지 컬렉션 방지)
+        self._web_runner = None          # Tautulli 웹훅 수신 (aiohttp)
+        self._plex_last_poll = 0.0
 
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
@@ -67,6 +69,7 @@ class PoringFood(commands.Cog):
             self.drain_outbox.start()
             self.live_runner.start()
             self.plex_watch.start()
+            await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
                      settings.PORING_DISCORD_CHANNEL_ID or ("웹훅" if settings.PORING_DISCORD_WEBHOOK_URL else "없음"),
@@ -79,6 +82,8 @@ class PoringFood(commands.Cog):
         self.drain_outbox.cancel()
         self.live_runner.cancel()
         self.plex_watch.cancel()
+        if self._web_runner:
+            await self._web_runner.cleanup()
 
     @tasks.loop(seconds=5)
     async def drain_outbox(self) -> None:
@@ -133,6 +138,10 @@ class PoringFood(commands.Cog):
         from poring_food import plex_watch
         if not plex_watch.ENABLED:
             return
+        # 웹훅을 받는 중이면 1분 확인은 가끔만 (웹훅이 빠뜨린 것 줍기)
+        if plex_watch.webhook_enabled() and time.monotonic() - self._plex_last_poll < plex_watch.FALLBACK_POLL_SEC:
+            return
+        self._plex_last_poll = time.monotonic()
         sessions = await asyncio.to_thread(plex_watch.fetch)
         if not sessions or not await asyncio.to_thread(plex_watch.has_new, sessions):
             return
@@ -141,6 +150,47 @@ class PoringFood(commands.Cog):
                 await asyncio.to_thread(plex_watch.process, sessions)
             except Exception:  # noqa: BLE001
                 log.exception("포링푸드 상영 알림 실패")
+
+    async def _start_webhook(self) -> None:
+        """Tautulli 웹훅 수신 (PORING_WEBHOOK_PORT + PORING_WEBHOOK_TOKEN이 있을 때만).
+        POST /plex, 헤더 X-Poring-Token - 재생 시작 순간 상영 알림 (poring_food/plex_watch.py)."""
+        from poring_food import plex_watch
+        if not plex_watch.webhook_enabled():
+            return
+        from aiohttp import web
+
+        async def plex_hook(request: web.Request) -> web.Response:
+            if request.headers.get("X-Poring-Token", "") != plex_watch.WEBHOOK_TOKEN:
+                return web.Response(status=403, text="forbidden")
+            try:
+                body = await request.json()
+            except Exception:  # noqa: BLE001
+                return web.Response(status=400, text="bad json")
+            session = plex_watch.parse_tautulli(body)
+            if session:
+                asyncio.create_task(self._plex_from_hook(session))
+            return web.Response(text="ok")
+
+        app = web.Application()
+        app.router.add_post("/plex", plex_hook)
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        try:
+            await web.TCPSite(runner, "0.0.0.0", plex_watch.WEBHOOK_PORT).start()
+        except OSError:
+            log.exception("포링푸드 웹훅 포트 %s를 못 열었음 - 1분 확인으로만 돈다", plex_watch.WEBHOOK_PORT)
+            await runner.cleanup()
+            return
+        self._web_runner = runner
+        log.info("포링푸드 웹훅 수신 시작 (포트 %s, POST /plex)", plex_watch.WEBHOOK_PORT)
+
+    async def _plex_from_hook(self, session: dict) -> None:
+        from poring_food import plex_watch
+        async with self._lock:  # 회차/실시간 대화가 도는 중이면 끝날 때까지 기다렸다가 (본 것 기록이 겹치지 않게)
+            try:
+                await asyncio.to_thread(plex_watch.process, [session])
+            except Exception:  # noqa: BLE001
+                log.exception("포링푸드 상영 알림(웹훅) 실패")
 
     @plex_watch.before_loop
     async def _before_plex(self) -> None:

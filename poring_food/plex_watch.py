@@ -188,3 +188,35 @@ def prompt_block(now: datetime | None = None) -> str:
     return (f"[요즘 {PLACE}에서 상영한 작품 - 얘깃거리로 (내용은 지어내지 마라)]\n" + "\n".join(
         f"- {a['at'][11:16]} " + (f"'{a['title']}' ({a.get('kind', '영상')})" if a.get("title") else f"{a.get('kind', '영상')} 하나")
         for a in recent))
+
+
+# ===================================================================== 웹훅 (Tautulli -> 봇, 재생 시작 순간)
+# 1분마다 묻는 대신 Tautulli 알림(Webhook, 트리거 Playback Start)이 재생 시작 순간 봇으로 보낸다 (cogs/poring_food.py가 받음).
+# 웹훅이 켜져 있으면 1분 확인은 FALLBACK_POLL_SEC(10분)마다만 - 웹훅이 빠뜨린 것 줍기용.
+WEBHOOK_PORT = int(os.getenv("PORING_WEBHOOK_PORT", "0"))           # 0이면 웹훅 수신 안 함
+WEBHOOK_TOKEN = os.getenv("PORING_WEBHOOK_TOKEN", "")               # Tautulli 헤더 X-Poring-Token 값 (비면 안 받음)
+FALLBACK_POLL_SEC = int(os.getenv("PORING_PLEX_WATCH_FALLBACK_SEC", "600"))
+# Tautulli Webhook 설정의 JSON Data (Playback Start) - 시청자 계정 이름은 넣지 않는다
+TAUTULLI_BODY = ('{"action": "{action}", "session_key": "{session_key}", "rating_key": "{rating_key}", '
+                 '"media_type": "{media_type}", "title": "{title}", "grandparent_title": "{show_name}", '
+                 '"parent_media_index": "{season_num}", "media_index": "{episode_num}", "year": "{year}", '
+                 '"library_name": "{library_name}", "content_rating": "{content_rating}"}')
+
+
+def webhook_enabled() -> bool:
+    return ENABLED and WEBHOOK_PORT > 0 and bool(WEBHOOK_TOKEN)
+
+
+def parse_tautulli(body: dict) -> dict | None:
+    """Tautulli 웹훅 JSON -> get_activity 세션과 같은 모양 (process/describe가 그대로 쓴다). 재생 시작/재개가 아니면 None."""
+    if not isinstance(body, dict) or str(body.get("action", "play")).lower() not in ("play", "resume", "playback start"):
+        return None
+    if not (body.get("title") or body.get("grandparent_title")):
+        return None
+    s = {k: str(body.get(k) or "").strip() for k in ("session_key", "rating_key", "media_type", "title", "grandparent_title",
+                                                       "parent_media_index", "media_index", "year", "library_name",
+                                                       "content_rating")}
+    s["state"] = "playing"
+    if s["media_type"] == "episode" and s["grandparent_title"] and s["title"].startswith(s["grandparent_title"]):
+        s["title"] = s["title"][len(s["grandparent_title"]):].lstrip(" -")  # Tautulli {title}은 '작품 - 회차명' 전체
+    return s
