@@ -55,6 +55,7 @@ class PoringFood(commands.Cog):
         self._image_tasks: set[asyncio.Task] = set()  # 인물의 /그림, /개미소리 만드는 중 (가비지 컬렉션 방지)
         self._web_runner = None          # Tautulli 웹훅 수신 (aiohttp)
         self._plex_last_poll = 0.0
+        self._book_last_poll = 0.0
 
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
@@ -69,6 +70,7 @@ class PoringFood(commands.Cog):
             self.drain_outbox.start()
             self.live_runner.start()
             self.plex_watch.start()
+            self.book_watch.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -82,6 +84,7 @@ class PoringFood(commands.Cog):
         self.drain_outbox.cancel()
         self.live_runner.cancel()
         self.plex_watch.cancel()
+        self.book_watch.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -191,6 +194,31 @@ class PoringFood(commands.Cog):
                 await asyncio.to_thread(plex_watch.process, [session])
             except Exception:  # noqa: BLE001
                 log.exception("포링푸드 상영 알림(웹훅) 실패")
+
+    @tasks.loop(seconds=60)
+    async def book_watch(self) -> None:
+        """책방 손님 알림(poring_food/book_watch.py): 북오아시스에서 누가 책을 읽기 시작하면 단톡방에 알린다.
+        북오아시스엔 웹훅이 없어서 PORING_BOOK_WATCH_SEC(기본 10분)마다 묻는다 (MCP가 매번 SSH라 자주는 무겁다)."""
+        from poring_food import book_watch
+        if not book_watch.ENABLED or time.monotonic() - self._book_last_poll < book_watch.POLL_SEC:
+            return
+        self._book_last_poll = time.monotonic()
+        try:
+            rows = await asyncio.wait_for(book_watch.fetch_async(), timeout=90)
+        except Exception as e:  # noqa: BLE001 - 북오아시스가 잠깐 안 받아도 다음 차례에 다시
+            log.warning("포링푸드 책방 손님 확인 실패: %r", e)
+            return
+        if rows is None or not await asyncio.to_thread(book_watch.has_new, rows):
+            return
+        async with self._lock:
+            try:
+                await asyncio.to_thread(book_watch.process, rows)
+            except Exception:  # noqa: BLE001
+                log.exception("포링푸드 책방 손님 알림 실패")
+
+    @book_watch.before_loop
+    async def _before_book(self) -> None:
+        await self.bot.wait_until_ready()
 
     @plex_watch.before_loop
     async def _before_plex(self) -> None:
