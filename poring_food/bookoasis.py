@@ -1,9 +1,10 @@
 """
-[신규] 애순이 겸직 - 사내 자료실 "북오아시스" 관리 담당.
+[신규] 책방 오아시스 서가 "북오아시스" - 사장 애순이가 직접 챙기는 서가 관리.
 
-checker.py가 카톡 브릿지 서버 상태를 "공장 가동 상태"로, processor.py가 discord_bot_v2 대화
-로그를 "생산량"으로 바꿔 쓰는 것처럼, 실제 BookOasis 서버의 신간 입고/장서 현황을 애순이가
-관리하는 "서고" 이야기 소재로 쓴다.
+checker.py가 카톡 브릿지 서버 상태를 "건물 통신 회선"으로, metrics.py가 실제 서비스 수치를
+입고/상영 현황으로 바꿔 쓰는 것처럼, 실제 BookOasis 서버의 신간 입고/장서 현황을 애순이의
+'책방 오아시스' 서가(일반/웹툰 서가) 이야기 소재로 쓴다. 심야 서고(성인/화보)는 제목을 절대
+이야기에 넣지 않는다(개수만 metrics.py가 센다).
 
 [연결] 봇(ai/mcp_manager.py)에 설정된 bookoasis MCP 서버에 세션 "하나"를 열어서 조회를 연달아
 한다(server_session). 봇의 LangChain 도구는 호출마다 SSH+docker exec를 새로 띄워서, 조회 3번이면
@@ -238,14 +239,14 @@ def build_prompt_block(report: dict) -> str:
 
     if report.get("status_change") == "down":
         return (
-            "\n[애순이 담당 업무 - 사내 자료실 '북오아시스']\n"
-            "- 방금 서고 전산(북오아시스 서버)에 접속이 안 된다. 애순이가 담당자로서 이 소식을 "
+            "\n[책방 오아시스 서가 소식 - 북오아시스]\n"
+            "- 방금 책방 서가 전산(북오아시스 서버)에 접속이 안 된다. 애순이가 사장으로서 이 소식을 "
             "투덜대거나 걱정하며 짧게 언급해라. 원인은 모르니 지어내지 마라.\n"
         )
 
     lines = []
     if report.get("status_change") == "recovered":
-        lines.append("- 먹통이던 서고 전산이 다시 접속된다. 담당자로서 안도하는 한마디를 곁들여라.")
+        lines.append("- 먹통이던 서가 전산이 다시 접속된다. 사장으로서 안도하는 한마디를 곁들여라.")
 
     new_items = report.get("new_items") or []
     if new_items:
@@ -255,7 +256,7 @@ def build_prompt_block(report: dict) -> str:
         summary = ", ".join(f"{DB_TYPE_LABELS.get(t, t)} {len(names)}건" for t, names in by_type.items())
         titles = ", ".join(f"'{item['name']}'" for item in new_items[:MAX_NEW_IN_PROMPT])
         more = f" 외 {len(new_items) - MAX_NEW_IN_PROMPT}건" if len(new_items) > MAX_NEW_IN_PROMPT else ""
-        lines.append(f"- 지난 점검 이후 새로 입고된 자료: {summary} (예: {titles}{more})")
+        lines.append(f"- 지난 점검 이후 서가에 새로 들어온 책: {summary} (예: {titles}{more})")
         if report.get("stats_summary"):
             lines.append(f"- 참고용 장서 통계(원본 수치): {report['stats_summary']}")
 
@@ -263,9 +264,9 @@ def build_prompt_block(report: dict) -> str:
         return ""
 
     return (
-        "\n[애순이 담당 업무 - 사내 자료실 '북오아시스']\n"
+        "\n[책방 오아시스 서가 소식 - 북오아시스]\n"
         + "\n".join(lines)
-        + "\n- 애순이는 생산부 대리이면서 사내 자료실 관리도 겸직한다. 위 서고 소식을 담당자로서 "
+        + "\n- 애순이는 책방 오아시스 사장이라 서가 입고를 직접 챙긴다. 위 서가 소식을 사장으로서 "
         "1~2문장 정도 자연스럽게 섞어라(귀찮아하거나, 읽어보고 싶어하거나). 제목과 숫자는 주어진 "
         "그대로만 쓰고 없는 책 제목이나 수치를 지어내지 마라.\n"
     )

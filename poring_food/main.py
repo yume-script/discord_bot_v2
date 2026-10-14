@@ -275,12 +275,12 @@ def main():
     애순이 봇 메인 파이프라인
     1. 스케줄 확인 및 생산량 통계/서버 상태 점검
     2. 자는 중이면 상태 업데이트 후 종료
-    3. 깨어있으면 날씨/공장상태/이슈 생성 - 그리고 [신규] 이번 시간 방송 주인공을
+    3. 깨어있으면 날씨/건물 상태/이슈 생성 - 그리고 [신규] 이번 시간 방송 주인공을
        애순이 또는 깨어있는 다른 인물 중에서 가중치 랜덤으로 고른다(스포트라이트 로테이션)
     4. 다인물 시뮬레이션(상태 갱신/상호작용)도 같이 굴린다
     """
     rename_migration.migrate()  # [1회성] 인물 이름 변경 전 실행 기록을 새 이름으로
-    # 바깥 세상 실측값(기상청 날씨, 공장 설비=서버 상태)을 회차 맨 앞에서 한 번 받아 둔다 -
+    # 바깥 세상 실측값(기상청 날씨, 건물 설비=서버 상태)을 회차 맨 앞에서 한 번 받아 둔다 -
     # 작가 회의/일지/장면이 모두 같은 값을 쓴다. 실패해도 이야기는 그대로 진행.
     try:
         signals.refresh_live()
@@ -357,7 +357,7 @@ def main():
     print(f"[정보] 애순이 활동 시작: {state} 모드")
 
     factory_msg, is_factory_ok = checker.check_poring_factory_status()
-    print(f"[체크] 포링푸드 공장 상태: {factory_msg}")
+    print(f"[체크] 건물 상태(통신 회선): {factory_msg}")
 
     org_data, _, persona_data = loader.load_resources()
 
@@ -384,11 +384,11 @@ def main():
     narrator_name = "애순이" if is_aesun_spotlight else spotlight["name"]
     print(f"[스포트라이트] 이번 시간 주인공: {narrator_name}")
 
-    # [신규] 애순이 겸직 - 사내 자료실(북오아시스) 점검. 애순이가 주인공일 때만 점검해서, 신간 소식이
+    # [신규] 애순이 담당 - 책방 오아시스 서가(북오아시스) 점검. 애순이가 주인공일 때만 점검해서, 신간 소식이
     # 다른 인물 방송 시간에 소리 없이 "이미 본 것"으로 처리돼 버리지 않게 한다.
     bookoasis_block = ""
     if is_aesun_spotlight:
-        print("[1.5/4] 사내 자료실(북오아시스) 점검 중...")
+        print("[1.5/4] 책방 서가(북오아시스) 점검 중...")
         bookoasis_block = bookoasis.build_prompt_block(bookoasis.check_bookoasis())
 
     # [신규] 연재 드라마의 진행 중인 줄거리를 일지에도 반영한다 (이번 시간 주인공 기준)
@@ -397,7 +397,7 @@ def main():
         story_block = agents.diary_block(narrator_name)
     else:
         story_block = story.story_block_for(narrator_name)
-    # [신규] 주인공의 지금 상태(감정/체력/돈/목표)와 관련 기억 - 일지에만 넣는다(회사 공통 이슈에는 X)
+    # [신규] 주인공의 지금 상태(감정/체력/돈/목표)와 관련 기억 - 일지에만 넣는다(동네 공통 이슈에는 X)
     if is_aesun_spotlight:
         n_loc, n_act = location, activity
     else:

@@ -1,20 +1,20 @@
 """
 담당 실적(KPI) - 봇이 쓰는 MCP의 실제 수치를 "자리(부서 업무)"의 실적으로 바꾼다.
 
-| 자리(담당)            | 소속 / 부서                 | 실제 수치 (MCP)                               | 처음 담당 |
-|----------------------|----------------------------|----------------------------------------------|----------|
-| 일반/웹툰 라인 입고    | 포링푸드 생산부              | 북오아시스 일반/웹툰 서재 오늘 입고 권 수        | 애순이    |
-| 스페셜 라인 입고       | 포링푸드 생산부              | 북오아시스 성인/화보 서재 오늘 입고 권 수        | 김동식    |
-| 영상 라인 입고         | 포링푸드 홍보마케팅부         | Plex 오늘 신규 등록 영상 수                    | 오동백    |
-| 출하량               | 포링푸드 영업기획부           | Tautulli 오늘 재생 수                         | 권민우    |
-| 고객 문의 처리         | 포링푸드 영업지원부           | 가상 손님 문의 처리율 + 실제 봇 대화(VIP 문의) | 최수연    |
-| 설비 가동률            | 포링푸드 생산기획부           | server_status 서버(머신) 전체 CPU %            | 정명석    |
-| 창고 적재율            | 포링푸드 물류운송부           | server_status 로컬 디스크 전체 사용률 (낮을수록) | 이지안    |
-| 설비 안정성            | 에린 로지스틱스 시설관리부     | server_status 연속 가동일 / 멈춘 서비스 수      | 리정혁    |
-| 연산 처리             | 에린 로지스틱스 기획전략부     | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)        | 최택      |
-| 운영 경비             | 에린 로지스틱스 데이터보안부   | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)      | 동그라미  |
-| 매장 손님 수           | 카페 오후세시                | Tautulli 지금 시청 중인 스트림 수               | 소라      |
-| 오락기 매출            | 광주 동네 상가 (동네 가게)     | 골목 LP바 오락기 - 손님(인물)들이 잃은 돈 - 딴 돈 | 오윤      |
+| 자리(담당)            | 소속 / 부서                   | 실제 수치 (MCP)                               | 처음 담당 |
+|----------------------|------------------------------|----------------------------------------------|----------|
+| 서가 입고              | 책방 오아시스 운영             | 북오아시스 일반/웹툰 서재 오늘 입고 권 수        | 애순이    |
+| 심야 서고 입고          | 책방 오아시스 심야 서고         | 북오아시스 성인/화보 서재 오늘 입고 권 수        | 김동식    |
+| 손님 문의 처리          | 책방 오아시스 손님 응대         | 가상 손님 문의 처리율 + 실제 봇 대화(VIP 문의) | 최수연    |
+| 신작 입고              | 별빛극장 프로그램팀            | Plex 오늘 신규 등록 영상 수                    | 오동백    |
+| 관객(매표)             | 별빛극장 매표·홍보             | Tautulli 오늘 재생 수                         | 성덕선    |
+| 지금 관객              | 별빛극장 로비 카페             | Tautulli 지금 시청 중인 스트림 수               | 소라      |
+| 건물 전력 사용률        | 오아시스 거리 관리사무소        | server_status 서버(머신) 전체 CPU %            | 지은탁    |
+| 지하 공용 창고 적재율    | 오아시스 거리 관리사무소        | server_status 로컬 디스크 전체 사용률 (낮을수록) | 황용식    |
+| 건물 안전              | 오아시스 거리 관리사무소        | server_status 연속 가동일 / 멈춘 서비스 수      | 리정혁    |
+| 민원 처리              | 오아시스 거리 관리사무소        | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)        | 최택      |
+| 관리비                 | 오아시스 거리 관리사무소        | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)      | 동그라미  |
+| 오락기 매출            | 오아시스 거리 (동네 가게)       | 골목 LP바 오락기 - 손님(인물)들이 잃은 돈 - 딴 돈 | 오윤      |
 
 - 담당은 사람이 아니라 자리에 붙는다: 담당자가 교체(rotation.py)로 쉬러 가면 같은 소속·부서의 다른 에이전트가
   인수인계받는다 (처음 담당자가 있으면 그 사람 먼저). 부서에 에이전트가 없으면 그동안 공석.
@@ -22,7 +22,7 @@
 - 매시 회차(record)마다 자리별 오늘 점수(평소=100)를 그날 담당자 이름과 함께 남긴다. 누적 지표(입고/출하/문의)는
   오늘 값 / 최근 7일 하루 평균, 수준 지표(손님/가동률)는 오늘 평균 / 지난 기록 평균, 적재율은 낮을수록,
   안정성은 멈춘 서비스/재가동이 없을수록 높다.
-- 주간 실적 발표(weekly): 월요일 아침, 지난주 점수로 소속별 순위. 포링푸드는 단톡방에 부서장이 발표
+- 주간 실적 발표(weekly): 월요일 아침, 지난주 점수로 소속별 순위. 책방/극장은 각 가게 단톡방에 사장(없으면 부장)이 발표
   (LLM 한 번), 1등은 기분/자신감 + 보너스, 꼴찌는 스트레스. 순위를 매길 사람이 없는 소속은 본인에게만 알린다.
 - 월간 평가(monthly): 매달 1일 아침, 지난달 소속별 1등에게 "N월 우수 사원" 칭호 - 영구 기억으로 남는다.
 - 고객 문의 창구(desk): 봇에게 말을 거는 실제 사람이 적어서(혼자 쓰는 서버) 메시지 수로는 실적이 늘 바닥이라,
@@ -45,15 +45,13 @@ import os
 import re
 from datetime import datetime, timedelta
 
-from . import arcade, metrics, signals
+from . import arcade, metrics, signals, worldcfg
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
 
 KPI_PATH = os.path.join(STATE_DIR, "kpi.json")
-PF = "포링푸드 (Poring Food)"
-ER = "에린 로지스틱스 (Erinn Logistics)"
-CAFE = "카페 오후세시"
+BOOK, CINEMA, STREET = worldcfg.BOOK, worldcfg.CINEMA, worldcfg.STREET
 KEEP_DAYS = 70
 WEEKLY_HOUR = 9
 WEEKLY_BONUS = int(os.getenv("PORING_KPI_WEEKLY_BONUS", "300000"))
@@ -71,36 +69,36 @@ DESK_BACKLOG_ALERT = 25
 _DESK_HOURS = [0.2] * 7 + [0.6, 0.6] + [1.6] * 3 + [0.8] + [1.6] * 5 + [0.8] * 3 + [0.4] * 3
 _DESK_WEEKDAY = [(1.3, "월요일 - 주말에 쌓인 문의"), (1.0, ""), (1.0, ""), (1.0, ""), (0.9, "금요일 - 조금 한산"),
                  (0.6, "토요일 - 주말이라 한산"), (0.5, "일요일 - 주말이라 한산")]
-_DESK_WEATHER = {"snow": (1.3, "눈 - 배송 지연 문의 폭주"), "rain": (1.2, "비 - 배송 지연 문의"),
-                 "hot": (1.1, "폭염 - 상한 제품 문의"), "cold": (1.15, "한파 - 배송 지연 문의")}
+_DESK_WEATHER = {"snow": (1.3, "눈 - 못 나오는 손님들 전화 주문/배송 문의 폭주"), "rain": (1.2, "비 - 전화로 책 찾기/배송 문의"),
+                 "hot": (1.1, "폭염 - 시원한 책방에 손님이 몰림"), "cold": (1.15, "한파 - 배송 지연 문의")}
 
 # kind: count(하루 누적, 평소 대비) / cost(하루 누적, 적을수록 좋음) / level(그때그때 수준) / disk(낮을수록 좋음) /
 #       stability(문제 없을수록 좋음) / desk(가상 손님 문의 처리율 + VIP)
 POSTS = [
-    {"id": "books", "company": PF, "dept": "생산부", "first": "애순이", "kind": "count", "metric": "books",
-     "line": "일반/웹툰 라인", "verb": "입고", "unit": "권", "source": "북오아시스 일반/웹툰 서재 오늘 입고 권 수"},
-    {"id": "books_adult", "company": PF, "dept": "생산부", "first": "김동식", "kind": "count", "metric": "books_adult",
-     "line": "스페셜 라인", "verb": "입고", "unit": "권", "source": "북오아시스 성인/화보 서재 오늘 입고 권 수"},
-    {"id": "plex", "company": PF, "dept": "홍보마케팅부", "first": "오동백", "kind": "count", "metric": "plex",
-     "line": "영상 라인", "verb": "입고", "unit": "건", "source": "Plex 오늘 신규 등록 영상 수"},
-    {"id": "sales", "company": PF, "dept": "영업기획부", "first": "권민우", "kind": "count", "metric": "sales",
-     "line": "출하", "verb": "출하", "unit": "건", "source": "Tautulli 오늘 재생 수"},
-    {"id": "orders", "company": PF, "dept": "영업지원부", "first": "최수연", "kind": "desk", "metric": "orders",
-     "line": "고객 문의 처리", "verb": "문의", "unit": "건", "source": "손님 문의 창구 (실제 봇 대화는 VIP 문의)"},
-    {"id": "facility_cpu", "company": PF, "dept": "생산기획부", "first": "정명석", "kind": "level", "metric": "cpu",
-     "line": "설비 가동률", "unit": "%", "source": "server_status 서버 전체 CPU 사용률"},
-    {"id": "facility_disk", "company": PF, "dept": "물류운송부", "first": "이지안", "kind": "disk", "metric": "disk",
-     "line": "창고 적재율", "unit": "%", "source": "server_status 서버 로컬 디스크 전체 사용률"},
-    {"id": "facility_stability", "company": ER, "dept": "시설관리부", "first": "리정혁", "kind": "stability",
-     "metric": "stability", "line": "설비 안정성", "unit": "점", "source": "server_status 연속 가동일 / 멈춘 서비스"},
-    {"id": "llm_requests", "company": ER, "dept": "기획전략부", "first": "최택", "kind": "count", "metric": "llm_requests",
-     "line": "연산 처리", "verb": "처리", "unit": "건", "source": "LiteLLM 오늘 요청 수 (프록시 전체, 못 받으면 봇 집계)"},
-    {"id": "llm_cost", "company": ER, "dept": "데이터보안부", "first": "동그라미", "kind": "cost", "metric": "llm_tokens",
-     "line": "운영 경비", "unit": "토큰", "source": "LiteLLM 오늘 사용 토큰 (평소보다 적을수록 좋음)"},
-    {"id": "arcade", "company": "광주 동네 상가", "dept": "동네 가게", "first": arcade.MANAGER, "kind": "arcade",
+    {"id": "books", "company": BOOK, "dept": "운영", "first": "애순이", "kind": "count", "metric": "books",
+     "line": "서가 입고", "verb": "입고", "unit": "권", "source": "북오아시스 일반/웹툰 서재 오늘 입고 권 수"},
+    {"id": "books_adult", "company": BOOK, "dept": "심야 서고", "first": "김동식", "kind": "count", "metric": "books_adult",
+     "line": "심야 서고 입고", "verb": "입고", "unit": "권", "source": "북오아시스 성인/화보 서재 오늘 입고 권 수"},
+    {"id": "orders", "company": BOOK, "dept": "손님 응대", "first": "최수연", "kind": "desk", "metric": "orders",
+     "line": "손님 문의 처리", "verb": "문의", "unit": "건", "source": "책방 손님 문의 창구 (실제 봇 대화는 VIP 문의)"},
+    {"id": "plex", "company": CINEMA, "dept": "프로그램팀", "first": "오동백", "kind": "count", "metric": "plex",
+     "line": "신작 입고", "verb": "입고", "unit": "편", "source": "Plex 오늘 신규 등록 영상 수"},
+    {"id": "sales", "company": CINEMA, "dept": "매표·홍보", "first": "성덕선", "kind": "count", "metric": "sales",
+     "line": "관객(매표)", "verb": "매표", "unit": "장", "source": "Tautulli 오늘 재생 수"},
+    {"id": "streams", "company": CINEMA, "dept": "로비 카페", "first": "소라", "kind": "level", "metric": "streams",
+     "line": "지금 관객", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수 (상영관이 차면 로비 카페도 바쁘다)"},
+    {"id": "facility_cpu", "company": STREET, "dept": "관리사무소", "first": "지은탁", "kind": "level", "metric": "cpu",
+     "line": "건물 전력 사용률", "unit": "%", "source": "server_status 서버 전체 CPU 사용률"},
+    {"id": "facility_disk", "company": STREET, "dept": "관리사무소", "first": "황용식", "kind": "disk", "metric": "disk",
+     "line": "지하 공용 창고 적재율", "unit": "%", "source": "server_status 서버 로컬 디스크 전체 사용률"},
+    {"id": "facility_stability", "company": STREET, "dept": "관리사무소", "first": "리정혁", "kind": "stability",
+     "metric": "stability", "line": "건물 안전", "unit": "점", "source": "server_status 연속 가동일 / 멈춘 서비스"},
+    {"id": "llm_requests", "company": STREET, "dept": "관리사무소", "first": "최택", "kind": "count", "metric": "llm_requests",
+     "line": "민원 처리", "verb": "처리", "unit": "건", "source": "LiteLLM 오늘 요청 수 (프록시 전체, 못 받으면 봇 집계)"},
+    {"id": "llm_cost", "company": STREET, "dept": "관리사무소", "first": "동그라미", "kind": "cost", "metric": "llm_tokens",
+     "line": "관리비", "unit": "토큰", "source": "LiteLLM 오늘 사용 토큰 (평소보다 적을수록 좋음)"},
+    {"id": "arcade", "company": STREET, "dept": "동네 가게", "first": arcade.MANAGER, "kind": "arcade",
      "metric": "arcade", "line": "오락기 매출", "unit": "원", "source": f"골목 {arcade.PLACE} - 손님들이 봇 미니게임에서 잃은 돈 - 딴 돈"},
-    {"id": "streams", "company": CAFE, "dept": "카페", "first": "소라", "kind": "level", "metric": "streams",
-     "line": "매장 손님", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수"},
 ]
 POST_BY_ID = {p["id"]: p for p in POSTS}
 _RANK_ORDER = {"사원": 0, "주임": 1, "대리": 2, "과장": 3, "차장": 4, "부장": 5, "사장": 6}

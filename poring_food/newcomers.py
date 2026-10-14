@@ -2,9 +2,9 @@
 새 이웃 이사 오기 - 주 1회, 드라마 하나를 골라 그 인물 3~5명이 동네 배경 인물로 이사 온다.
 
 - 고르기: data/drama_pool.json에서 아직 안 쓴 드라마를 위에서부터 (다 쓰면 LLM이 동네극 하나를 직접 고른다).
-- 만들기: LLM이 그 드라마에서 우리 동네(광주 동네 상가)에 어울리는 인물 3~5명을 드라마 성향대로 써 준다
+- 만들기: LLM이 그 드라마에서 우리 동네(오아시스 거리)에 어울리는 인물 3~5명을 드라마 성향대로 써 준다
   (동네에서의 직업/겉모습/속마음/행동). 실존 배우와 이름이 같은 인물, 이미 있는 이름은 뺀다.
-- 반영: characters.load_roster()가 이 파일의 주민을 "광주 동네 상가 / 새 이웃" 배경 인물로 읽는다 ->
+- 반영: characters.load_roster()가 이 파일의 주민을 "오아시스 거리 / 새 이웃" 배경 인물로 읽는다 ->
   작가 장면/일지에 나오고, 하루 교체(rotation) 때 동네 에이전트로 나설 수 있다.
 - 상한: 동네 배경 인물이 MAX_TOWN_NPC명을 넘으면, 이사 온 사람 중 가장 먼저 온 사람(지금 에이전트가 아닌)이 이사 간다
   (조직도 파일에 적힌 원래 주민은 이사 가지 않는다). 기록/기억은 지우지 않는다.
@@ -19,6 +19,7 @@ import json
 import os
 import re
 
+from . import worldcfg
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import DATA_DIR, STATE_DIR
@@ -26,7 +27,7 @@ from .llm import llm_json
 
 NEWCOMERS_PATH = os.path.join(STATE_DIR, "newcomers.json")
 POOL_PATH = os.path.join(DATA_DIR, "drama_pool.json")
-COMPANY = "광주 동네 상가"
+COMPANY = worldcfg.STREET
 DEPT = "새 이웃"
 ENABLED = os.getenv("PORING_NEWCOMERS", "1") not in ("0", "false", "False", "")
 MOVE_IN_WEEKDAY = 0        # 월요일
@@ -83,7 +84,7 @@ def move_in(existing: set[str], drama: str = "", now=None) -> dict:
     pick = {"title": drama.strip(), "note": ""} if drama.strip() else _pick_drama(used)
     taken = set(existing) | {r["name"] for r in data.get("residents", [])} | {m["name"] for m in data.get("moved_out", [])}
     out = llm_json(
-        "너는 가상 도시(광주의 한 동네, 포링푸드 공장 근처 골목)의 인물 설정 담당이다. 한국 드라마 인물을 이 동네로 "
+        "너는 가상 도시(광주의 오래된 골목 '오아시스 거리' - 책방 오아시스와 별빛극장이 있는 동네)의 인물 설정 담당이다. 한국 드라마 인물을 이 동네로 "
         "이사 온 이웃으로 옮겨 온다. 드라마 속 성격/관계/말버릇을 살리되 직업과 사는 곳은 이 동네에 맞게 바꾼다.",
         (f"[드라마] {pick['title']}" + (f" ({pick['note']})" if pick.get("note") else "") if pick["title"] else
          "[드라마] 동네 사람들이 나오는 현대 한국 드라마 하나를 직접 골라라 (아래 '이미 쓴 드라마'는 빼고)")

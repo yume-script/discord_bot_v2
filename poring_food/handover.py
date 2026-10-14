@@ -50,7 +50,7 @@ def _save(data: dict) -> None:
 
 
 def seat(name: str, roster: list[dict] | None = None) -> str:
-    """그 사람의 자리 이름: '포링푸드 생산부 과장' 같은 (조직도 기준, 없으면 소속만)."""
+    """그 사람의 자리 이름: '책방 오아시스 심야 서고 과장' 같은 (조직도 기준, 없으면 소속만)."""
     c = next((r for r in (roster or characters.load_roster()) if r["name"] == name), None)
     if not c:
         return ""
@@ -75,7 +75,7 @@ def _note(out_name: str, in_name: str, seat_name: str, inbox: list[dict], thread
     if not raw:
         return ""
     out = llm_json(
-        "너는 회사/동네의 업무 인수인계를 정리하는 사람이다. 전임자가 남긴 것에서 '이 자리를 이어받은 사람이 계속 이어가야 할 일'만"
+        "너는 가게/동네의 업무 인수인계를 정리하는 사람이다. 전임자가 남긴 것에서 '이 자리를 이어받은 사람이 계속 이어가야 할 일'만"
         " 골라 짧게 쓴다. 전임자 개인의 사생활(연애/가족/사적인 감정)은 빼고, 일/약속/진행 중인 다툼/맡은 사람과의 관계만.",
         f"[자리] {seat_name or '같은 소속'}\n[전임] {out_name} → [후임] {in_name}\n[전임자가 남긴 것]\n" + "\n".join(raw) + "\n\n"
         "후임이 이어갈 일 3~6줄을 써라 (누구와 무슨 일이 어디까지 됐는지). 반드시 JSON으로만 응답:\n"

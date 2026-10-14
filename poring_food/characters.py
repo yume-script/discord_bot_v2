@@ -1,5 +1,5 @@
 """
-[신규] 심시티/심즈처럼 포링푸드 인물들이 각자 자기 상태와 기억을 갖고, 마주치면 실제로
+[신규] 심시티/심즈처럼 오아시스 거리 인물들이 각자 자기 상태와 기억을 갖고, 마주치면 실제로
 상호작용하는 구조를 만든다. 애순이는 기존처럼 processor.py/generator.py가 상세하게
 다루고(주인공이라 손으로 짠 디테일이 있음), 나머지 인물들은 이 파일이 데이터 기반(직무/
 성격 텍스트를 그대로 활용)으로 가볍게(LLM 호출 없이) 스케줄을 굴린다.
@@ -21,7 +21,7 @@ import os
 import random
 import requests
 
-from . import life
+from . import life, worldcfg
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import (
@@ -184,12 +184,12 @@ def life_type(character: dict) -> tuple[str, str]:
     text = f"{head} {character.get('outer_persona', '')} {character.get('inner_truth', '')}"
     company = character.get("company", "")
     kind = next((t for t, words in _TYPE_RULES if any(w in head for w in words)), None)
-    if not kind and company in ("포링푸드 (Poring Food)", "에린 로지스틱스 (Erinn Logistics)"):
-        kind = "office"  # 회사 사람은 설정 문장보다 소속이 먼저 ("화가 나서" 같은 말에 걸리지 않게)
+    if not kind and company in worldcfg.OFFICES:
+        kind = "office"  # 가게(책방/극장) 사람은 설정 문장보다 소속이 먼저 ("화가 나서" 같은 말에 걸리지 않게)
     kind = kind or next((t for t, words in _TYPE_RULES if any(w in text for w in words)), None) or "freelance"
     place = next((p for w, p in _WORKPLACES if w in head), None) or next((p for w, p in _WORKPLACES if w in text), None)
     if kind == "office" or not place:
-        place = {"office": f"{company or '회사'} 사무실", "shop": "골목 가게", "elder": "경로당", "public": "주민센터",
+        place = {"office": company if company in worldcfg.OFFICES else f"{company or '회사'} 사무실", "shop": "골목 가게", "elder": "경로당", "public": "주민센터",
                  "medic": "동네 병원", "child": "초등학교", "teen": "고등학교", "student": "대학교"}.get(kind, "동네 작업실")
     _TYPE_CACHE[key] = (kind, place)
     return kind, place
@@ -368,7 +368,7 @@ def generate_interaction(pair: tuple[str, str], states: dict, roster_map: dict[s
         f"겉모습: {char_b['outer_persona']} / 속마음: {char_b['inner_truth']})가 {loc}에서 우연히 마주쳤다.\n"
         f"둘의 이전 관계 요약: {rel['summary'] or '특별한 인연 없음'} (현재 친밀도: {rel['affinity']})\n\n"
         "짧은 상호작용 에피소드를 2~3문장으로 만들어라. 겉모습과 속마음의 괴리를 살려 재미있게 쓰고, "
-        "회사가 다르면(라이벌 관계면) 은근한 신경전이나 묘한 호기심을 곁들여도 좋다.\n"
+        "책방 사람과 극장 사람이면(손님을 두고 겨루는 이웃 가게) 은근한 신경전이나 묘한 호기심을 곁들여도 좋다.\n"
         "반드시 JSON으로만 응답: {\"episode\": \"...\", \"affinity_delta\": 정수(-10~10),"
         " \"relationship_summary\": \"이번 만남을 한 줄로 요약\"}"
     )
@@ -381,7 +381,7 @@ def generate_interaction(pair: tuple[str, str], states: dict, roster_map: dict[s
         payload = {
             "model": LLM_MODEL,
             "messages": [
-                {"role": "system", "content": "너는 여러 캐릭터가 사는 가상의 회사 세계를 기록하는 작가다."},
+                {"role": "system", "content": "너는 여러 캐릭터가 사는 골목 '오아시스 거리'(책방/극장/동네 가게)를 기록하는 작가다."},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.9,

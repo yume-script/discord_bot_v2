@@ -1,5 +1,5 @@
 """
-바깥 세상 뉴스 - 이야기가 공장/마을 안에서만 맴돌지 않게, 실제 한국 검색어와 뉴스 제목을 가져와 인물들의 얘깃거리로 쓴다.
+바깥 세상 뉴스 - 이야기가 가게/골목 안에서만 맴돌지 않게, 실제 한국 검색어와 뉴스 제목을 가져와 인물들의 얘깃거리로 쓴다.
 
 출처 (키 없음, RSS):
 - Google 트렌드(한국): 지금 많이 검색되는 검색어 + 관련 기사 제목  (TRENDS_URL)
@@ -9,7 +9,7 @@
 - 안전 필터: 정치/선거/사건사고(사망/범죄/참사)/전쟁/혐오 키워드가 든 제목은 뺀다 (PORING_NEWS_BLOCK으로 더 넣을 수 있다).
 - 처음 본 지 FRESH_DAYS일 지난 제목은 빠진다 (같은 뉴스를 며칠씩 우려먹지 않게).
 - 쓰는 곳:
-  · 인물 판단: 그 사람 관심 분야(회사/성격으로 정함)에 맞는 뉴스 2~3개 + 검색어 하나 (prompt_block)
+  · 인물 판단: 그 사람 관심 분야(가게/성격으로 정함)에 맞는 뉴스 2~3개 + 검색어 하나 (prompt_block)
   · 세계 엔진: 하루 계획 때 오늘 헤드라인 (world_block), 하루 중 새 뉴스가 들어오면 남은 시간에 사건 추가(world._news_events)
   · 바깥 세상 신호의 "오늘 세상의 화제" (topic_line) - 예전엔 LLM이 지어낸 화제 하나였다
 저장: storage/poring_food/news.json {"slot", "fetched", "items": [...], "seen": {제목: 처음 본 날}}
@@ -29,6 +29,7 @@ import requests
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
+from . import worldcfg
 
 NEWS_PATH = os.path.join(STATE_DIR, "news.json")
 ENABLED = os.getenv("PORING_NEWS", "1") not in ("0", "false", "False", "")
@@ -41,18 +42,17 @@ _GN = "https://news.google.com/rss"
 _LOCALE = "hl=ko&gl=KR&ceid=KR:ko"
 SECTIONS = {"경제": "BUSINESS", "IT": "TECHNOLOGY", "연예": "ENTERTAINMENT", "스포츠": "SPORTS",
             "건강": "HEALTH", "과학": "SCIENCE"}
-SEARCHES = {"식품업계": "식품 업계", "콘텐츠업계": "OTT 웹툰", "물류업계": "물류 택배", "광주": "광주 소식"}
+SEARCHES = {"출판업계": "서점 출판 웹툰", "콘텐츠업계": "OTT 드라마", "영화업계": "영화 개봉 극장", "광주": "광주 소식"}
 _BLOCK = ["대통령", "국회", "의원", "여당", "야당", "정당", "민주당", "국민의힘", "선거", "탄핵", "총선", "대선", "정치",
           "검찰", "기소", "구속", "재판", "살인", "사망", "숨져", "숨진", "참사", "폭행", "성폭", "마약", "자살", "극단적",
           "전쟁", "공습", "테러", "미사일", "혐오", "북한", "사고", "화재", "실종", "학대", "흉기"]
 BLOCK = _BLOCK + [w.strip() for w in os.getenv("PORING_NEWS_BLOCK", "").split(",") if w.strip()]
 
-# 관심 분야 - 회사/역할로 정한다 (agents.json "interests"가 있으면 그걸)
+# 관심 분야 - 소속(가게)/역할로 정한다 (agents.json "interests"가 있으면 그걸)
 _INTERESTS = {
-    "포링푸드 (Poring Food)": ["경제", "IT", "연예", "식품업계", "콘텐츠업계"],
-    "에린 로지스틱스 (Erinn Logistics)": ["경제", "IT", "물류업계", "과학"],
-    "카페 오후세시": ["연예", "건강", "광주", "경제"],
-    "광주 동네 상가": ["광주", "연예", "스포츠", "건강", "경제"],
+    worldcfg.BOOK: ["연예", "콘텐츠업계", "출판업계", "경제", "광주"],
+    worldcfg.CINEMA: ["연예", "콘텐츠업계", "영화업계", "IT", "경제"],
+    worldcfg.STREET: ["광주", "연예", "스포츠", "건강", "경제"],
 }
 _DEFAULT_INTERESTS = ["연예", "스포츠", "건강", "광주"]
 

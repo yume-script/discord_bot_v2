@@ -22,7 +22,7 @@ import json
 import os
 import uuid
 
-from . import chronicle, life, memory, news, novelty, projects
+from . import chronicle, life, memory, news, novelty, projects, worldcfg
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -88,26 +88,27 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
     user = (
         f"오늘: {now.strftime('%Y-%m-%d')} (지금 {now.hour}시). 사건은 {first_hour}~{LAST_EVENT_HOUR}시 사이에만.\n\n"
         "[에이전트 - 이들은 오늘 무슨 일이 생길지 모른다]\n" + "\n".join(agent_lines) + "\n\n"
-        f"[회사/장소] {', '.join(companies)}, {TOWN}(광주 동네 전체)\n"
+        f"[가게/장소] {', '.join(companies)}, {TOWN}(오아시스 거리 동네 전체)\n"
         f"[배경 인물 일부] {', '.join(npc_sample)}\n\n"
         f"{signals_block}\n\n"
         + (chronicle.prompt_block() + "\n\n" if chronicle.prompt_block() else "")
         + (projects.public_block() + "\n\n" if projects.public_block() else "") +
         "[최근에 세상에서 있었던 일]\n" + ("\n".join(f"- {e.get('date', '')} {e.get('hour', '')}시 {e.get('title', '')}" for e in recent_log[-8:]) or "- 없음") + "\n\n"
         + novelty.kind_balance(recent_log, now) + "\n" + novelty.calendar_hint(now) + "\n\n"
+        + (worldcfg.seed_block(now.strftime("%Y-%m-%d")) + "\n" if worldcfg.seed_block(now.strftime("%Y-%m-%d")) else "")
         + (news.world_block(now) + "\n\n" if news.world_block(now) else "") +
         "오늘 일어날 사건 4~8개를 정해라:\n"
-        "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 회사 전체/동네 사건으로 여러 명에게 닿게 하고,"
+        "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 가게 전체/동네(건물) 사건으로 여러 명에게 닿게 하고,"
         " 개인 사건은 최근에 사건이 없던 사람 위주로.\n"
         "- 좋은 일, 나쁜 일, 소소한 일을 골고루. 매일 큰 사건이 터지면 안 된다(큰 사건은 가끔).\n"
         "- 사건 종류(kind)를 골고루 - 같은 종류를 하루에 두 번 넘게 쓰지 마라.\n"
         "- 실제 날씨/날짜/화제와 어긋나지 않게. 최근 사건과 똑같은 걸 반복하지 마라.\n"
-        "- 회사 내부의 불확실한 일(구조조정, 인사, 감사 등)은 visibility를 rumor로 - 먼저 소문으로 돈다.\n"
+        "- 가게 안의 불확실한 일(매각, 감원, 체인 가맹, 재개발 등)은 visibility를 rumor로 - 먼저 소문으로 돈다.\n"
         "- 실존 인물/정치/혐오 소재 금지.\n"
         "반드시 JSON으로만 응답:\n"
         '{"events": [{"hour": 정수, "kind": "사건 종류(위 목록 중 하나)", "title": "사건 제목", "detail": "실제로 일어난 일(당사자가 알게 되는 내용) 1~2문장", '
         '"rumor": "visibility가 rumor일 때 먼저 도는 흐릿한 소문 한 문장(아니면 빈 문자열)", '
-        '"targets": ["에이전트 이름 또는 회사 이름 또는 동네"], "visibility": "direct 또는 rumor", '
+        '"targets": ["에이전트 이름 또는 가게 이름 또는 동네"], "visibility": "direct 또는 rumor", '
         '"effects": {"stress|happiness|loneliness|anger|romance|confidence|energy|job_satisfaction": -0.2~0.2}}]}'
     )
     out = llm_json(system, user, temperature=0.9, timeout=PLAN_TIMEOUT_SEC, tag="세계 엔진", smart=True)
@@ -170,14 +171,14 @@ def _news_events(now, agents: list[dict], roster: list[dict], new_items: list[di
         f"지금: {now:%Y-%m-%d %H}시. 사건은 {first_hour}~{LAST_EVENT_HOUR}시 사이에만.\n\n"
         f"[방금 들어온 실제 뉴스/검색어]\n{lines}\n\n"
         f"[오늘 이미 정해 둔 사건 - 겹치지 않게]\n{planned}\n\n"
-        f"[사람/회사/장소] 에이전트: {', '.join(a['name'] for a in agents)} / 회사: {', '.join(companies)}, {TOWN}\n"
+        f"[사람/가게/장소] 에이전트: {', '.join(a['name'] for a in agents)} / 가게: {', '.join(companies)}, {TOWN}\n"
         f"{novelty.kind_balance([], now).splitlines()[0]}\n\n"
         f"이 뉴스들 중 이 도시 사람들과 이어질 만한 것으로 사건 0~{NEWS_MAX_EVENTS}개를 정해라 (어울리는 게 없으면 빈 목록):\n"
-        "- 뉴스 자체를 지어내거나 바꾸지 말고, 뉴스가 이 동네/회사/사람에게 미치는 영향(가격, 장사, 업무, 수다거리, 계획 변경)으로.\n"
+        "- 뉴스 자체를 지어내거나 바꾸지 말고, 뉴스가 이 동네/가게/사람에게 미치는 영향(가격, 장사, 업무, 수다거리, 계획 변경)으로.\n"
         "- 실존 인물을 등장시키지 마라. 정치/혐오/참사 소재 금지.\n"
         "반드시 JSON으로만 응답:\n"
         '{"events": [{"hour": 정수, "kind": "사건 종류", "title": "사건 제목", "detail": "실제로 일어난 일 1~2문장", '
-        '"news": "이어진 뉴스 제목", "rumor": "", "targets": ["에이전트/회사/동네"], "visibility": "direct", '
+        '"news": "이어진 뉴스 제목", "rumor": "", "targets": ["에이전트/가게/동네"], "visibility": "direct", '
         '"effects": {"stress|happiness|...": -0.2~0.2}}]}'
     )
     out = llm_json(system, user, temperature=0.85, timeout=PLAN_TIMEOUT_SEC, tag="세계 엔진(뉴스)")
