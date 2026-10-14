@@ -200,7 +200,8 @@ def get_aesun_detailed_schedule():
     now = now_kst()
     hour = now.hour
     weekday = now.weekday()
-    is_holiday = (weekday == 0)  # 책방 오아시스는 월요일 휴무
+    # 책방 오아시스는 월요일 휴무 (월요일 0~1시는 아직 일요일 밤 - 마감 후 시간대로 본다)
+    is_holiday = (weekday == 0 and hour >= 2)
     is_sleeping = False
     rnd = random.Random(now.strftime("%Y-%m-%d-%H"))  # 시간대별로 고정, 시간이 바뀌면 갱신
 
@@ -245,10 +246,11 @@ def get_aesun_detailed_schedule():
         return (f"{STORAGE_PLACE} / {shop}", "08:00 책방 도착 - 셔터 올리고 밤새 들어온 입고 상자 정리",
                 "상자 테이프 뜯다가 손톱 나감, 허리 보호대 어디 뒀더라", "일하는 중", False)
     elif 9 <= hour < 12:
+        opening = "09:00 개점 - " if hour == 9 else ""
         loc, act, focus, state = _weighted_choice(rnd, [
-            (f"{shop}(서가)", f"09:00 개점 - 오전 서가 정리{rush_label}", "할머니 때부터 시집 코너는 입구, 이건 양보 못 함", "일하는 중", 3),
-            (f"{shop}(계산대)", f"오전 손님 응대{rush_label}", "계산대 밑에 폰 세워두고 몰래 자사 확인", "일하는 중", 2),
-            (STORAGE_PLACE, "입고 상자 검수 및 창고 자리 확보", "극장 굿즈 상자가 또 우리 칸을 침범함", "일하는 중", 1),
+            (f"{shop}(서가)", f"{opening}오전 서가 정리{rush_label}", "할머니 때부터 시집 코너는 입구, 이건 양보 못 함", "일하는 중", 3),
+            (f"{shop}(계산대)", f"{opening}오전 손님 응대{rush_label}", "계산대 밑에 폰 세워두고 몰래 자사 확인", "일하는 중", 2),
+            (STORAGE_PLACE, f"{opening}입고 상자 검수 및 창고 자리 확보", "극장 굿즈 상자가 또 우리 칸을 침범함", "일하는 중", 1),
         ])
         return loc, act, focus, state, False
     elif 12 <= hour < 13:
@@ -469,14 +471,14 @@ def get_time_tag():
     now = now_kst()
     weekday = now.weekday()
     hour = now.hour
-    if weekday == 0:
-        return "[월요일/책방 휴무/꿀잠]"
     if 2 <= hour < 6:
         return "[심야/취침중]"
-    elif hour in (6, 7):
+    if weekday == 0 and hour >= 2:  # 월요일 0~1시는 아직 일요일 밤
+        return "[월요일/책방 휴무]"
+    if hour in (6, 7):
         return "[아침/출근길]"
-    elif hour >= 21 or hour < 2:
+    if hour >= 21 or hour < 2:
         return "[밤/마감 후/게임]"
-    elif weekday >= 5:
+    if weekday >= 5:
         return "[주말/손님 러시]"
     return "[평일/영업/게임]"
