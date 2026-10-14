@@ -56,18 +56,42 @@ def _save(data: dict) -> None:
 
 
 # ===================================================================== 받아오기
+_last_status = ""
+
+
+def _status(msg: str) -> None:
+    """받아오기 상태가 바뀔 때만 로그 (1분마다 같은 경고가 쌓이지 않게)."""
+    global _last_status
+    if msg != _last_status:
+        _last_status = msg
+        print(f"[상영] {msg}")
+
+
 def fetch() -> list[dict] | None:
     """Tautulli get_activity의 재생 목록 (못 받으면 None - 키가 없거나 서버가 안 받음)."""
     key = os.getenv("TAUTULLI_API_KEY", "")
-    if not ENABLED or not key:
+    if not ENABLED:
+        return None
+    if not key:
+        _status("TAUTULLI_API_KEY가 없어서 재생 확인을 못 함 (.env 확인)")
         return None
     try:
         res = requests.get(f"{TAUTULLI_URL}/api/v2", params={"apikey": key, "cmd": "get_activity"}, timeout=TIMEOUT)
-        data = res.json()["response"]["data"]
-    except (requests.RequestException, ValueError, KeyError, TypeError):
+    except requests.RequestException as e:
+        _status(f"Tautulli({TAUTULLI_URL}) 연결 실패: {type(e).__name__}")
         return None
-    sessions = data.get("sessions") if isinstance(data, dict) else None
-    return sessions if isinstance(sessions, list) else []
+    try:
+        body = res.json()["response"]
+    except (ValueError, KeyError, TypeError):
+        _status(f"Tautulli 응답을 못 읽음 (HTTP {res.status_code})")
+        return None
+    if body.get("result") != "success":
+        _status(f"Tautulli 오류: {str(body.get('message') or body.get('result'))[:100]}")
+        return None
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    sessions = data.get("sessions") if isinstance(data.get("sessions"), list) else []
+    _status(f"Tautulli 재생 확인 중 ({TAUTULLI_URL})")
+    return sessions
 
 
 def describe(s: dict) -> dict:
@@ -107,6 +131,12 @@ def _line(agent: dict, item: dict) -> str:
         return text[:200]
     return (f"지금 {PLACE}에서 '{item['title']}' 틀었어요~ 보실 분 오세요!" if item["title"]
             else f"지금 {PLACE}에서 손님이 {item['kind']} 하나 보고 계세요~")
+
+
+def has_new(sessions: list[dict]) -> bool:
+    """새로 시작된 재생이 있는지 (잠금 없이 가볍게 - 있을 때만 잠금을 잡고 process)."""
+    seen = _load().get("seen") or {}
+    return any(i["state"] == "playing" and i["key"] not in seen for i in map(describe, sessions))
 
 
 def process(sessions: list[dict], now: datetime | None = None) -> list[dict]:

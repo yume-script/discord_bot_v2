@@ -53,3 +53,28 @@ def test_binge_hidden_and_asleep(fake_llm, monkeypatch):
 def test_fetch_without_key_is_none(monkeypatch):
     monkeypatch.delenv("TAUTULLI_API_KEY", raising=False)
     assert plex_watch.fetch() is None
+
+
+def test_has_new_and_fetch_status(monkeypatch):
+    s = [_sess(7, 70, "새영화")]
+    assert plex_watch.has_new(s)
+    plex_watch.process([_sess(7, 70, "새영화", state="paused")], datetime(2026, 10, 14, 15, 0))
+    assert not plex_watch.has_new(s)   # 이미 본 재생
+
+    class Res:
+        status_code = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    monkeypatch.setenv("TAUTULLI_API_KEY", "k")
+    monkeypatch.setattr(plex_watch.requests, "get", lambda *a, **k: Res(
+        {"response": {"result": "success", "data": {"stream_count": "1", "sessions": s}}}))
+    assert plex_watch.fetch() == s
+    monkeypatch.setattr(plex_watch.requests, "get", lambda *a, **k: Res(
+        {"response": {"result": "error", "message": "Invalid apikey", "data": {}}}))
+    assert plex_watch.fetch() is None
+    assert "Invalid apikey" in plex_watch._last_status
