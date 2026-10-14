@@ -1,12 +1,13 @@
 """
-봇이 연결해 둔 MCP 서버에서 "실제 수치"를 가져와 포링푸드 이야기의 외부 신호로 바꾼다.
+봇이 연결해 둔 MCP 서버에서 "실제 수치"를 가져와 오아시스 거리 이야기의 외부 신호로 바꾼다.
 
 | MCP 서버 / 도구                   | 이야기 속 의미                                       |
 |-----------------------------------|-----------------------------------------------------|
-| korea_weather / get_forecast      | 광주 날씨(기상청 초단기예보) - 출근길·현장·점심 수다    |
-| server_status / get_system_status | 공장 설비: CPU=설비 가동률, 메모리=작업장 혼잡도,       |
-|                                   | 디스크=창고 적재율, 온도=설비 온도, 가동시간=연속 가동  |
-| server_status / get_service_status| 핵심 라인(서비스) 정지                               |
+| korea_weather / get_forecast      | 광주 날씨(기상청 초단기예보) - 골목 손님 발길·점심 수다 |
+| server_status / get_system_status | 건물 설비: CPU=건물 전력 사용률, 메모리=건물 혼잡도,    |
+|                                   | 디스크=지하 공용 창고 적재율, 온도=설비 온도,           |
+|                                   | 가동시간=무사고 연속 가동(건물 안전)                    |
+| server_status / get_service_status| 건물 핵심 설비(서비스) 정지                           |
 
 - 매시 회차 시작 때 refresh()가 한 번 조회해서 signals_cache.json에 넣고, 장면/작가 회의/일지가
   그 캐시를 읽는다 (MCP 서버 기동이 느려서 장면마다 다시 부르지 않는다).
@@ -33,7 +34,7 @@ WEATHER_LON = float(os.getenv("PORING_WEATHER_LON", "126.8526"))
 # uvx로 뜨는 korea_weather는 첫 기동에 패키지 해석이 들어가서 넉넉하게 잡는다
 TIMEOUT_SEC = int(os.getenv("PORING_MCP_SIGNAL_TIMEOUT_SEC", "60"))
 # 이야기 속 "설비 온도"는 서버 센서 값을 화씨로 보고 섭씨로 바꿔서 쓴다 (95 -> 35°C).
-# 실제 서버 CPU 온도(섭씨)를 그대로 쓰면 미니 PC가 늘 90도대라 공장이 매시간 "과열 경보"가 된다.
+# 실제 서버 CPU 온도(섭씨)를 그대로 쓰면 미니 PC가 늘 90도대라 건물이 매시간 "과열 경보"가 된다.
 # 이야기용 표시만 바꾸는 것이고, 봇의 서버 상태 도구 등 다른 곳은 실제 값 그대로다. 0이면 실제 값.
 FACILITY_TEMP_AS_F = os.getenv("PORING_FACILITY_TEMP_AS_F", "1") not in ("0", "false", "False", "")
 
@@ -111,7 +112,7 @@ def _result_text(res) -> str:
     return "\n".join(getattr(b, "text", "") or "" for b in getattr(res, "content", None) or [])
 
 
-# ---------------------------------------------------------------- 공장 설비 (server_status)
+# ---------------------------------------------------------------- 건물 설비 (server_status)
 
 def _get(d, *keys):
     for k in keys:
@@ -133,7 +134,7 @@ def _uptime_days(uptime) -> float | None:
 
 
 def _server_totals(status: dict) -> tuple:
-    """공장 설비 = 서버 전체 값: (설비 가동률=머신 전체 CPU %, 작업장 혼잡도=메모리 %, 창고 적재율=로컬 디스크 전체 %).
+    """건물 설비 = 서버 전체 값: (건물 전력 사용률=머신 전체 CPU %, 건물 혼잡도=메모리 %, 지하 공용 창고 적재율=로컬 디스크 전체 %).
     [변경] 예전엔 CPU를 이 컨테이너 몫으로, 디스크를 가장 꽉 찬 파티션으로 봐서 창고가 늘 포화처럼 보였다.
     서버가 서버 전체 값을 안 주면(예전 MCP) 예전 값으로 대신한다."""
     cpu = _get(status, "cpu", "host_percent")
@@ -166,7 +167,7 @@ def facility_numbers(status: dict, services: dict | None = None) -> dict:
 
 
 def describe_facility(status: dict, services: dict | None = None) -> str:
-    """get_system_status(+get_service_status) 결과 -> 공장 설비 한 줄. 값이 없으면 빈 문자열."""
+    """get_system_status(+get_service_status) 결과 -> 건물 설비 한 줄. 값이 없으면 빈 문자열."""
     if not isinstance(status, dict) or not status:
         return ""
     cpu, mem, disk = _server_totals(status)
@@ -177,32 +178,32 @@ def describe_facility(status: dict, services: dict | None = None) -> str:
 
     parts, events = [], []
     if isinstance(cpu, (int, float)):
-        parts.append(f"설비 가동률 {cpu:g}%")
+        parts.append(f"건물 전력 사용률 {cpu:g}%")
         if cpu >= 80:
-            events.append("설비 과부하 - 라인이 숨가쁘게 돌아감")
+            events.append("전력 과부하 - 차단기가 내려갈까 조마조마")
     if isinstance(mem, (int, float)):
-        parts.append(f"작업장 혼잡도 {mem:g}%")
+        parts.append(f"건물 혼잡도 {mem:g}%")
         if mem >= 90:
-            events.append("작업장이 꽉 차서 발 디딜 틈 없음")
+            events.append("건물 복도와 로비가 꽉 차서 발 디딜 틈 없음")
     if disk is not None:
-        parts.append(f"창고 적재율 {disk:g}%")
+        parts.append(f"지하 공용 창고 적재율 {disk:g}%")
         if disk >= 90:
-            events.append("창고 포화 직전 - 재고 정리 비상")
+            events.append("지하 공용 창고 포화 직전 - 두 가게 상자 정리 비상")
         elif disk >= 80:
-            events.append("창고가 꽤 찼음")
+            events.append("지하 공용 창고가 꽤 찼음")
     if isinstance(temp, (int, float)):
         parts.append(f"설비 온도 {temp:g}°C")
         if temp >= 80:
             events.append("설비 과열 경보")
     if days is not None:
-        parts.append(f"연속 가동 {int(days)}일")
+        parts.append(f"건물 무사고 연속 가동 {int(days)}일")
         if days < 1:
-            events.append("최근 설비 재가동(정비/정전 후 복구)")
+            events.append("최근 건물 설비 재가동(정비/정전 후 복구)")
 
     down = [name for name, s in (services or {}).items()
             if isinstance(s, dict) and s.get("state") in ("failed", "inactive")]
     if down:
-        events.append(f"멈춘 라인 {len(down)}개")
+        events.append(f"멈춘 건물 설비 {len(down)}개")
 
     if not parts:
         return ""

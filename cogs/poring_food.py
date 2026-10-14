@@ -408,7 +408,7 @@ class PoringFood(commands.Cog):
         await interaction.response.send_message(text, ephemeral=True)
 
     @app_commands.command(name="포링푸드명단", description="[관리자] 지금 스스로 사는 인물들의 소속/자리/맡은 일/지금 하는 일을 봅니다")
-    @app_commands.describe(소속="포링푸드 / 에린 / 카페 / 동네 (비우면 전부)")
+    @app_commands.describe(소속="책방 / 극장 / 거리(동네) (비우면 전부)")
     async def staff_view(self, interaction: Interaction, 소속: str = ""):
         if not is_admin(interaction.user.id):
             await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)

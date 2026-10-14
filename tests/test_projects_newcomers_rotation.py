@@ -28,7 +28,7 @@ def test_project_daily_cap_and_completion():
 def test_newcomers_skip_names_used_before(fake_llm):
     memory.remember("박새로이", "옛 단밤 사장의 기억", 5)  # 예전에 있었던 사람
     fake_llm(lambda s, u: {"drama": "이태원 클라쓰", "people": [
-        {"name": "박새로이", "rank": "사장"}, {"name": "조이서", "rank": "매니저"},  # 조이서 = 에린 에이전트
+        {"name": "박새로이", "rank": "사장"}, {"name": "조이서", "rank": "매니저"},  # 조이서 = 별빛극장 에이전트
         {"name": "길라임", "rank": "트레이너"},  # 정리된 옛 동네 사람
         {"name": "마현이", "rank": "요리사", "outer_persona": "o", "inner_truth": "i", "key_behavior": "k"}]})
     res = agents.move_in_newcomers()

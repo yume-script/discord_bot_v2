@@ -159,7 +159,7 @@ _SKIP_PREFIXES = ("/proc", "/sys", "/dev", "/run", "/snap", "/boot/efi")
 
 def _disk_total() -> dict | None:
     """서버 전체 디스크: /proc/mounts의 로컬 파일시스템을 전부(같은 장치는 한 번) 합친 사용률.
-    파티션 하나가 차 있어도 서버 전체 창고가 찬 건 아니라서, 공장 '창고 적재율'은 이 값을 쓴다."""
+    파티션 하나가 차 있어도 서버 전체 창고가 찬 건 아니라서, 이야기 속 '지하 공용 창고 적재율'은 이 값을 쓴다."""
     seen, total, used, free, mounts = set(), 0, 0, 0, []
     try:
         with open("/proc/mounts") as f:

@@ -13,14 +13,15 @@ def test_assign_first_holders_then_handover():
     posts, changes = kpi.assign(_agents(), roster)
     assert not changes  # 처음 배정은 인수인계가 아니다
     assert [p["id"] for p in posts["애순이"]] == ["books"]
-    assert [p["id"] for p in posts["권민우"]] == ["sales"]
+    assert [p["id"] for p in posts["성덕선"]] == ["sales"]
     assert [p["id"] for p in posts["리정혁"]] == ["facility_stability"]
-    # 권민우가 쉬러 가면 같은 영업기획부 장대희가 출하를 맡는다
-    posts, changes = kpi.assign(_agents(without=("권민우",)), roster)
-    assert [(p["id"], o, n) for p, o, n in changes] == [("sales", "권민우", "장대희")]
-    assert "sales" in [p["id"] for p in posts["장대희"]]
-    assert kpi.posts_of("장대희")[0]["id"] == "sales"
-    # 권민우가 돌아와도 지금 담당자(장대희)가 계속 맡는다
+    assert [p["id"] for p in posts["소라"]] == ["streams"]
+    # 성덕선이 쉬러 가면 같은 별빛극장 매표·홍보의 조이서가 매표를 맡는다
+    posts, changes = kpi.assign(_agents(without=("성덕선",)), roster)
+    assert [(p["id"], o, n) for p, o, n in changes] == [("sales", "성덕선", "조이서")]
+    assert "sales" in [p["id"] for p in posts["조이서"]]
+    assert kpi.posts_of("조이서")[0]["id"] == "sales"
+    # 성덕선이 돌아와도 지금 담당자(조이서)가 계속 맡는다
     _, changes = kpi.assign(_agents(), roster)
     assert not changes
 
@@ -42,11 +43,11 @@ def test_record_scores(monkeypatch):
     kpi.record(now)
     rows = kpi._load()["daily"]["2026-10-07"]
     assert rows["books"]["score"] == 200 and rows["books"]["holder"] == "애순이"
-    assert rows["sales"]["score"] == 50 and rows["sales"]["holder"] == "권민우"
+    assert rows["sales"]["score"] == 50 and rows["sales"]["holder"] == "성덕선"
     assert rows["facility_disk"]["score"] == 80
     assert rows["facility_stability"]["score"] == 30  # 멈춘 서비스 1개 + 재가동
     assert rows["streams"]["holder"] == "소라"
-    block = kpi.prompt_block("이지안", kpi.posts_of("이지안"))
+    block = kpi.prompt_block("황용식", kpi.posts_of("황용식"))
     assert "창고 적재율 70%" in block
     assert rows["orders"]["holder"] == "최수연" and "score" in rows["orders"]
 
@@ -103,13 +104,13 @@ def test_weekly_ranking_and_rewards(fake_llm, monkeypatch):
     agent_list = _agents()
     roster = characters.load_roster()
     kpi.assign(agent_list, roster)
-    _seed_week({"애순이": ("books", 150), "권민우": ("sales", 90), "최수연": ("orders", 120),
-                "리정혁": ("facility_stability", 100)})
+    _seed_week({"애순이": ("books", 150), "김동식": ("books_adult", 90), "최수연": ("orders", 120),
+                "성덕선": ("sales", 100)})
     sent = []
     monkeypatch.setattr(agents.runtime, "send_as", lambda acc, name, text, *a, **k: sent.append((name, text)))
     monkeypatch.setattr(agents.runtime, "has_agent_sender", lambda: True)
     monkeypatch.setattr(agents, "_group_channel", lambda g: 1)
-    fake_llm(lambda system, user: {"text": "지난주 1등 애순이! 권민우는 분발."} if "주간 실적" in user else {})
+    fake_llm(lambda system, user: {"text": "지난주 1등 애순이! 김동식 씨는 분발."} if "책방 단톡방" in user else {})
     money = life.get("애순이")["money"]
     data = {}
     monday = datetime(2026, 10, 12, 9, 30)
@@ -118,9 +119,9 @@ def test_weekly_ranking_and_rewards(fake_llm, monkeypatch):
     assert not kpi.weekly_due(monday)
     assert life.get("애순이")["money"] == money + kpi.WEEKLY_BONUS
     assert any("3명 중 1등" in m["text"] for m in data["애순이"]["inbox"])
-    assert any("3명 중 3등" in m["text"] for m in data["권민우"]["inbox"])
-    assert any("실적 100점" in m["text"] for m in data["리정혁"]["inbox"])  # 에린은 혼자라 본인에게만
-    assert sent and sent[0][0] == "정명석" and "애순이" in sent[0][1]
+    assert any("3명 중 3등" in m["text"] for m in data["김동식"]["inbox"])
+    assert any("실적 100점" in m["text"] for m in data["성덕선"]["inbox"])  # 극장은 혼자라 본인에게만
+    assert sent and sent[0][0] == "애순이" and "애순이" in sent[0][1]   # 책방 사장이 책방 단톡방에 발표
     # 같은 주에 다시 돌아도 또 발표하지 않는다
     agents._kpi_reviews(agent_list, roster, {}, monday.replace(hour=11))
     assert len(sent) == 1
@@ -132,8 +133,8 @@ def test_monthly_title_is_permanent(monkeypatch):
     roster = characters.load_roster()
     kpi.assign(agent_list, roster)
     data = kpi._load()
-    data["daily"] = {"2026-09-10": {"books": {"holder": "애순이", "score": 180, "company": kpi.PF},
-                                    "sales": {"holder": "권민우", "score": 80, "company": kpi.PF}}}
+    data["daily"] = {"2026-09-10": {"books": {"holder": "애순이", "score": 180, "company": kpi.BOOK},
+                                    "books_adult": {"holder": "김동식", "score": 80, "company": kpi.BOOK}}}
     kpi._save(data)
     monkeypatch.setattr(agents, "_group_channel", lambda g: 0)
     agents._kpi_reviews(agent_list, roster, {}, datetime(2026, 10, 1, 10))

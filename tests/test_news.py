@@ -42,10 +42,10 @@ def test_refresh_slots_and_agent_picks():
     t = datetime(2026, 10, 13, 7, 3)
     assert news.refresh(t, fetcher) and not news.refresh(t + timedelta(hours=2), fetcher)   # 7시 몫은 한 번
     assert news.refresh(t.replace(hour=12), fetcher) and len(calls) == 2                     # 12시에 다시
-    erinn = {"name": "리정혁", "company": "에린 로지스틱스 (Erinn Logistics)"}
-    town = {"name": "홍두식", "company": "광주 동네 상가"}
+    erinn = {"name": "오동백", "company": "별빛극장"}
+    town = {"name": "홍두식", "company": "오아시스 거리"}
     pe, pt = news.for_agent(erinn, t), news.for_agent(town, t)
-    assert {i["category"] for i in pe} <= {"경제", "IT", "물류업계", "과학", "검색어"}
+    assert {i["category"] for i in pe} <= {"연예", "콘텐츠업계", "영화업계", "IT", "경제", "검색어"}
     assert any(i["category"] == "검색어" for i in pe)
     assert any(i["title"] == "광주 비엔날레 개막" for i in pt)
     assert news.for_agent(erinn, t) == pe                                  # 같은 갱신 안에선 같은 소식

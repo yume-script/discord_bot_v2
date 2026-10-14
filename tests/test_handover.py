@@ -17,21 +17,21 @@ def test_handover_moves_story_to_successor(fake_llm):
     data = {"김동식": {"inbox": [{"at": "x", "kind": "업무", "text": "부장: 보고서 오늘 안에"}]}}
     ags = agents.load_agents()
     now = datetime(2026, 10, 14, 5, 3)
-    note = handover.run("김동식", "한석율", "포링푸드 (Poring Food)", data, ags, agents._push_inbox, now,
+    note = handover.run("김동식", "한석율", "책방 오아시스", data, ags, agents._push_inbox, now,
                         ["스페셜 라인 입고"])
     assert "보고서 재작성" in note
     texts = [m["text"] for m in data["한석율"]["inbox"]]
     assert any(t.startswith("인수인계:") and "보고서 재작성" in t for t in texts)
     assert any("전임 김동식 앞으로 와 있던 것" in t and "보고서 오늘 안에" in t for t in texts)
     assert data["김동식"]["inbox"] == []
-    colleague = next(a["name"] for a in ags if a.get("company") == "포링푸드 (Poring Food)" and a["name"] not in ("김동식", "한석율"))
+    colleague = next(a["name"] for a in ags if a.get("company") == "책방 오아시스" and a["name"] not in ("김동식", "한석율"))
     assert any("한석율 담당" in m["text"] for m in data[colleague]["inbox"])
     assert any("이어받음" in (u.get("note") or "") for t in chronicle.open_threads() if t["title"] == "김동식 보고서 논란"
                for u in t.get("updates", []))
     assert any("이어받음" in m["text"] for m in memory.recall("한석율", k=10))
-    block = handover.prompt_block("한석율", "포링푸드 (Poring Food)", now)
+    block = handover.prompt_block("한석율", "책방 오아시스", now)
     assert "내 자리 인수인계" in block and "보고서 재작성" in block
-    assert "김동식 → 한석율" in handover.prompt_block(colleague, "포링푸드 (Poring Food)", now)
+    assert "김동식 → 한석율" in handover.prompt_block(colleague, "책방 오아시스", now)
     # 승계: 쉬러 간 사람 자리에 지금 있는 사람
     assert handover.successor("김동식", {"한석율"}) == "한석율"
     assert handover.successor("김동식", {"김동식", "한석율"}) == "김동식"
@@ -50,8 +50,8 @@ def test_villain_retargets_successor(fake_llm):
 
     fake_llm(handler)
     ags = [a for a in agents.load_agents() if a["name"] != "김동식"]
-    handover.run("김동식", "한석율", "포링푸드 (Poring Food)", {}, ags, agents._push_inbox, datetime(2026, 10, 14, 5))
-    ags.append({"name": "한석율", "company": "포링푸드 (Poring Food)"})
+    handover.run("김동식", "한석율", "책방 오아시스", {}, ags, agents._push_inbox, datetime(2026, 10, 14, 5))
+    ags.append({"name": "한석율", "company": "책방 오아시스"})
     villains.tick(ags, [], datetime(2026, 10, 14, 11, 3))
     assert "한석율" in seen["targets"] and "김동식" not in seen["targets"]
 
@@ -61,11 +61,12 @@ def test_staff_overview_lists_seats_jobs_and_flags():
     kpi.assign(agents.load_agents(), characters.load_roster())
     pages = agents.staff_overview()
     text = "\n".join(pages)
-    assert "포링푸드 세계 명단" in text and "🏭 포링푸드" in text and "🏘️ 동네" in text
+    assert "오아시스 거리 명단" in text and "📚 책방 오아시스" in text and "🏘️ 오아시스 거리" in text and "🎬 별빛극장" in text
     assert "**장대희**" in text and "😈빌런" in text                 # 빌런 표시
     assert "**애순이**" in text and "🔒계정" in text                 # 디스코드 계정 = 고정
-    assert "맡은 일: 일반/웹툰 라인" in text                          # 실적 자리
+    assert "맡은 일: 서가 입고" in text                          # 실적 자리
     assert all(len(p) <= 2000 for p in pages)
-    only = "\n".join(agents.staff_overview("에린"))
-    assert "🚚 에린 로지스틱스" in only and "🏭 포링푸드" not in only
+    only = "\n".join(agents.staff_overview("극장"))
+    assert "🎬 별빛극장" in only and "📚 책방 오아시스" not in only
+    assert "🏘️ 오아시스 거리" in "\n".join(agents.staff_overview("동네"))
     assert agents.staff_overview("없는소속") == ["해당하는 소속에 지금 스스로 사는 사람이 없어요."]

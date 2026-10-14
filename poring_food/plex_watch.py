@@ -1,7 +1,7 @@
 """
 Plex 상영 알림 - 실제 Plex에서 영상 재생이 시작되면 마을(동네 단톡방)에 알린다.
 
-이야기 속 설정: Plex 재생 = 카페 오후세시 스크린에 손님이 영상을 튼 것 (kpi.py "매장 손님" = 지금 시청 중인 스트림 수와 같은 설정).
+이야기 속 설정: Plex 재생 = 별빛극장 상영관에서 상영이 시작된 것 (kpi.py "지금 관객" = 지금 시청 중인 스트림 수와 같은 설정).
 - 봇(cogs/poring_food.py)이 1분마다 Tautulli get_activity(HTTP API)를 본다. LLM/MCP 없이 가볍게.
 - 새로 "playing"이 된 재생(같은 영상의 일시정지→재개는 새로 치지 않는다)이 있으면 ANNOUNCER(기본 소라)가
   자기 말투로 동네 단톡방에 한마디 올린다 (LLM 1회, 실패하면 정해진 문장).
@@ -9,7 +9,7 @@ Plex 상영 알림 - 실제 Plex에서 영상 재생이 시작되면 마을(동�
   성인 등급 영상은 제목 없이 "영상 하나"로만.
 - 같은 작품(시리즈는 시리즈 단위)은 SAME_TITLE_HOURS 안에 다시 알리지 않는다 (몰아보기로 단톡방이 도배되지 않게).
   한 시간에 MAX_PER_HOUR개까지. 알리는 사람이 자는 시간엔 올리지 않고 기록만 한다.
-- 인물들은 판단 때 [지금 카페 스크린에서 틀어 놓은 영상]을 본다 (얘깃거리로, 추가 LLM 없음).
+- 인물들은 판단 때 [요즘 별빛극장 상영관에서 상영한 작품]을 본다 (얘깃거리로, 추가 LLM 없음).
 저장: storage/poring_food/plex_watch.json {"seen": {재생키: 시각}, "announced": [{"at", "work", "title"}]}
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ from .config import STATE_DIR
 ENABLED = os.getenv("PORING_PLEX_WATCH", "1") not in ("0", "false", "False", "")
 TAUTULLI_URL = os.getenv("TAUTULLI_URL", "http://192.168.0.31:8181").rstrip("/")
 ANNOUNCER = os.getenv("PORING_PLEX_WATCH_ANNOUNCER", "소라")
-PLACE = os.getenv("PORING_PLEX_WATCH_PLACE", "카페 오후세시 스크린")
+PLACE = os.getenv("PORING_PLEX_WATCH_PLACE", "별빛극장 상영관")
 HIDE_LIBRARIES = [s.strip() for s in os.getenv("PORING_PLEX_WATCH_HIDE_LIBRARIES", "").split(",") if s.strip()]
 ADULT_RATINGS = ("청소년관람불가", "청불", "R18", "NC-17", "X", "XXX", "18+", "19")
 MAX_PER_HOUR = int(os.getenv("PORING_PLEX_WATCH_MAX_PER_HOUR", "3"))
@@ -123,14 +123,14 @@ def _line(agent: dict, item: dict) -> str:
     what = f"'{item['title']}' ({item['kind']})" if item["title"] else f"{item['kind']} 하나 (제목은 말하지 않는다)"
     out = llm_json(
         f"너는 '{agent['name']}'이다. {agent.get('profile', '')}\n[말투] {agent.get('speech', '')}",
-        f"지금 {PLACE}에서 손님이 {what}를 틀었다. 동네 단톡방에 이걸 알리는 한마디를 내 말투로 1~2문장 써라. "
-        "작품 내용/줄거리/출연자를 지어내지 마라. 손님 이름은 모른다. 반드시 JSON으로만 응답: {\"text\": \"한마디\"}",
+        f"지금 {PLACE}에서 관객이 들어와 {what} 상영이 시작됐다. 나는 극장 1층 로비 카페 사장이다. 동네 단톡방에 이걸 알리는 한마디를 내 말투로 1~2문장 써라. "
+        "작품 내용/줄거리/출연자를 지어내지 마라. 관객 이름은 모른다. 반드시 JSON으로만 응답: {\"text\": \"한마디\"}",
         temperature=0.9, timeout=30, tag=f"상영 알림 {agent['name']}", agent=agent["name"])
     text = str((out or {}).get("text") or "").strip()
     if text:
         return text[:200]
-    return (f"지금 {PLACE}에서 '{item['title']}' 틀었어요~ 보실 분 오세요!" if item["title"]
-            else f"지금 {PLACE}에서 손님이 {item['kind']} 하나 보고 계세요~")
+    return (f"지금 {PLACE}에서 '{item['title']}' 상영 시작했어요~ 보실 분 오세요!" if item["title"]
+            else f"지금 {PLACE}에서 {item['kind']} 하나 상영 중이에요~")
 
 
 def has_new(sessions: list[dict]) -> bool:
@@ -185,6 +185,6 @@ def prompt_block(now: datetime | None = None) -> str:
     recent = [a for a in _load().get("announced") or [] if a.get("at", "") >= since][-3:]
     if not recent:
         return ""
-    return (f"[요즘 {PLACE}에서 손님이 튼 영상 - 얘깃거리로 (내용은 지어내지 마라)]\n" + "\n".join(
+    return (f"[요즘 {PLACE}에서 상영한 작품 - 얘깃거리로 (내용은 지어내지 마라)]\n" + "\n".join(
         f"- {a['at'][11:16]} " + (f"'{a['title']}' ({a.get('kind', '영상')})" if a.get("title") else f"{a.get('kind', '영상')} 하나")
         for a in recent))

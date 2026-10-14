@@ -95,7 +95,7 @@ def _new_state(name: str, rank: str) -> dict:
         "romance": rnd.uniform(0.1, 0.4), "confidence": rnd.uniform(0.35, 0.7),
         "energy": rnd.uniform(0.6, 0.85), "job_satisfaction": rnd.uniform(0.35, 0.65),
     }
-    if name == "애순이":  # 만성 피로의 고인물 대리
+    if name == "애순이":  # 만성 피로의 책방 사장
         base.update(stress=0.55, energy=0.45, job_satisfaction=0.4)
     base = {k: round(v, 3) for k, v in base.items()}
     salary = SALARY.get(rank, 3_200_000)
@@ -221,12 +221,14 @@ def _signal_effects(st: dict, info: dict, signals: dict, now: datetime) -> dict:
         d["energy"] = d.get("energy", 0) - 0.02
     elif "비" in weather or "눈" in weather:
         d["happiness"] = d.get("happiness", 0) - 0.01
-    if info.get("company", "포링푸드 (Poring Food)") != "포링푸드 (Poring Food)":
-        return d  # 아래는 포링푸드 내부 사정(공장 설비/생산) - 다른 회사 사람에겐 상관없다
-    facility = signals.get("facility", "") + signals.get("factory", "")
+    # 아래는 건물 안 사정(전력/창고/통신 회선, 입고/상영) - 누가 아는지는 signals.KNOWN_BY가 정한다
+    # (건물 설비는 두 가게+관리사무소, 입고/상영 현황은 두 가게만. 건물 밖 가족/친구는 상관없다)
+    from . import signals as _signals  # signals가 processor -> life를 가져오므로 순환을 피해 여기서
+    company = info.get("company", "")
+    facility = "".join(signals.get(k, "") for k in ("facility", "factory") if _signals.knows(company, k))
     if working and any(w in facility for w in ("과부하", "과열", "포화", "멈춘", "이상")):
         d["stress"] = d.get("stress", 0) + 0.02
-    if working and "훨씬 바쁨" in signals.get("production", ""):
+    if working and _signals.knows(company, "production") and "훨씬 바쁨" in signals.get("production", ""):
         d["stress"] = d.get("stress", 0) + 0.01
         d["job_satisfaction"] = d.get("job_satisfaction", 0) + 0.005
     return d

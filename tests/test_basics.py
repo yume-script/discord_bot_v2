@@ -38,7 +38,7 @@ def _schedule(monkeypatch, character, when):
 
 
 def test_child_schedule(monkeypatch):
-    kid = {"id": "t|아이", "name": "아이", "rank": "초등학생", "dept": "", "company": "광주 동네 상가", "key_behavior": ""}
+    kid = {"id": "t|아이", "name": "아이", "rank": "초등학생", "dept": "", "company": "오아시스 거리", "key_behavior": ""}
     assert characters.life_type(kid)[0] == "child"
     assert _schedule(monkeypatch, kid, _at(0, 10))[0] == "초등학교"
     assert _schedule(monkeypatch, kid, _at(0, 22))[2] == "자는 중"
@@ -46,13 +46,13 @@ def test_child_schedule(monkeypatch):
 
 
 def test_company_people_are_office_even_with_tricky_words():
-    c = {"id": "x", "name": "구동매", "rank": "부장", "dept": "품질관리부", "company": "포링푸드 (Poring Food)",
+    c = {"id": "x", "name": "구동매", "rank": "부장", "dept": "서가팀", "company": "책방 오아시스",
          "outer_persona": "", "inner_truth": "화가 나서가 아니라 손가락이 굵어서", "key_behavior": ""}
     assert characters.life_type(c)[0] == "office"
 
 
 def test_shift_worker_has_night_and_off_days(monkeypatch):
-    nurse = {"id": "n", "name": "간호사님", "rank": "간호사", "dept": "", "company": "광주 동네 상가", "key_behavior": "일"}
+    nurse = {"id": "n", "name": "간호사님", "rank": "간호사", "dept": "", "company": "오아시스 거리", "key_behavior": "일"}
     states = {_schedule(monkeypatch, nurse, _at(d, 3))[2] for d in range(3)}
     assert "일하는 중" in states and "자는 중" in states
 

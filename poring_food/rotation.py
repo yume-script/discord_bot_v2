@@ -1,8 +1,8 @@
 """
 에이전트 <-> 배경 인물 교체 - 하루에 한 번, 소속별로 한 명씩 스스로 사는 사람(LLM 에이전트)과 배경 인물이 자리를 바꾼다.
 
-같은 사람들만 계속 주인공이면 이야기가 좁아진다. 그래서 매일 새벽(ROTATE_FROM_HOUR 이후 첫 회차) 포링푸드/
-에린 로지스틱스/동네(광주 동네 상가)마다 오래 활동한 에이전트 한 명이 배경 인물로 쉬러 가고, 오래 쉰 배경 인물
+같은 사람들만 계속 주인공이면 이야기가 좁아진다. 그래서 매일 새벽(ROTATE_FROM_HOUR 이후 첫 회차) 책방 오아시스/
+별빛극장/동네(오아시스 거리)마다 오래 활동한 에이전트 한 명이 배경 인물로 쉬러 가고, 오래 쉰 배경 인물
 한 명이 에이전트로 나선다. 소속별 인원은 그대로다.
 
 - 고정(교체 안 함): 자기 디스코드 계정이 있는 사람(애순이/소라), 역할(role, 예: 통장)이 있는 사람, agents.json에서
@@ -23,7 +23,7 @@ import json
 import os
 import random
 
-from . import characters, chronicle, projects
+from . import characters, chronicle, projects, worldcfg
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import DATA_DIR, STATE_DIR
@@ -33,8 +33,8 @@ ROTATION_PATH = os.path.join(STATE_DIR, "rotation.json")
 ENABLED = os.getenv("PORING_AGENT_ROTATION", "1") not in ("0", "false", "False", "")
 ROTATE_FROM_HOUR = 5
 SWAPS_PER_COMPANY = int(os.getenv("PORING_AGENT_ROTATION_SWAPS", "1"))
-COMPANIES = ("포링푸드 (Poring Food)", "에린 로지스틱스 (Erinn Logistics)", "광주 동네 상가")
-TOWN_COMPANY = "광주 동네 상가"
+COMPANIES = (worldcfg.BOOK, worldcfg.CINEMA, worldcfg.STREET)
+TOWN_COMPANY = worldcfg.STREET
 TOWN_GROUP = "동네 단톡방"
 DEFAULT_EVERY = 3
 TIMEOUT_SEC = 60

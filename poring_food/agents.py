@@ -1,5 +1,5 @@
 """
-[3단계] 포링푸드 LLM 에이전트 - 스스로 판단하며 사는 인물 (1번 애순이, 2번 소라, 최대 5명).
+[3단계] 오아시스 거리 LLM 에이전트 - 스스로 판단하며 사는 인물 (1번 애순이, 2번 소라, 최대 5명).
 
 배경 인물 25명은 규칙(일정+상태)으로 움직이고 작가(LLM 한 번)가 대사를 대신 써 주지만, 에이전트는
 각자 자기 LLM 턴을 갖는다. 매시 회차마다:
@@ -12,7 +12,7 @@
 2) 판단(LLM JSON): 이번 시간 어디서 무엇을 하는지, 속마음, 다음 계획, 마음의 변화, 남길 기억,
    그리고 필요하면 다른 에이전트에게 연락(메신저/직접 만남).
 3) 대화: 연락하면 두 에이전트가 한 턴씩 번갈아 말한다. 턴마다 말하는 사람의 LLM이 "자기 상태와 기억만"
-   보고 다음 말을 정한다(서로의 속은 모른다). 각자 자기 디스코드 계정으로 포링푸드 채널에 올린다.
+   보고 다음 말을 정한다(서로의 속은 모른다). 각자 자기 디스코드 계정으로 에이전트 대화 채널에 올린다.
 4) 실패하면(LLM 장애/형식 오류) 그 인물은 이번 시간 평소 루틴(규칙)대로 움직인다 - 방송이 끊기지 않게.
 
 에이전트 목록: poring_food/data/agents.json (최대 MAX_AGENTS명). 디스코드 계정은 core/side_accounts.py.
@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from . import (arcade, characters, chronicle, handover, hobbies, kpi, life, live, memory, milestones, newcomers, novelty,
-               outbox, plex_watch, projects, rotation, news, runtime, signals, townmap, villains, world)
+               outbox, plex_watch, projects, rotation, news, runtime, signals, townmap, villains, world, worldcfg)
 from .clock import now_kst
 from .josa import j
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
@@ -69,14 +69,15 @@ LAST_TICK: dict = {}
 VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
 
 # 단톡방 - 멤버만 보고 쓴다 (모두가 보는 곳이라 비밀 얘기는 안 쓴다)
-#  - 포링푸드 단톡방: 포링푸드 소속 에이전트 전원 (기존 포링푸드 이야기 채널)
-#  - 동네 단톡방: agents.json에서 "groups"에 넣은 사람 (에이전트 대화 채널에 머리줄을 붙여 같이 올린다)
-GROUP_COMPANY = "포링푸드 (Poring Food)"
-GROUP_NAME = "포링푸드 단톡방"
+#  - 가게 단톡방(책방 단톡방/극장 단톡방): 그 가게 소속 에이전트 전원 (worldcfg.GROUP_OF)
+#  - 동네 단톡방: agents.json에서 "groups"에 넣은 사람
+#  채널은 하나로 통일 - 모든 단톡방/대화가 에이전트 대화 채널(PORING_AGENT_CHANNEL_ID)에 머리줄로 구분돼 올라간다.
+SHOP_GROUPS = dict(worldcfg.GROUP_OF)            # {회사: 단톡방 이름}
 TOWN_GROUP = "동네 단톡방"
-GROUP_HEADERS = {TOWN_GROUP: "-# 🏘️ 동네 단톡방", GROUP_NAME: "-# 💬 포링푸드 단톡방"}  # 글마다 머리줄(+시각)로 출처 표시
+GROUP_HEADERS = {TOWN_GROUP: "-# 🏘️ 동네 단톡방", worldcfg.BOOK_GROUP: "-# 📚 책방 단톡방",
+                 worldcfg.CINEMA_GROUP: "-# 🎬 극장 단톡방"}  # 글마다 머리줄(+시각)로 출처 표시
 GROUP_PATH = os.path.join(STATE_DIR, "group_chat.jsonl")
-GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))            # 회사 단톡방 하루 상한
+GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))            # 가게 단톡방 하루 상한
 TOWN_GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_TOWN_GROUP_MAX_POSTS_PER_DAY", "24"))  # 동네 단톡방(멤버가 많다)
 GROUP_MAX_POSTS_PER_HOUR = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_HOUR", "3"))
 GROUP_RECENT = 10
@@ -326,15 +327,18 @@ def _asleep(agent: dict, hour: int) -> bool:
 
 # ===================================================================== 단톡방 (회사 / 동네)
 def _group_channel(group: str) -> int:
-    if group == GROUP_NAME:
-        return bot_settings.PORING_GROUP_CHAT_CHANNEL_ID
-    if group == TOWN_GROUP:
-        return bot_settings.PORING_TOWN_CHAT_CHANNEL_ID or bot_settings.PORING_AGENT_CHANNEL_ID
+    """채널은 하나로 통일 - 모든 단톡방이 에이전트 대화 채널에 올라간다 (머리줄로 어느 방인지 구분)."""
+    if group == TOWN_GROUP or group in SHOP_GROUPS.values():
+        return bot_settings.PORING_AGENT_CHANNEL_ID
     return 0
 
 
+def _shop_group(company: str) -> str:
+    return SHOP_GROUPS.get(company, "")
+
+
 def _groups_of(agent: dict) -> list[str]:
-    groups = [GROUP_NAME] if agent.get("company") == GROUP_COMPANY else []
+    groups = [_shop_group(agent.get("company", ""))] if _shop_group(agent.get("company", "")) else []
     groups += [g for g in (agent.get("groups") or []) if g not in groups]
     return [g for g in groups if _group_channel(g)]
 
@@ -354,7 +358,7 @@ def _group_recent(group: str, hours: int = 24, limit: int = GROUP_RECENT) -> lis
                 m = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if m.get("at", "") >= since and m.get("group", GROUP_NAME) == group:
+            if m.get("at", "") >= since and m.get("group") == group:
                 out.append(m)
     return out[-limit:]
 
@@ -363,7 +367,7 @@ def _group_block(agent: dict, st: dict) -> str:
     last_seen = (st.get("decision") or {}).get("hour", "")
     blocks = []
     for group in _groups_of(agent):
-        who = "회사 사람들" if group == GROUP_NAME else "동네 사람들"
+        who = "가게 사람들" if group in SHOP_GROUPS.values() else "동네 사람들"
         lines = []
         for m in _group_recent(group):
             new = " (새 글)" if m["at"][:13].replace("T", " ") >= last_seen and m["name"] != agent["name"] else ""
@@ -598,7 +602,7 @@ def _handle_hobbies(decisions: dict, by_name: dict, data: dict, now, hk: str, tr
             print(f"[그림] {name}: {g['title']}")
         if d.get("ant_voice") and a.get("company") in hobbies.OFFICE and hobbies.use(now, "ant", name):
             text = d["ant_voice"]
-            ch = _group_channel(GROUP_NAME) if a.get("company") == GROUP_COMPANY else 0
+            ch = 0  # 채널 통일 - 에이전트 대화 채널
             t = outbox.slot(now, 10, 50, rnd)
             outbox.schedule(t, "agent", account=a.get("account", ""), name=name, avatar=a.get("avatar_url", ""),
                             text=f"-# 🐜 개미소리 · {t.strftime('%H:%M')} · {name}\n/개미소리 {text}", channel_id=ch)
@@ -620,8 +624,7 @@ def _handle_hobbies(decisions: dict, by_name: dict, data: dict, now, hk: str, tr
 
 
 # ===================================================================== 명단 (관리자 조회 /포링푸드명단)
-COMPANY_LABEL = {"포링푸드 (Poring Food)": "🏭 포링푸드", "에린 로지스틱스 (Erinn Logistics)": "🚚 에린 로지스틱스",
-                 "카페 오후세시": "☕ 카페 오후세시", "광주 동네 상가": "🏘️ 동네"}
+COMPANY_LABEL = dict(worldcfg.LABEL)
 
 
 def staff_overview(company_filter: str = "") -> list[str]:
@@ -631,6 +634,7 @@ def staff_overview(company_filter: str = "") -> list[str]:
     now = now_kst()
     h = handover._load()
     since = (now - timedelta(days=handover.SHOW_DAYS)).strftime("%Y-%m-%d")
+    company_filter = {"동네": "거리", "관리사무소": "거리", "카페": "극장"}.get(company_filter, company_filter)
     groups: dict[str, list[str]] = {}
     for a in ags:
         company = a.get("company", "")
@@ -665,7 +669,7 @@ def staff_overview(company_filter: str = "") -> list[str]:
         groups.setdefault(label, []).append(line)
     if not groups:
         return ["해당하는 소속에 지금 스스로 사는 사람이 없어요."]
-    pages = [f"👥 **포링푸드 세계 명단** ({now:%m/%d %H:%M}, {sum(len(v) for v in groups.values())}명)"]
+    pages = [f"👥 **{worldcfg.STREET} 명단** ({now:%m/%d %H:%M}, {sum(len(v) for v in groups.values())}명)"]
     for label in sorted(groups, key=lambda x: list(COMPANY_LABEL.values()).index(x) if x in COMPANY_LABEL.values() else 99):
         block = f"\n**{label}** ({len(groups[label])}명)\n" + "\n".join(groups[label])
         if len(pages[-1]) + len(block) > 1900:
@@ -684,11 +688,12 @@ def staff_overview(company_filter: str = "") -> list[str]:
 
 
 def _kpi_announcer(company: str, agents: list[dict], roster: list[dict]) -> dict | None:
-    """실적 발표할 부서장: 그 소속 에이전트 중 부장 (생산기획부 먼저), 없으면 아무 에이전트."""
+    """실적 발표할 사람: 그 소속 에이전트 중 사장, 없으면 부장 (운영 먼저), 없으면 아무 에이전트."""
     rank = {c["name"]: c for c in roster}
     mine = [a for a in agents if a.get("company") == company]
-    heads = [a for a in mine if (rank.get(a["name"]) or {}).get("rank") == "부장"]
-    heads.sort(key=lambda a: ((rank.get(a["name"]) or {}).get("dept") != "생산기획부", a["name"]))
+    heads = [a for a in mine if (rank.get(a["name"]) or {}).get("rank") in ("사장", "부장")]
+    heads.sort(key=lambda a: ((rank.get(a["name"]) or {}).get("rank") != "사장",
+                              (rank.get(a["name"]) or {}).get("dept") != "운영", a["name"]))
     return (heads or mine or [None])[0]
 
 
@@ -714,12 +719,13 @@ def _kpi_reviews(agents: list[dict], roster: list[dict], data: dict, now) -> Non
             memory.remember(bottom, f"지난주({res['label']}) {short} 실적 꼴찌였다. 이번 주엔 만회해야 한다.", 6, [], "실적")
             chronicle.record_event("실적", f"{short} 주간 실적 1등 {top}", f"{res['label']}\n{board}", [n for n, _ in rows])
             announcer = _kpi_announcer(company, agents, roster)
-            if company != GROUP_COMPANY or not announcer or not _group_channel(GROUP_NAME):
+            group = _shop_group(company)
+            if not group or not announcer or not _group_channel(group):
                 continue
             out = llm_json(
                 _system(announcer),
-                f"[지금] 월요일 아침, {GROUP_NAME}\n[지난주({res['label']}) 실적 순위 - 실제 서비스 수치로 매긴 점수, 평소=100]\n{board}\n\n"
-                f"부서장으로서 단톡방에 주간 실적을 발표하라. 1등 {j(top, '을')} 칭찬하고 보너스 {kpi.WEEKLY_BONUS:,}원을 알리고, "
+                f"[지금] 월요일 아침, {group}\n[지난주({res['label']}) 실적 순위 - 실제 서비스 수치로 매긴 점수, 평소=100]\n{board}\n\n"
+                f"가게 책임자로서 단톡방에 주간 실적을 발표하라. 1등 {j(top, '을')} 칭찬하고 보너스 {kpi.WEEKLY_BONUS:,}원을 알리고, "
                 f"꼴찌 {bottom}에게는 내 성격대로 한마디 한다. 순위와 점수는 위 그대로 쓴다. 3~6줄.\n"
                 '반드시 JSON으로만 응답: {"text": "단톡방에 올릴 글"}',
                 temperature=0.8, timeout=DECIDE_TIMEOUT_SEC, tag=f"주간 실적 {announcer['name']}", smart=True)
@@ -727,7 +733,7 @@ def _kpi_reviews(agents: list[dict], roster: list[dict], data: dict, now) -> Non
             if not text:
                 text = (f"📊 지난주({res['label']}) 실적 발표합니다.\n{board}\n"
                         f"1등 {j(top, '은')} 보너스 {kpi.WEEKLY_BONUS:,}원! {bottom} 씨는 이번 주 분발합시다.")
-            _post_group(announcer, GROUP_NAME, text[:1500], data, agents)
+            _post_group(announcer, group, text[:1500], data, agents)
     if kpi.monthly_due(now):
         res = kpi.monthly(now)
         for company, (name, x) in res["winners"].items():
@@ -742,8 +748,9 @@ def _kpi_reviews(agents: list[dict], roster: list[dict], data: dict, now) -> Non
                 if a.get("company") == company and a["name"] != name:
                     _push_inbox(data, a["name"], f"{short} {title}: {name} ({', '.join(x['posts'])} 평균 {x['score']}점)", "소식", quiet=True)
             announcer = _kpi_announcer(company, agents, roster)
-            if company == GROUP_COMPANY and announcer and _group_channel(GROUP_NAME) and name in by_name:
-                _post_group(announcer, GROUP_NAME, f"🏅 {title}: **{name}** 씨! {', '.join(x['posts'])} 평균 {x['score']}점. "
+            group = _shop_group(company)
+            if group and announcer and _group_channel(group) and name in by_name:
+                _post_group(announcer, group, f"🏅 {title}: **{name}** 씨! {', '.join(x['posts'])} 평균 {x['score']}점. "
                                                    f"상여 {kpi.MONTHLY_BONUS:,}원 나갑니다. 다들 박수!", data, agents)
 
 
@@ -843,17 +850,18 @@ def _system(agent: dict) -> str:
 
 
 def _knowledge_rule(agent: dict) -> str:
-    """정보 칸막이 - 다른 회사/조직 안의 일은 모른다 (동네 사람이 포링푸드 실적/수치 조작을 들먹이는 건 넌센스)."""
+    """정보 칸막이 - 다른 가게 안의 일은 모른다 (동네 사람이 책방/극장 안의 매출/수치 다툼을 들먹이는 건 넌센스)."""
     company = agent.get("company", "")
     mine = company.split(" (")[0] if company in chronicle.OFFICES else ""
     others = [c.split(" (")[0] for c in chronicle.OFFICES if c != company]
     return (
         "[아는 것의 한계]\n"
-        f"- {'나는 ' + mine + ' 사람이다. ' if mine else '나는 회사 사람이 아니다. '}"
-        f"{', '.join(others)} 같은 다른 회사 안의 일(실적, 인사, 수치, 보고서, 사내 다툼, 사내 소문)은 모른다 - "
-        "내가 직접 겪었거나, 그 회사 사람에게 직접 들었거나, 받은 소식에 있는 것만 안다.\n"
-        "- 모르는 남의 회사 일을 아는 척하거나, 그걸로 따지거나 협박하지 마라. 다른 회사 사람과는 그 사람과 나 사이의 일"
-        "(동네 일, 가게, 이웃, 취미, 바깥 뉴스)로 얘기한다.\n"
+        f"- {'나는 ' + mine + ' 사람이다. ' if mine else '나는 ' + ' / '.join(others) + ' 사람이 아니다. '}"
+        f"{', '.join(others)} 같은 다른 가게 안의 일(매출, 실적, 인사, 장부 숫자, 가게 안 다툼과 소문)은 모른다 - "
+        "내가 직접 겪었거나, 그 가게 사람에게 직접 들었거나, 받은 소식에 있는 것만 안다. "
+        "건물 일(지하 공용 창고, 전기, 관리비, 월세)은 이 건물 사람 모두가 안다.\n"
+        "- 모르는 남의 가게 일을 아는 척하거나, 그걸로 따지거나 협박하지 마라. 다른 가게 사람과는 그 사람과 나 사이의 일"
+        "(동네 일, 건물 일, 이웃, 취미, 바깥 뉴스)로 얘기한다.\n"
     )
 
 
@@ -892,7 +900,7 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
     pending = [t for t in chronicle.pending_proposals() if agent["name"] in t["proposal"]["members"]
                and agent["name"] not in t["proposal"]["supporters"]]
     meeting_rule = (
-        "- 여러 사람이 모여서 정해야 할 공동의 일(아직 끝나지 않은 일, 의견이 갈리는 문제, 동네/회사에 닥친 일)이 있고 "
+        "- 여러 사람이 모여서 정해야 할 공동의 일(아직 끝나지 않은 일, 의견이 갈리는 문제, 동네/우리 가게/건물에 닥친 일)이 있고 "
         "내가 나설 만한 성격/처지라면 meeting으로 모임을 제안할 수 있다. 정말 필요할 때만 - 대부분은 null.\n"
         + ("- 누가 제안한 모임에 참석/찬성하고 싶으면 meeting_support에 그 주제를 그대로 써라 (내키지 않으면 null).\n"
            if pending else "")
@@ -1302,7 +1310,7 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
         + (f"{repeat_hint}\n\n" if repeat_hint else "") +
         f"{name}로서 다음 한마디를 해라. 상대 속마음은 모른다 - 말과 분위기로만 짐작해라. "
         "지금 하고 있는 일은 '지금' 일로 말하고, 기억 속 일은 날짜를 오늘과 비교해 오늘/어제/며칠 전을 정확히 말해라. "
-        "자기가 직접 겪거나 들은 적 없는 남의 회사 내부 사정은 아는 척하지 마라. "
+        "자기가 직접 겪거나 들은 적 없는 남의 가게 내부 사정은 아는 척하지 마라. "
         + ("이번이 마지막 말이니 자연스럽게 마무리해라. " if last_turn else "대화가 자연스럽게 끝날 때가 됐으면 end를 true로. ")
         + "\n" + _voice(agent, other["name"])
         + "\n반드시 JSON으로만 응답:\n"
@@ -1346,10 +1354,10 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
     quote = line["line"][:80]
     rnd = random.Random(f"{now_kst().isoformat()}|{a['name']}|{b['name']}")
     picked = []
-    # 회사 안의 얘기(같은 회사 두 사람이 사무실/메신저에서): 그 회사 동료 말고는 들을 길이 없다 - 동네로 새지 않는다
+    # 가게 안의 얘기(같은 가게 두 사람이 가게 안/메신저에서): 그 가게 사람 말고는 들을 길이 없다 - 동네로 새지 않는다
     office = a.get("company") if a.get("company") == b.get("company") and a.get("company") in chronicle.OFFICES else ""
-    office_talk = bool(office) and (how == "메신저" or "사무실" in place or "회의실" in place
-                                    or office.split(" (")[0] in place)
+    office_talk = bool(office) and (how == "메신저" or any(k in place for k in ("사무실", "회의실", "서고", "영사실", "매표"))
+                                    or worldcfg.short(office) in place)
     for other in load_agents():
         if other["name"] in (a["name"], b["name"]):
             continue
@@ -1731,16 +1739,16 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
     return result
 
 
-COMPANY_SCOPE = "회사"
+COMPANY_SCOPE = "가게"
 TOWN_SCOPE = "동네"
 
 
 def _meeting_scopes(agent: dict) -> list[str]:
-    """이 사람이 모임을 제안할 수 있는 범위 - 동네 단톡방 멤버면 동네, 회사(에이전트가 여럿인 곳) 사람이면 회사."""
+    """이 사람이 모임을 제안할 수 있는 범위 - 동네 단톡방 멤버면 동네, 가게(책방/극장) 사람이면 가게."""
     out = []
     if TOWN_GROUP in (agent.get("groups") or []):
         out.append(TOWN_SCOPE)
-    if agent.get("company") in (GROUP_COMPANY, "에린 로지스틱스 (Erinn Logistics)"):
+    if agent.get("company") in worldcfg.OFFICES:
         out.append(COMPANY_SCOPE)
     return out
 
@@ -1752,11 +1760,11 @@ def _scope_members(agent: dict, scope: str, agents: list[dict]) -> list[str]:
 
 
 def _announce(agent: dict, scope: str, text: str, data: dict, agents: list[dict]) -> None:
-    """모임 제안/확정을 그 범위 사람들이 보는 곳에 올린다 (동네 단톡방 / 회사 단톡방 / 대화 채널)."""
+    """모임 제안/확정을 그 범위 사람들이 보는 곳에 올린다 (동네 단톡방 / 가게 단톡방 / 대화 채널)."""
     if scope == TOWN_SCOPE and TOWN_GROUP in _groups_of(agent):
         _post_group(agent, TOWN_GROUP, text, data, agents)
-    elif scope == COMPANY_SCOPE and GROUP_NAME in _groups_of(agent):
-        _post_group(agent, GROUP_NAME, text, data, agents)
+    elif scope == COMPANY_SCOPE and _shop_group(agent.get("company", "")) in _groups_of(agent):
+        _post_group(agent, _shop_group(agent.get("company", "")), text, data, agents)
     else:
         _post(agent, f"-# 📣 {agent.get('company', '').split(' ')[0]}\n{text}")
 
@@ -1779,7 +1787,7 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
             continue
         agent = by_name[name]
         members = _scope_members(agent, m["scope"], agents)
-        place = MEETING_PLACE if m["scope"] == TOWN_SCOPE else f"{agent.get('company', '').split(' ')[0]} 회의실"
+        place = MEETING_PLACE if m["scope"] == TOWN_SCOPE else f"{worldcfg.short(agent.get('company', ''))} 안쪽 사무실"
         # 찬성 10명(본인 포함)이면 잡힌다 - 범위 인원이 그보다 적으면(작은 회사) 그 인원 전원
         needed = min(chronicle.SUPPORT_NEEDED, len(members))
         why_not = chronicle.propose_meeting(m["topic"], name, m["scope"], members, m["hour"], place, m["why"], now, needed,
@@ -2079,7 +2087,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         if name in pushed:
             pushed.discard(name)
     convo["per_hour"] = {k: v for k, v in per_hour.items() if k.startswith(today)}
-    # 3) 회사 단톡방 - 판단 때 group_post를 쓴 사람이 올린다 (시간당/하루 상한)
+    # 3) 가게/동네 단톡방 - 판단 때 group_post를 쓴 사람이 올린다 (시간당/하루 상한)
     gc = data.setdefault("_group", {})
     if gc.get("date") != today:
         gc.clear()
@@ -2149,7 +2157,8 @@ _PLACES = [  # 장소 이름이 제각각이라 묶어서 보여 준다 (앞에 
     (("편의점",), "🏪 동네 편의점"), (("남숙반점", "중국집"), "🥟 남숙반점"), (("치과",), "🦷 치과"),
     (("주민센터",), "🏛️ 주민센터"), (("시장", "반찬가게", "생선가게"), "🧺 시장"), (("횟집",), "🐟 횟집"),
     (("LP", "엘피"), "🎸 LP바"), (("학원",), "📚 학원"), (("병원", "의원"), "🏥 병원"), (("공원", "산책", "바닷가"), "🌳 공원·산책"),
-    (("포링푸드",), "🏭 포링푸드"), (("에린",), "🚚 에린 로지스틱스"), (("골목",), "🏘️ 골목"),
+    (("책방", "서가", "심야 서고", "수선실"), "📚 책방 오아시스"), (("극장", "상영관", "영사실", "매표"), "🎬 별빛극장"),
+    (("관리사무소",), "🔧 관리사무소"), (("창고",), "📦 지하 공용 창고"), (("골목",), "🏘️ 골목"),
     (("집", "자택", "원룸", "자취방", "거실", "방에서", "침대"), "🏠 집"),
 ]
 
@@ -2181,7 +2190,7 @@ def _town_snapshot(states: dict, agent_names: set[str], fresh: set[str], now, as
         zones.setdefault(label, []).append({"name": name, "company": info.get("company", ""),
                                             "agent": name in agent_names, "fresh": name in fresh})
     # 한두 명뿐인 곳은 "그 밖의 곳" 한 구역으로 모은다 (그림이 한 칸짜리 구역으로 길어지지 않게) - 회사/집은 그대로
-    keep = {"🏭 포링푸드", "🚚 에린 로지스틱스", "☕ 카페 오후세시", "🏠 집"}
+    keep = {"📚 책방 오아시스", "🎬 별빛극장", "☕ 카페 오후세시", "🏠 집"}
     others = []
     for label in [lb for lb in zones if lb not in keep and len(zones[lb]) <= MAP_SMALL_ZONE]:
         for p in zones.pop(label):

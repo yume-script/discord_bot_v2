@@ -10,7 +10,7 @@
    띠는 agents.json "zodiac" 또는 이름으로 정한다. 아침에 몇 명(FORTUNE_POSTS_PER_DAY)은 /운세를 친 것처럼 채널에 올린다.
 3) 그림: 화가 인물(ARTISTS, 기본 박충섭/오윤)이 그리고 싶을 때 "drawing"(제목/영어 프롬프트)을 고르면 봇의 이미지 생성(/그림)으로
    실제 그림을 올린다. 하루 DRAW_PER_DAY장, 한 사람 하루 1장. 생성은 오래 걸려서 봇이 예약함에서 꺼낼 때 한다(outbox "draw").
-4) 개미소리: 회사원(포링푸드/에린)이 속이 터질 때 "ant_voice"(짧은 외침)를 고르면 봇의 /개미소리 짤을 단톡방에 올린다
+4) 개미소리: 가게 직원(책방/극장)이 속이 터질 때 "ant_voice"(짧은 외침)를 고르면 봇의 /개미소리 짤을 단톡방에 올린다
    (outbox "ant"). 하루 ANT_PER_DAY장, 한 사람 하루 1장.
 저장: storage/poring_food/market.json(시세/보유), fortune.json(오늘 운세), hobbies.json(오늘 횟수)
 """
@@ -24,7 +24,7 @@ from datetime import datetime
 
 import requests
 
-from . import life, news
+from . import life, news, worldcfg
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -56,7 +56,7 @@ FORTUNE_POSTS_PER_DAY = 3
 ARTISTS = [n.strip() for n in os.getenv("PORING_ARTISTS", "박충섭,오윤").split(",") if n.strip()]
 DRAW_PER_DAY = int(os.getenv("PORING_DRAW_PER_DAY", "2"))
 ANT_PER_DAY = int(os.getenv("PORING_ANT_PER_DAY", "3"))
-OFFICE = ("포링푸드 (Poring Food)", "에린 로지스틱스 (Erinn Logistics)")
+OFFICE = worldcfg.OFFICES
 
 
 def _load(path: str) -> dict:
@@ -235,7 +235,7 @@ def rules_and_spec(agent: dict, now: datetime | None = None) -> tuple[str, str]:
         spec.append(', "drawing": null 또는 {"title": "그림 제목(한국어)", '
                     '"prompt": "이미지 생성용 영어 프롬프트 - 장면/화풍/분위기, 실존 인물 금지"}')
     if agent.get("company") in OFFICE and _used(now, "ant", name) < 1 and _used(now, "ant") < ANT_PER_DAY:
-        rules.append("- 회사 일로 속이 터지면 /개미소리 짤로 단톡방에 하소연할 수 있다 (하루 한 번, 대부분은 null).\n")
+        rules.append("- 가게 일로 속이 터지면 /개미소리 짤로 단톡방에 하소연할 수 있다 (하루 한 번, 대부분은 null).\n")
         spec.append(', "ant_voice": null 또는 "개미가 외칠 짧은 말(15자 이내)"')
     return "".join(rules), "".join(spec)
 
