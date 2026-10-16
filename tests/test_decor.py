@@ -77,3 +77,16 @@ def test_handle_decor_posts_and_pays(monkeypatch):
     assert posts and posts[0][0] == "홍두식" and "별빛극장 앞에 벤치" in posts[0][1] and "골목 기금" in posts[0][1]
     assert life.get("홍두식")["money"] == money + decor.WAGE
     assert "벤치" in decor.prompt_block()
+
+
+def test_summary_for_admin_command():
+    assert "아직 아무것도 놓이지 않았어요" in decor.summary()
+    now = datetime(2026, 10, 16, 15, 0)
+    decor.act("홍두식", {"do": "place", "item": "화단", "near": "책방 오아시스"}, now)
+    d = decor._load()
+    d["items"][0]["cond"] = 10
+    decor._save(d)
+    text = decor.summary(now)
+    assert "골목 기금" in text and "책방 오아시스 앞 화단 - 낡음/시듦 (10)" in text
+    assert "손봐야 할 것 1개" in text and "홍두식: 책방 오아시스 앞 화단 놓음" in text
+    assert "오늘 꾸미기 1/3번 (홍두식)" in text and "윗골목" in text and len(text) <= 1900
