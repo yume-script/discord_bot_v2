@@ -592,7 +592,7 @@ def _handle_decor(decisions: dict, by_name: dict, data: dict, now, hk: str, trig
         if r["do"] == "remove":  # 건물주가 치우면 동네가 안다 (반발/민원거리)
             inject_event([world.TOWN], f"{name}이(가) {r['text']}.", f"{r['near']} 앞 {r['item']} 철거")
     if decor.should_render(now):
-        path = decor.render(now)
+        path = decor.render(now, decor.people_from_states(characters.load_states(), names()))
         if path:
             outbox.schedule(outbox.slot(now, 52, 55, random.Random(f"{hk}|decorpng")) if outbox.paced() else None,
                             "file", path=path, name=DECOR_NAME, text=f"-# 🧱 {now:%m/%d} 오늘의 골목 꾸미기 판")

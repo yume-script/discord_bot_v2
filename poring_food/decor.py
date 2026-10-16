@@ -310,8 +310,49 @@ def prompt_block(now: datetime | None = None) -> str:
 
 
 # ===================================================================== 그림
-def render(now: datetime | None = None) -> str | None:
-    """열린 구역의 판 그림 (PNG 경로). 글꼴/Pillow가 없으면 None."""
+# 사람이 있는 곳(상태의 location 글) -> 판의 랜드마크. 앞에 있는 게 먼저. "골목"은 길 위.
+PLACE_KEYS = [
+    ("카페 오후세시", ("오후세시", "카페")),
+    ("별빛극장", ("극장", "상영관", "영사실", "매표")),
+    ("책방 오아시스", ("책방", "서가", "심야 서고", "수선실")),
+    ("관리사무소", ("관리사무소", "창고")),
+    ("포장마차 단밤", ("단밤", "포장마차")),
+    ("LP바", ("LP", "엘피", "오락기")),
+    ("남숙반점", ("남숙", "중국집")),
+    ("시장 입구", ("시장", "반찬가게", "생선가게")),
+    ("주민센터", ("주민센터",)),
+    ("골목", ("골목", "오아시스 거리")),
+]
+
+
+def place_of(location: str) -> str:
+    """상태의 장소 글 -> 판 위 자리 (랜드마크 이름 / "골목" / "" = 판 밖: 집, 학교 등)."""
+    loc = location or ""
+    return next((name for name, keys in PLACE_KEYS if any(k in loc for k in keys)), "")
+
+
+def people_from_states(states: dict, agent_names: set[str]) -> dict:
+    """characters 상태 -> {자리: {"agents": [이름], "others": 배경 인물 수}} (자는 사람, 판 밖은 뺀다)."""
+    out, seen = {}, set()
+    for info in (states or {}).values():
+        name = info.get("name", "")
+        if not name or name in seen or info.get("state") == "자는 중":
+            continue
+        seen.add(name)
+        where = place_of(info.get("location", ""))
+        if not where:
+            continue
+        slot = out.setdefault(where, {"agents": [], "others": 0})
+        if name in agent_names:
+            slot["agents"].append(name)
+        else:
+            slot["others"] += 1
+    return out
+
+
+def render(now: datetime | None = None, people: dict | None = None) -> str | None:
+    """열린 구역의 판 그림 (PNG 경로). 글꼴/Pillow가 없으면 None.
+    people(people_from_states)를 주면 랜드마크마다 지금 있는 사람 수를 붙이고, 오른쪽에 누가 어디 있는지 적는다."""
     try:
         from PIL import Image, ImageDraw, ImageFont
     except ImportError:
@@ -326,7 +367,9 @@ def render(now: datetime | None = None) -> str | None:
     x0, y0 = min(r[0] for r in xs), min(r[1] for r in xs)
     x1, y1 = max(r[2] for r in xs), max(r[3] for r in xs)
     pad, top = 24, 70
-    w, h = (x1 - x0 + 1) * CELL + pad * 2, (y1 - y0 + 1) * CELL + top + pad + 60
+    board_w = (x1 - x0 + 1) * CELL + pad * 2
+    side = 380 if people else 0
+    w, h = board_w + side, (y1 - y0 + 1) * CELL + top + pad + 60
     img = Image.new("RGB", (w, h), townmap.BG)
     dr = ImageDraw.Draw(img)
     f_t, f_c, f_s = (ImageFont.truetype(font_file, s) for s in (26, 15, 13))
@@ -353,6 +396,46 @@ def render(now: datetime | None = None) -> str | None:
         dr.text((X0 + 9, Y0 + 7), ITEMS[it["item"]][4], font=f_c, fill="#1E1F22")
         if it["cond"] < BAD:
             dr.line((X0 + 3, Y1 - 4, X1 - 3, Y0 + 4), fill="#EB5757", width=2)
+    # 지금 있는 사람: 랜드마크/골목에 인원 배지, 오른쪽에 누가 어디
+    if people:
+        def badge(X, Y, n):
+            label = f"{n}명"
+            tw = dr.textlength(label, font=f_s) + 10
+            dr.rounded_rectangle((X - tw, Y - 18, X, Y), radius=8, fill=townmap.ACCENT)
+            dr.text((X - tw + 5, Y - 17), label, font=f_s, fill="#1E1F22")
+        for where, p in people.items():
+            n = len(p["agents"]) + p["others"]
+            if not n:
+                continue
+            if where == "골목":
+                xs_ = [c[0] for c in _open_cells(data)]
+                gx = (min(xs_) + max(xs_)) // 2
+                X1 = box(gx, ROAD_Y[0])[2]
+                Y1 = box(gx, ROAD_Y[-1])[3]
+            elif where in LANDMARKS:
+                r = LANDMARKS[where]
+                X1, Y1 = box(r[2], r[3])[2], box(r[2], r[3])[3]
+                if r[1] == r[3]:  # 한 줄짜리 랜드마크는 이름을 가리지 않게 바깥 오른쪽에
+                    X1 += 52
+            else:
+                continue
+            badge(X1 - 2, Y1 - 2, n)
+        sx, sy = board_w + 4, top
+        dr.text((sx, sy - 34), "지금 어디에", font=f_c, fill=townmap.TEXT)
+        order = [n for n, _ in PLACE_KEYS]
+        for where in sorted(people, key=lambda k: order.index(k) if k in order else 99):
+            p = people[where]
+            if not (p["agents"] or p["others"]):
+                continue
+            dr.text((sx, sy), f"{where} ({len(p['agents']) + p['others']}명)", font=f_c, fill=townmap.ACCENT)
+            sy += 22
+            names = ", ".join(p["agents"]) + ((f" 외 {p['others']}명" if p["agents"] else f"주민 {p['others']}명") if p["others"] else "")
+            for line in townmap._wrap(dr, names, f_s, side - 30):
+                dr.text((sx + 10, sy), line, font=f_s, fill=townmap.TEXT)
+                sy += 18
+            sy += 8
+            if sy > h - 70:
+                break
     lx, ly = pad, h - 46
     for key, (nm, _, _, color, ch) in ITEMS.items():
         label = f"{ch}={nm}"

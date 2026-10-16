@@ -90,3 +90,23 @@ def test_summary_for_admin_command():
     assert "골목 기금" in text and "책방 오아시스 앞 화단 - 낡음/시듦 (10)" in text
     assert "손봐야 할 것 1개" in text and "홍두식: 책방 오아시스 앞 화단 놓음" in text
     assert "오늘 꾸미기 1/3번 (홍두식)" in text and "윗골목" in text and len(text) <= 1900
+
+
+def test_people_on_board(monkeypatch, tmp_path):
+    states = {"1": {"name": "애순이", "location": "책방 오아시스(계산대)", "state": "일하는 중"},
+              "2": {"name": "소라", "location": "카페 오후세시", "state": "일하는 중"},
+              "3": {"name": "손님", "location": "별빛극장 1층 카페 오후세시", "state": "개인시간"},
+              "4": {"name": "홍두식", "location": "골목", "state": "일하는 중"},
+              "5": {"name": "잠꾸러기", "location": "카페 오후세시", "state": "자는 중"},
+              "6": {"name": "김선영", "location": "집", "state": "개인시간"}}
+    people = decor.people_from_states(states, {"애순이", "소라", "홍두식", "김선영"})
+    assert people == {"책방 오아시스": {"agents": ["애순이"], "others": 0},
+                      "카페 오후세시": {"agents": ["소라"], "others": 1},
+                      "골목": {"agents": ["홍두식"], "others": 0}}
+    from poring_food import townmap
+    if not townmap._font_file():
+        pytest.skip("글꼴 없음")
+    monkeypatch.setattr(decor, "DECOR_DIR", str(tmp_path))
+    from PIL import Image
+    plain = Image.open(decor.render(datetime(2026, 10, 16, 20))).size[0]
+    assert Image.open(decor.render(datetime(2026, 10, 16, 20), people)).size[0] > plain   # 오른쪽 "지금 어디에"

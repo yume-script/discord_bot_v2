@@ -505,7 +505,7 @@ class PoringFood(commands.Cog):
         text = await asyncio.to_thread(chronicle.lookup, date)
         await interaction.response.send_message(text, ephemeral=True)
 
-    @app_commands.command(name="포링푸드골목", description="[관리자] 골목 꾸미기 판 - 판 그림, 골목 기금, 놓인 것과 상태, 최근 기록을 봅니다")
+    @app_commands.command(name="포링푸드골목", description="[관리자] 골목 꾸미기 판 - 판 그림(지금 누가 어디 있는지 포함), 기금, 놓인 것과 상태, 최근 기록")
     async def decor_view(self, interaction: Interaction):
         if not is_admin(interaction.user.id):
             await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
@@ -514,7 +514,9 @@ class PoringFood(commands.Cog):
         from poring_food import decor
         text = await asyncio.to_thread(decor.summary)
         try:
-            path = await asyncio.to_thread(decor.render)
+            from poring_food import agents, characters
+            people = await asyncio.to_thread(lambda: decor.people_from_states(characters.load_states(), agents.names()))
+            path = await asyncio.to_thread(decor.render, None, people)
         except Exception:  # noqa: BLE001 - 그림을 못 그려도 글은 보여 준다
             log.exception("골목 꾸미기 판 그리기 실패")
             path = None
