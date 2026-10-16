@@ -380,3 +380,36 @@ def mark_rendered(now: datetime) -> None:
     data = _state()
     data["rendered_day"] = now.strftime("%Y-%m-%d")
     _save(data)
+
+
+def summary(now: datetime | None = None, limit: int = 25) -> str:
+    """관리자 조회(/포링푸드골목)용 글: 기금, 열린 구역, 놓인 것(상태), 손봐야 할 것, 최근 기록, 오늘 한 사람."""
+    now = now or now_kst()
+    data = _state()
+    items = data["items"]
+    opened = ", ".join(DISTRICTS[k]["name"] for k in data["open"])
+    locked = ", ".join(v["name"] for k, v in DISTRICTS.items() if k not in data["open"])
+    lines = [f"🧱 **골목 꾸미기 판** ({now:%m/%d %H:%M})",
+             f"골목 기금 **{data['fund']:,}원** (반상회비 하루 +{DAILY_FUND:,}원) · 놓인 것 {len(items)}개",
+             f"열린 구역: {opened}" + (f" · 아직 닫힌 구역: {locked}" if locked else "")]
+    if items:
+        lines.append("\n**놓인 것**")
+        for i in sorted(items, key=lambda i: i["cond"])[:limit]:
+            lines.append(f"• {i['near']} 앞 {i['item']} - {_cond_word(i['cond'])} ({i['cond']}) · {i['by']}, {i['at'][5:10].replace('-', '/')}")
+        if len(items) > limit:
+            lines.append(f"…외 {len(items) - limit}개")
+        bad = [i for i in items if i["cond"] < BAD]
+        if bad:
+            lines.append(f"⚠️ 손봐야 할 것 {len(bad)}개: " + ", ".join(f"{i['near']} 앞 {i['item']}" for i in bad[:8]))
+    else:
+        lines.append("\n아직 아무것도 놓이지 않았어요.")
+    if data["log"]:
+        lines.append("\n**최근 기록**")
+        word = {"place": "놓음", "repair": "고침", "remove": "치움"}
+        for g in data["log"][-6:][::-1]:
+            lines.append(f"• {g['at'][5:16].replace('T', ' ')} {g['by']}: {g['near']} 앞 {g['item']} {word.get(g['do'], g['do'])}"
+                         + (f" (-{g['cost']:,}원)" if g.get("cost") else ""))
+    acts = data["acts"].get(now.strftime("%Y-%m-%d"), {})
+    lines.append(f"\n오늘 꾸미기 {sum(acts.values())}/{ACTS_PER_DAY}번" + (f" ({', '.join(acts)})" if acts else "")
+                 + f" · 꾸미는 사람: {', '.join(ROLES)}")
+    return "\n".join(lines)[:1900]
