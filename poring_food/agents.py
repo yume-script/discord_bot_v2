@@ -28,7 +28,7 @@ import time
 import uuid
 from datetime import datetime, timedelta
 
-from . import (arcade, book_watch, characters, chronicle, facilities, handover, hobbies, kpi, life, live, memory, milestones, newcomers, novelty,
+from . import (arcade, book_watch, characters, chronicle, decor, facilities, handover, hobbies, kpi, life, live, memory, milestones, newcomers, novelty,
                outbox, plex_watch, projects, rotation, news, runtime, signals, street_mail, townmap, villains, world, worldcfg)
 from .clock import now_kst
 from .josa import j
@@ -564,6 +564,41 @@ def _handle_arcade(decisions: dict, by_name: dict, data: dict, now, hk: str, tri
                                        f"{'땄다' if r['change'] > 0 else '잃었다'}", 5, [name], "가게")
 
 
+DECOR_NAME = "🧱 골목 꾸미기"
+
+
+def _handle_decor(decisions: dict, by_name: dict, data: dict, now, hk: str, triggers: dict) -> None:
+    """골목 꾸미기 판 (decor.py): 하루 한 번 닳기/기금, 고른 사람의 꾸미기를 판에 반영해 채널에 올리고, 저녁엔 판 그림."""
+    decor.daily(now, signals.weather_text(), inject=lambda t, d, title: inject_event(t, d, title))
+    for name, d in decisions.items():
+        dc = d.get("decor")
+        if not dc or d.get("decor_done") or d.get("state") == "자는 중" or name not in by_name:
+            continue
+        d["decor_done"] = True
+        data.setdefault(name, {}).setdefault("decision", d)["decor_done"] = True
+        r = decor.act(name, dc, now)
+        if not r:
+            continue
+        t = outbox.slot(now, 15, 50, random.Random(f"{hk}|decor|{name}"))
+        money = f"골목 기금 -{r['cost']:,}원" + (f", 일당 {r['wage']:,}원" if r["wage"] else "") + f" (남은 기금 {r['fund']:,}원)"
+        _post(by_name[name], f"-# 🧱 골목 꾸미기 · {t.strftime('%H:%M')} · {name}\n{r['text']}" + (f" - {dc['why']}" if dc.get("why") else "")
+              + f"\n-# {money}", at=t)
+        if r["wage"]:
+            life.give_money(name, r["wage"], f"골목 꾸미기 일당 ({r['item']})")
+        memory.remember(name, f"골목 꾸미기: {r['text']}", 5, [], "골목")
+        chronicle.record_event("골목", f"{name}: {r['text']}", money, [name])
+        novelty.note("사건", f"골목 꾸미기 {r['text']}", [name], at=t)
+        _add_trigger(triggers, name, f"방금 골목에서 {r['text']}", f"골목:{name}")
+        if r["do"] == "remove":  # 건물주가 치우면 동네가 안다 (반발/민원거리)
+            inject_event([world.TOWN], f"{name}이(가) {r['text']}.", f"{r['near']} 앞 {r['item']} 철거")
+    if decor.should_render(now):
+        path = decor.render(now)
+        if path:
+            outbox.schedule(outbox.slot(now, 52, 55, random.Random(f"{hk}|decorpng")) if outbox.paced() else None,
+                            "file", path=path, name=DECOR_NAME, text=f"-# 🧱 {now:%m/%d} 오늘의 골목 꾸미기 판")
+            decor.mark_rendered(now)
+
+
 STOCK_APP = "📈 증권 앱"
 FORTUNE_NAME = "🔮 오늘의 운세"
 
@@ -825,6 +860,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         plex_watch.prompt_block(now),
         facilities.prompt_block(),
         street_mail.prompt_block(now),
+        decor.prompt_block(now),
         book_watch.prompt_block(agent.get("company", ""), now),
         hobbies.prompt_block(agent, now),
         novelty.worn_out(name, now),
@@ -931,6 +967,9 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
                          '"did": "이번 시간에 실제로 한 일 한 줄"}')
     arcade_rule = arcade.prompt_rule(agent["name"])
     meeting_spec += arcade.SPEC if arcade_rule else ""
+    decor_rule = decor.prompt_rule(agent["name"])   # 골목 꾸미기 (꾸밀 수 있는 인물만)
+    arcade_rule += decor_rule
+    meeting_spec += decor.SPEC if decor_rule else ""
     hobby_rule, hobby_spec = hobbies.rules_and_spec(agent)  # /주식 /그림 /개미소리
     arcade_rule += hobby_rule
     meeting_spec += hobby_spec
@@ -971,6 +1010,7 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         "meeting_support": str(out.get("meeting_support") or "").strip()[:80] if pending else "",
         "project_work": _parse_project_work(out.get("project_work"), my_projects),
         "game": arcade.parse(out.get("game")) if "game" in meeting_spec else None,
+        "decor": decor.parse(out.get("decor"), agent["name"]) if decor_rule else None,
         **(hobbies.parse(out, agent) if hobby_spec else {}),
     }
 
@@ -2136,6 +2176,11 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         _handle_arcade(decisions, by_name, data, now, hk, hour_triggers)
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 오락실 처리 실패: {e}")
+    # 3.12) 골목 꾸미기 - 매일 닳기/기금 적립, decor를 고른 사람이 판에 놓고/고치고/치운다, 저녁엔 판 그림
+    try:
+        _handle_decor(decisions, by_name, data, now, hk, hour_triggers)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 골목 꾸미기 처리 실패: {e}")
     # 3.15) 봇 명령어 - /주식 /그림 /개미소리 (판단에서 고른 사람) + 아침 /운세 몇 명 + 장 마감 뒤 주식 손익
     try:
         _handle_hobbies(decisions, by_name, data, now, hk, hour_triggers)
