@@ -21,3 +21,7 @@ venv/
 
 # 토론 시뮬레이터 기록
 debate/runs/
+
+# 브런치 EPUB 저장기 목록/결과물
+brunch_epub/data/
+brunch_epub/out/
