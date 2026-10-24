@@ -1,5 +1,5 @@
 """
-포링푸드(오아시스 거리 - 애순이와 동네 사람들) 조회 도구 - 아메하나/애순이(ai/rag_engine.py)가 대화 중에 쓴다.
+포링푸드(오아시스 마을 - 애순이와 마을 사람들) 조회 도구 - 아메하나/애순이(ai/rag_engine.py)가 대화 중에 쓴다.
 
 [변경] 원래는 별도 프로젝트였던 포링푸드가 이 파일을 MCP 서버(stdio)로 띄우고, 봇이
 config/mcp_servers.yaml의 poring_food 항목으로 하위 프로세스를 실행해서 붙었다. 봇으로
@@ -10,7 +10,7 @@ config/mcp_servers.yaml의 poring_food 항목으로 하위 프로세스를 실�
   storage/poring_food의 상태 파일만 읽는다.
 - get_character_story: 방송 순서가 안 돌아온 인물의 이야기를 즉석 생성(LLM 호출) - 같은
   시간대 안에서는 캐시를 재사용한다.
-- get_bookoasis_report: 애순이의 책방 오아시스 서가(북오아시스) 마지막 점검 결과.
+- get_bookoasis_report: 애순이의 오아시스 마법도서관 서가(북오아시스) 마지막 점검 결과.
 
 함수들은 동기(파일 읽기, requests 기반 LLM 호출)라서 LangChain 도구로 감쌀 때 스레드에서
 실행되게 한다(봇 이벤트 루프를 막지 않게).
@@ -98,7 +98,7 @@ def get_current_status(character: str = "애순이") -> str:
         return f"'{character}'라는 인물을 못 찾았어요. get_character_list로 누가 있는지 확인해보세요."
 
     if len(matches) > 1:
-        lines = [f"'{character}'라는 이름이 여러 곳(가게/동네)에 있어요:"]
+        lines = [f"'{character}'라는 이름이 여러 곳(가게/마을)에 있어요:"]
         for cid, info in matches:
             lines.append(f"- {info.get('company')}: {info.get('location')}에서 {info.get('activity')} 중")
         return "\n".join(lines)
@@ -119,7 +119,7 @@ def get_current_status(character: str = "애순이") -> str:
 
 
 def get_character_list() -> str:
-    """오아시스 거리(책방 오아시스/별빛극장/골목·관리사무소)와 애순이·소라의 주변 사람들까지, 등장하는 인물 전체 목록(이름/소속/부서/직급)을 알려준다."""
+    """오아시스 마을(마법 판타지 변경 마을 - 오아시스 마법도서관/별빛 환영극장/성벽 수비대)과 애순이·소라의 주변 사람들까지, 등장하는 인물 전체 목록(이름/소속/부서/직급)을 알려준다."""
     entries = []
     for path in sorted(glob.glob(ORGANIZATION_GLOB)):
         try:
@@ -130,7 +130,7 @@ def get_character_list() -> str:
         company = data.get("company_name", os.path.basename(path))
         for dept in data.get("departments", []):
             for m in dept.get("members", []):
-                entries.append(f"- {m['name']} ({company} {dept.get('dept_name', '')} {m.get('rank', '')})")
+                entries.append(f"- {m['name']} ({company} {dept.get('dept_name', '')} {m.get('job') or m.get('rank', '')})")
     if not entries:
         return "조직도를 못 읽었어요."
     return "\n".join(entries)
@@ -209,9 +209,9 @@ def get_recent_history(character: str = "애순이", days: int = 1) -> str:
 
 def get_all_characters_status() -> str:
     """
-    오아시스 거리 사람들 전원(애순이 포함 - 책방 오아시스, 별빛극장, 골목 가게/관리사무소, 주변 사람들)이
-    지금 각자 어디서 뭘 하고 있는지 한 번에 보여준다. "책방/극장 사람들 지금 뭐하고 있지?", "다들 뭐해?"
-    같은 전체 근황 질문에 쓴다. 소속(가게/동네)별로 묶어서 보여준다.
+    오아시스 마을 사람들 전원(애순이 포함 - 오아시스 마법도서관, 별빛 환영극장, 골목 가게/성벽 수비대, 주변 사람들)이
+    지금 각자 어디서 뭘 하고 있는지 한 번에 보여준다. "도서관/극장 사람들 지금 뭐하고 있지?", "다들 뭐해?"
+    같은 전체 근황 질문에 쓴다. 소속(도서관/극장/마을)별로 묶어서 보여준다.
     """
     states = _load_characters_state()
     if not states:
@@ -259,7 +259,7 @@ def get_character_story(character: str) -> str:
         _story_cache[cache_key] = result
         return result
     if len(matches) > 1:
-        return f"'{character}'라는 이름이 여러 곳(가게/동네)에 있어요 - 어디 사람인지 알려주시면 좁혀드릴게요."
+        return f"'{character}'라는 이름이 여러 곳(가게/마을)에 있어요 - 어디 사람인지 알려주시면 좁혀드릴게요."
 
     _, info = matches[0]
     if info.get("state") == "자는 중":
@@ -295,13 +295,13 @@ def get_character_story(character: str) -> str:
 
 def get_bookoasis_report() -> str:
     """
-    애순이가 사장으로 운영하는 '책방 오아시스'의 서가 '북오아시스'(일반 도서/오디오북 서가)의 최근 점검
-    결과를 알려준다 - 마지막 점검 시각, 서가 전산 연결 상태, 최근 새로 입고된 책 목록. "애순아 책방 서가
-    요즘 어때?", "최근에 들어온 책 있어?"처럼 애순이 책방의 입고 소식을 물을 때 쓴다.
+    애순이가 사장으로 운영하는 '오아시스 마법도서관'의 서가 '북오아시스'(일반 도서/오디오북 서가)의 최근 점검
+    결과를 알려준다 - 마지막 점검 시각, 서가 전산 연결 상태, 최근 새로 입고된 책 목록. "애순아 도서관 서가
+    요즘 어때?", "최근에 들어온 책 있어?"처럼 애순이 도서관의 입고 소식을 물을 때 쓴다.
     (애순이가 방송 주인공인 시간에 점검하므로, 점검 시각이 몇 시간 전일 수 있다)
     """
     if not os.path.exists(BOOKOASIS_STATE_PATH):
-        return "아직 책방 서가 점검 기록이 없어요 (애순이가 아직 점검하지 않았거나 기능이 꺼져 있음)."
+        return "아직 도서관 서가 점검 기록이 없어요 (애순이가 아직 점검하지 않았거나 기능이 꺼져 있음)."
     try:
         with open(BOOKOASIS_STATE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -328,9 +328,9 @@ def get_bookoasis_report() -> str:
 
 def get_poring_story(character: str = "") -> str:
     """
-    오아시스 거리(책방 오아시스/별빛극장/골목) 연재 드라마의 줄거리를 알려준다 - 지난 이야기 요약, 진행 중인
-    사건들(등장인물/지금까지/다음 전개), 최근 하루 요약, 최근 대화 장면. "책방 요즘 무슨 일 있어?", "김동식이랑
-    애순이 무슨 사이야?", "어제 극장이랑 책방에서 무슨 일 있었어?" 같은 질문에 쓴다. character를 주면 그 인물이
+    오아시스 마을(오아시스 마법도서관/별빛 환영극장/골목) 연재 드라마의 줄거리를 알려준다 - 지난 이야기 요약, 진행 중인
+    사건들(등장인물/지금까지/다음 전개), 최근 하루 요약, 최근 대화 장면. "도서관 요즘 무슨 일 있어?", "김동식이랑
+    애순이 무슨 사이야?", "어제 극장이랑 도서관에서 무슨 일 있었어?" 같은 질문에 쓴다. character를 주면 그 인물이
     나온 장면 위주로 보여준다.
     """
     return story.story_so_far(character)

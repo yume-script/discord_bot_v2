@@ -24,7 +24,7 @@ def test_market_prompt_and_trade_roundtrip():
     _refresh()
     kwon = _by("권민우")
     block = hobbies.prompt_block(kwon, T)
-    assert "실제 시세" in block and "삼성전자 50,000원(+2.0%)" in block and "USD 1,400원" in block
+    assert "실제 주식 시세" in block and "삼성전자 50,000원(+2.0%)" in block and "USD 1,400원" in block
     assert "귀인을" in block and "띠" in block
     rule, spec = hobbies.rules_and_spec(kwon, T)
     assert "주식" in rule and '"stock"' in spec
@@ -36,7 +36,7 @@ def test_market_prompt_and_trade_roundtrip():
     assert int(life.get("권민우")["money"]) == money - shares * 50_000
     assert hobbies.holdings("권민우")["삼성전자"]["shares"] == shares
     assert hobbies.trade("권민우", {"action": "매도", "name": "삼성전자", "amount": 0}, T) is None   # 하루 한 번
-    assert "내 주식" in hobbies.prompt_block(kwon, T)
+    assert "내 상단 지분(주식)" in hobbies.prompt_block(kwon, T)
     # 다음 날 값이 오른 뒤 전량 매도 - 손익이 이야기 속 돈에 반영
     nxt = T + timedelta(days=1)
     _refresh(nxt, 60_000.0)

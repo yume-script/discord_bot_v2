@@ -1,5 +1,5 @@
 """
-[신규] 심시티/심즈처럼 오아시스 거리 인물들이 각자 자기 상태와 기억을 갖고, 마주치면 실제로
+[신규] 심시티/심즈처럼 오아시스 마을 인물들이 각자 자기 상태와 기억을 갖고, 마주치면 실제로
 상호작용하는 구조를 만든다. 애순이는 기존처럼 processor.py/generator.py가 상세하게
 다루고(주인공이라 손으로 짠 디테일이 있음), 나머지 인물들은 이 파일이 데이터 기반(직무/
 성격 텍스트를 그대로 활용)으로 가볍게(LLM 호출 없이) 스케줄을 굴린다.
@@ -79,6 +79,7 @@ def load_roster() -> list[dict]:
                     "id": _make_id(company_name, m["name"]),
                     "name": m["name"],
                     "rank": m.get("rank", ""),
+                    "job": m.get("job") or m.get("rank", ""),   # 판타지 직업 (표시/프롬프트용, rank는 급여/위계용)
                     "prefix": m.get("prefix", ""),
                     "dept": dept.get("dept_name", ""),
                     "company": company_name,
@@ -86,14 +87,15 @@ def load_roster() -> list[dict]:
                     "inner_truth": m.get("inner_truth", ""),
                     "key_behavior": m.get("key_behavior", ""),
                 })
-    # 주 1회 이사 온 드라마 인물들 (newcomers.py) - 동네 배경 인물로
+    # 주 1회 이사 온 드라마 인물들 (newcomers.py) - 마을 배경 인물로
     from . import newcomers
     have = {c["name"] for c in roster}
     for m in newcomers.residents():
         if m["name"] in have:
             continue
         roster.append({
-            "id": _make_id(newcomers.COMPANY, m["name"]), "name": m["name"], "rank": m.get("rank", ""), "prefix": "",
+            "id": _make_id(newcomers.COMPANY, m["name"]), "name": m["name"], "rank": m.get("rank", ""),
+            "job": m.get("job") or m.get("rank", ""), "prefix": "",
             "dept": f"{newcomers.DEPT} ({m.get('drama', '')})", "company": newcomers.COMPANY,
             "outer_persona": m.get("outer_persona", ""), "inner_truth": m.get("inner_truth", ""),
             "key_behavior": m.get("key_behavior", ""),
@@ -107,27 +109,27 @@ def roster_by_id(roster: list[dict]) -> dict[str, dict]:
 
 # ============================================================= 개별 스케줄 (LLM 없이, 가벼움)
 # 배경 인물마다 나이대/직업을 조직도(직책/부서/겉모습/속마음/회사)에서 짐작해서 그에 맞는 하루를 산다.
-# 초등학생은 학교-학원-놀이터, 할머니는 새벽 산책-경로당-시장, 포장마차 사장은 저녁부터 새벽까지 장사,
+# 꼬마는 글방-놀이터, 할머니는 새벽 산책-노인정-시장, 선술집 사장은 저녁부터 새벽까지 장사,
 # 간호사/순경은 교대 근무... (예전엔 모두가 회사원처럼 7~18시 사무실, 저녁엔 소개팅/술자리였다)
-KID_ACTIVITIES = [("놀이터", "친구들과 놀기", 3), ("집", "숙제", 2), ("집", "만화 보기", 2), ("골목", "자전거 타기", 1),
-                  ("동네 편의점", "군것질", 1), ("학원", "피아노 학원", 1)]
-TEEN_ACTIVITIES = [("동네 편의점", "친구들과 컵라면", 2), ("집", "게임", 2), ("PC방", "게임", 1), ("집", "숙제", 2),
-                   ("골목", "친구들과 수다", 1), ("노래방", "친구들과 노래방", 1)]
-YOUNG_ACTIVITIES = [("동네 카페", "과제/공부", 2), ("집", "유튜브 보기", 2), ("동네 편의점", "야식 사기", 1),
-                    ("포장마차", "친구들과 한잔", 1), ("헬스장/공원", "운동", 1), ("영화관", "영화 감상", 1), ("집", "휴식", 2)]
-ELDER_ACTIVITIES = [("경로당", "화투 치기", 3), ("공원", "산책", 2), ("시장", "장 구경", 2), ("집", "TV 드라마 보기", 3),
-                    ("골목 평상", "이웃과 수다", 2), ("텃밭", "텃밭 가꾸기", 1), ("동네 병원", "물리치료", 1)]
+KID_ACTIVITIES = [("놀이터", "친구들과 놀기", 3), ("집", "숙제", 2), ("집", "그림책 보기", 2), ("골목", "나무칼 싸움 놀이", 1),
+                  ("마을 잡화점", "군것질", 1), ("글방", "류트 배우기", 1)]
+TEEN_ACTIVITIES = [("마을 잡화점", "친구들과 꼬치 사 먹기", 2), ("집", "카드놀이", 2), ("수비대 훈련장", "목검 연습", 1),
+                   ("집", "숙제", 2), ("골목", "친구들과 수다", 1), ("음유 주점", "친구들과 노래", 1)]
+YOUNG_ACTIVITIES = [("마을 찻집", "마법 공부", 2), ("집", "환영 구슬 보기", 2), ("마을 잡화점", "야식 사기", 1),
+                    ("선술집", "친구들과 한잔", 1), ("수비대 훈련장", "수련", 1), ("별빛 환영극장", "환영극 관람", 1), ("집", "휴식", 2)]
+ELDER_ACTIVITIES = [("노인정", "화투 치기", 3), ("샘터", "산책", 2), ("시장", "장 구경", 2), ("집", "옛날이야기 책 읽기", 3),
+                    ("골목 평상", "이웃과 수다", 2), ("텃밭", "약초밭 가꾸기", 1), ("치유원", "침 맞기", 1)]
 GENERIC_PERSONAL_ACTIVITIES = [
-    ("영화관", "영화 감상", 2),
-    ("동네 카페", "지인과 커피 타임", 2),
-    ("서점", "책 구경", 1),
-    ("헬스장/공원", "운동", 1),
+    ("별빛 환영극장", "환영극 관람", 2),
+    ("마을 찻집", "지인과 약초차", 2),
+    ("오아시스 마법도서관", "책 구경", 1),
+    ("수비대 훈련장/샘터", "수련", 1),
     ("맛집", "맛집 탐방", 2),
     ("집", "휴식", 3),
-    ("소개팅 장소", "소개팅/데이트", 1),
-    ("쇼핑몰", "쇼핑", 1),
+    ("성벽 산책길", "데이트", 1),
+    ("장터", "떠돌이 상인 구경", 1),
     ("친구 집", "친구 모임", 1),
-    ("포장마차", "퇴근 후 술 한잔", 1),
+    ("선술집", "일 끝나고 술 한잔", 1),
 ]
 PERSONAL_BY_TYPE = {"child": KID_ACTIVITIES, "teen": TEEN_ACTIVITIES, "student": YOUNG_ACTIVITIES,
                     "elder": ELDER_ACTIVITIES}
@@ -136,31 +138,34 @@ PERSONAL_BY_TYPE = {"child": KID_ACTIVITIES, "teen": TEEN_ACTIVITIES, "student":
 _TYPE_RULES = [
     ("child", ("초등학생", "꼬마", "어린이")),
     ("teen", ("고등학생", "중학생")),
-    ("student", ("대학생", "재수생", "수험생", "장수생", "대학원생", "취준생")),
+    ("student", ("대학생", "재수생", "수험생", "장수생", "대학원생", "취준생", "학도", "준비생")),
     ("elder", ("할머니", "할아버지", "은퇴", "노인", "경로당", "70대", "80대")),
-    ("nurse", ("간호사",)),
-    ("medic", ("의사", "전공의", "원장", "치위생사", "약사")),
-    ("police", ("순경", "경찰")),
-    ("public", ("동장", "통장", "공무원", "주민센터")),
-    ("shop", ("사장", "주방장", "미용실", "반점", "포장마차", "생선가게", "반찬가게", "횟집", "가게")),
+    ("nurse", ("간호사", "치유 보조사")),
+    ("medic", ("의사", "전공의", "원장", "치위생사", "약사", "치유사")),
+    ("police", ("순경", "경찰", "민병")),
+    ("public", ("동장", "촌장", "공무원", "촌장 회관", "행정관")),
+    ("shop", ("사장", "주인", "주방장", "미용실", "이발소", "반점", "선술집", "생선가게", "어물전", "반찬가게", "횟집", "가게")),
     ("freelance", ("작가", "PD", "화가", "강사", "변호사", "정비공", "택배", "기사", "가수")),
 ]
-_WORKPLACES = [  # (찾을 말, 일하는 곳)
-    ("미용실", "골목 미용실"), ("반점", "남숙반점"), ("중국집", "남숙반점"), ("포장마차", "포장마차 단밤"),
-    ("생선", "시장 생선가게"), ("반찬", "시장 반찬가게"), ("횟집", "화정 횟집"), ("LP", "골목 LP바"),
-    ("배달", "배달대행 사무실"), ("치위생사", "동네 치과"), ("치과", "동네 치과"), ("약사", "동네 약국"),
-    ("간호사", "대학병원"), ("전공의", "대학병원"), ("의사", "대학병원"), ("순경", "지구대"), ("동장", "주민센터"),
-    ("통장", "주민센터"), ("방송작가", "방송국 작업실"), ("작가", "작업실"), ("PD", "촬영 현장"), ("화가", "미술학원"),
-    ("강사", "학원"), ("변호사", "법률사무소"), ("정비공", "카센터"), ("택배", "골목 배송 중"), ("기사", "골목 배송 중"),
-    ("가수", "골목 LP바"), ("대학원생", "대학 연구실"), ("대학생", "대학교"), ("고등학생", "고등학교"),
-    ("초등학생", "초등학교"), ("재수생", "독서실"), ("수험생", "독서실"), ("장수생", "독서실"),
+_WORKPLACES = [  # (찾을 말, 일하는 곳) - 조직도 직급(rank)은 예전 말이 남아 있어서 둘 다 본다
+    ("미용실", "골목 이발소"), ("이발", "골목 이발소"), ("반점", "주막 남숙"), ("주막", "주막 남숙"), ("선술집", "선술집 단밤"),
+    ("생선", "시장 어물전"), ("어물", "시장 어물전"), ("반찬", "시장 약초·반찬 가게"), ("횟집", "화정 횟집"),
+    ("LP", "골목 음유 주점"), ("음유", "골목 음유 주점"), ("배달", "전령 배달소"), ("전령", "전령 배달소"),
+    ("치위생사", "마을 치유원"), ("치과", "마을 치유원"), ("치유", "마을 치유원"), ("약사", "마을 약방"),
+    ("간호사", "신전 치유소"), ("전공의", "신전 치유소"), ("의사", "신전 치유소"), ("순경", "성문 초소"), ("민병", "성문 초소"),
+    ("동장", "촌장 회관"), ("행정관", "촌장 회관"), ("촌장", "촌장 회관"), ("방송작가", "음유 작가 작업실"), ("작가", "작업실"),
+    ("PD", "기록할 곳"), ("기록", "기록할 곳"), ("화가", "글방"), ("룬", "글방"), ("강사", "글방"), ("훈장", "글방"),
+    ("변호사", "법무관 사무소"), ("법무관", "법무관 사무소"), ("정비공", "마차 수리소"), ("마차", "마차 수리소"),
+    ("택배", "성문 전령 초소"), ("기사", "성문 전령 초소"), ("가수", "골목 음유 주점"), ("대학원생", "마탑 연구실"),
+    ("대학생", "마탑 학당"), ("학도", "마탑 학당"), ("고등학생", "마을 글방"), ("초등학생", "마을 글방"),
+    ("재수생", "글방 자습실"), ("수험생", "글방 자습실"), ("장수생", "글방 자습실"),
 ]
 # 유형별 하루: sleep=(잠드는 시각, 일어나는 시각), work=[(시작, 끝)...] (끝 미포함), weekend=주말에도 일하나
 _DAY = {
-    "child":     {"sleep": (21, 7), "work": [(8, 14)], "weekend": False, "after": [(14, 16, "학원", "영어 학원")]},
-    "teen":      {"sleep": (0, 7), "work": [(8, 16)], "weekend": False, "after": [(17, 22, "학원", "학원 수업")]},
+    "child":     {"sleep": (21, 7), "work": [(8, 14)], "weekend": False, "after": [(14, 16, "글방", "룬 문자 수업")]},
+    "teen":      {"sleep": (0, 7), "work": [(8, 16)], "weekend": False, "after": [(17, 22, "글방", "검술·마법 기초 수업")]},
     "student":   {"sleep": (2, 9), "work": [(10, 18)], "weekend": False},
-    "elder":     {"sleep": (21, 5), "work": [], "weekend": False, "after": [(5, 7, "공원", "새벽 산책")]},
+    "elder":     {"sleep": (21, 5), "work": [], "weekend": False, "after": [(5, 7, "샘터", "새벽 산책")]},
     "nurse":     {"shift": True},
     "medic":     {"sleep": (0, 7), "work": [(8, 19)], "weekend": False},
     "police":    {"shift": True},
@@ -168,10 +173,10 @@ _DAY = {
     "freelance": {"sleep": (2, 9), "work": [(11, 20)], "weekend": False},
     "office":    {"sleep": (0, 7), "work": [(7, 18)], "weekend": False},
 }
-_SHOP_HOURS = {"포장마차 단밤": ([(17, 24), (0, 2)], (3, 11)), "골목 LP바": ([(18, 24), (0, 2)], (3, 11)),
-               "시장 생선가게": ([(5, 18)], (21, 4)), "시장 반찬가게": ([(6, 19)], (21, 5)),
-               "골목 미용실": ([(10, 20)], (0, 8)), "배달대행 사무실": ([(11, 23)], (2, 9)),
-               "남숙반점": ([(10, 22)], (1, 8))}
+_SHOP_HOURS = {"선술집 단밤": ([(17, 24), (0, 2)], (3, 11)), "골목 음유 주점": ([(18, 24), (0, 2)], (3, 11)),
+               "시장 어물전": ([(5, 18)], (21, 4)), "시장 약초·반찬 가게": ([(6, 19)], (21, 5)),
+               "골목 이발소": ([(10, 20)], (0, 8)), "전령 배달소": ([(11, 23)], (2, 9)),
+               "주막 남숙": ([(10, 22)], (1, 8))}
 _TYPE_CACHE: dict[str, tuple[str, str]] = {}
 
 
@@ -180,17 +185,17 @@ def life_type(character: dict) -> tuple[str, str]:
     key = character.get("id") or character.get("name", "")
     if key in _TYPE_CACHE:
         return _TYPE_CACHE[key]
-    head = f"{character.get('rank', '')} {character.get('dept', '')}"
+    head = f"{character.get('rank', '')} {character.get('job', '')} {character.get('dept', '')}"
     text = f"{head} {character.get('outer_persona', '')} {character.get('inner_truth', '')}"
     company = character.get("company", "")
     kind = next((t for t, words in _TYPE_RULES if any(w in head for w in words)), None)
     if not kind and company in worldcfg.OFFICES:
-        kind = "office"  # 가게(책방/극장) 사람은 설정 문장보다 소속이 먼저 ("화가 나서" 같은 말에 걸리지 않게)
+        kind = "office"  # 가게(도서관/극장) 사람은 설정 문장보다 소속이 먼저 ("화가 나서" 같은 말에 걸리지 않게)
     kind = kind or next((t for t, words in _TYPE_RULES if any(w in text for w in words)), None) or "freelance"
     place = next((p for w, p in _WORKPLACES if w in head), None) or next((p for w, p in _WORKPLACES if w in text), None)
     if kind == "office" or not place:
-        place = {"office": company if company in worldcfg.OFFICES else f"{company or '회사'} 사무실", "shop": "골목 가게", "elder": "경로당", "public": "주민센터",
-                 "medic": "동네 병원", "child": "초등학교", "teen": "고등학교", "student": "대학교"}.get(kind, "동네 작업실")
+        place = {"office": company if company in worldcfg.OFFICES else f"{company or '마을'} 일터", "shop": "골목 가게", "elder": "노인정", "public": "촌장 회관",
+                 "medic": "마을 치유원", "child": "마을 글방", "teen": "마을 글방", "student": "마탑 학당"}.get(kind, "마을 작업실")
     _TYPE_CACHE[key] = (kind, place)
     return kind, place
 
@@ -363,12 +368,12 @@ def generate_interaction(pair: tuple[str, str], states: dict, roster_map: dict[s
     rel = rels.get(rel_key, {"affinity": 0, "summary": "", "count": 0})
 
     prompt = (
-        f"{name_a}({char_a['company']} {char_a['dept']} {char_a['rank']} - 겉모습: {char_a['outer_persona']} "
-        f"/ 속마음: {char_a['inner_truth']})와 {name_b}({char_b['company']} {char_b['dept']} {char_b['rank']} - "
+        f"{name_a}({char_a['company']} {char_a['dept']} {char_a.get('job') or char_a['rank']} - 겉모습: {char_a['outer_persona']} "
+        f"/ 속마음: {char_a['inner_truth']})와 {name_b}({char_b['company']} {char_b['dept']} {char_b.get('job') or char_b['rank']} - "
         f"겉모습: {char_b['outer_persona']} / 속마음: {char_b['inner_truth']})가 {loc}에서 우연히 마주쳤다.\n"
         f"둘의 이전 관계 요약: {rel['summary'] or '특별한 인연 없음'} (현재 친밀도: {rel['affinity']})\n\n"
         "짧은 상호작용 에피소드를 2~3문장으로 만들어라. 겉모습과 속마음의 괴리를 살려 재미있게 쓰고, "
-        "책방 사람과 극장 사람이면(손님을 두고 겨루는 이웃 가게) 은근한 신경전이나 묘한 호기심을 곁들여도 좋다.\n"
+        "도서관 사람과 극장 사람이면(손님을 두고 겨루는 이웃 가게) 은근한 신경전이나 묘한 호기심을 곁들여도 좋다.\n"
         "반드시 JSON으로만 응답: {\"episode\": \"...\", \"affinity_delta\": 정수(-10~10),"
         " \"relationship_summary\": \"이번 만남을 한 줄로 요약\"}"
     )
@@ -381,7 +386,7 @@ def generate_interaction(pair: tuple[str, str], states: dict, roster_map: dict[s
         payload = {
             "model": LLM_MODEL,
             "messages": [
-                {"role": "system", "content": "너는 여러 캐릭터가 사는 골목 '오아시스 거리'(책방/극장/동네 가게)를 기록하는 작가다."},
+                {"role": "system", "content": "너는 여러 캐릭터가 사는 마법 판타지 세계의 변경 마을 '오아시스 마을'(도서관/환영극장/성벽 수비대/마을 가게)을 기록하는 작가다. " + worldcfg.WORLD_RULE},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.9,

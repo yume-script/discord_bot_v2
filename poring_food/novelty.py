@@ -4,7 +4,7 @@
 예전 반복 방지는 짧은 창만 봤다 (세계 사건 최근 8개, 장면 최근 5개, 내 최근 행동 몇 시간). 그래서 2주 전에 한 얘기를
 처음 하는 것처럼 다시 하고, 사건 종류가 비슷한 데서 맴돌았다. 이제는:
 
-1) 화제 기록 (world.db topics): 대화/연재 장면/단톡방 글/세계 사건을 한 줄씩 남긴다 (누가, 무엇을). 21일 지나면 지운다.
+1) 화제 기록 (world.db topics): 대화/연재 장면/통신방 글/세계 사건을 한 줄씩 남긴다 (누가, 무엇을). 21일 지나면 지운다.
    의미 검색 모델(semantic.py, ko-sroberta)을 쓸 수 있으면 벡터도 같이 저장하고, 못 쓰면 글자 묶음(2글자) 겹침으로 비교한다.
 2) 반복 감지:
    - hint(text, who): 대화 첫마디/장면이 최근 14일의 화제와 비슷하면 "이 얘기는 N번 했다 - 진전시키거나 다른 얘기" 안내.
@@ -32,8 +32,8 @@ WORN_MIN = 3            # 한 사람이 이만큼 한 묶음은 "지겹게 한 �
 MAX_SCAN = 600          # 한 번에 비교하는 최근 화제 수
 
 EVENT_KINDS = ["연애/설렘", "돈/경제", "사고/고장", "건강", "가족", "외부 손님/낯선 사람", "축제/행사", "날씨/계절",
-               "경쟁사/업계", "취미/여가", "갈등/다툼", "행운/좋은 소식", "동네 변화(개업/폐업/공사)", "직장 인사/평가",
-               "실수/해프닝", "추억/과거"]
+               "경쟁 기관/왕도", "취미/여가", "갈등/다툼", "행운/좋은 소식", "마을 변화(개업/폐업/공사)", "기관 인사/평가",
+               "실수/해프닝", "추억/과거", "몬스터/숲의 기척", "마법/수상한 현상"]
 
 _SCHEMA = """CREATE TABLE IF NOT EXISTS topics (
     id INTEGER PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL, who TEXT NOT NULL, text TEXT NOT NULL, vec BLOB);
@@ -66,7 +66,7 @@ def _vec(text: str):
 
 
 def note(kind: str, text: str, who: list[str] | None = None, at: datetime | None = None) -> None:
-    """화제 하나를 남긴다 (kind: 대화/장면/단톡방/사건)."""
+    """화제 하나를 남긴다 (kind: 대화/장면/통신방/사건)."""
     text = " ".join(str(text or "").split())[:300]
     if len(text) < 4:
         return
@@ -164,7 +164,7 @@ def worn_out(name: str, now: datetime | None = None, limit: int = 4) -> str:
 
 
 def _worn_out(name: str, now: datetime, limit: int) -> str:
-    mine = _recent(who=[name], now=now, kinds=("대화", "장면", "단톡방"))
+    mine = _recent(who=[name], now=now, kinds=("대화", "장면", "통신방"))
     groups = sorted((g for g in _clusters(mine) if len(g) >= WORN_MIN), key=len, reverse=True)[:limit]
     if not groups:
         return ""

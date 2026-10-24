@@ -10,7 +10,7 @@
    띠는 agents.json "zodiac" 또는 이름으로 정한다. 아침에 몇 명(FORTUNE_POSTS_PER_DAY)은 /운세를 친 것처럼 채널에 올린다.
 3) 그림: 화가 인물(ARTISTS, 기본 박충섭/오윤)이 그리고 싶을 때 "drawing"(제목/영어 프롬프트)을 고르면 봇의 이미지 생성(/그림)으로
    실제 그림을 올린다. 하루 DRAW_PER_DAY장, 한 사람 하루 1장. 생성은 오래 걸려서 봇이 예약함에서 꺼낼 때 한다(outbox "draw").
-4) 개미소리: 가게 직원(책방/극장)이 속이 터질 때 "ant_voice"(짧은 외침)를 고르면 봇의 /개미소리 짤을 단톡방에 올린다
+4) 개미소리: 가게 직원(도서관/극장)이 속이 터질 때 "ant_voice"(짧은 외침)를 고르면 봇의 /개미소리 짤을 통신방에 올린다
    (outbox "ant"). 하루 ANT_PER_DAY장, 한 사람 하루 1장.
 저장: storage/poring_food/market.json(시세/보유), fortune.json(오늘 운세), hobbies.json(오늘 횟수)
 """
@@ -203,7 +203,7 @@ def prompt_block(agent: dict, now: datetime | None = None) -> str:
     m = _load(MARKET_PATH)
     mine = holdings(agent["name"])
     if _investor(agent) and m.get("prices"):
-        out.append(f"[실제 시세 - 지금] {_market_line(m, list(mine))}")
+        out.append(f"[왕도 상단 거래소 시세(실제 주식 시세) - 지금] {_market_line(m, list(mine))}")
     if mine:
         rows = []
         for n, h in mine.items():
@@ -212,7 +212,7 @@ def prompt_block(agent: dict, now: datetime | None = None) -> str:
                 rows.append(f"{n} {h['shares']}주 (평단 {h['avg']:,.0f}원 → 지금 {p:,.0f}원, {(p / h['avg'] - 1) * 100:+.1f}%, "
                             f"{(p - h['avg']) * h['shares']:+,.0f}원)")
         if rows:
-            out.append("[내 주식 - 이야기 속 돈으로 산 것]\n" + "\n".join(f"- {r}" for r in rows))
+            out.append("[내 상단 지분(주식) - 이야기 속 돈으로 산 것]\n" + "\n".join(f"- {r}" for r in rows))
     return "\n".join(out)
 
 
@@ -225,17 +225,17 @@ def rules_and_spec(agent: dict, now: datetime | None = None) -> tuple[str, str]:
     rules, spec = [], []
     if _investor(agent) and _load(MARKET_PATH).get("prices") and _used(now, "trade", name) < TRADES_PER_DAY:
         money = int(life.get(name).get("money", 0))
-        rules.append(f"- 실제 시세를 보고 주식을 사고팔 수 있다(이야기 속 돈 {money:,}원, 한 번에 최대 "
+        rules.append(f"- 왕도 상단 거래소에서 실제 시세를 따르는 상단 지분(주식)을 사고팔 수 있다(이야기 속 돈 {money:,}원, 한 번에 최대 "
                      f"{min(MAX_BUY, int(money * MAX_BUY_RATIO)):,}원, 하루 한 번). 성격대로 - 대부분은 null.\n")
         spec.append(f', "stock": null 또는 {{"action": "매수|매도", "name": "{"|".join(STOCKS)}", '
                     '"amount": 매수할 금액(원, 매도면 0 - 전량 매도), "why": "왜 한 줄"}')
     if name in ARTISTS and _used(now, "draw", name) < 1 and _used(now, "draw") < DRAW_PER_DAY:
-        rules.append("- 나는 그림을 그린다. 그리고 싶은 게 생기면 drawing에 (봇 /그림으로 실제 그림이 올라간다, 하루 한 장). "
+        rules.append("- 나는 그림을 그린다. 그리고 싶은 게 생기면 drawing에 (봇 /그림으로 실제 그림이 올라간다, 하루 한 장, 판타지 마을 풍경으로). "
                      "대부분은 null.\n")
         spec.append(', "drawing": null 또는 {"title": "그림 제목(한국어)", '
-                    '"prompt": "이미지 생성용 영어 프롬프트 - 장면/화풍/분위기, 실존 인물 금지"}')
+                    '"prompt": "이미지 생성용 영어 프롬프트 - 판타지 마을의 장면/화풍/분위기, 실존 인물 금지"}')
     if agent.get("company") in OFFICE and _used(now, "ant", name) < 1 and _used(now, "ant") < ANT_PER_DAY:
-        rules.append("- 가게 일로 속이 터지면 /개미소리 짤로 단톡방에 하소연할 수 있다 (하루 한 번, 대부분은 null).\n")
+        rules.append("- 도서관/극장 일로 속이 터지면 /개미소리 짤로 통신방에 하소연할 수 있다 (하루 한 번, 대부분은 null).\n")
         spec.append(', "ant_voice": null 또는 "개미가 외칠 짧은 말(15자 이내)"')
     return "".join(rules), "".join(spec)
 

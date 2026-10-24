@@ -35,8 +35,8 @@ def test_world_plan_gets_kinds_and_logs_them(fake_llm, monkeypatch):
         if "세계 엔진" in system:
             seen["user"] = user
             return {"events": [{"hour": 10, "kind": "연애/설렘", "title": "카페 고백 소동", "detail": "누가 고백했다",
-                                "targets": ["동네"], "visibility": "direct", "effects": {}},
-                               {"hour": 11, "kind": "엉뚱한 종류", "title": "정전", "detail": "정전", "targets": ["동네"],
+                                "targets": ["마을"], "visibility": "direct", "effects": {}},
+                               {"hour": 11, "kind": "엉뚱한 종류", "title": "정전", "detail": "정전", "targets": ["마을"],
                                 "visibility": "direct"}]}
         return {}
 

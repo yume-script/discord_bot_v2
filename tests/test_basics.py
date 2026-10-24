@@ -16,14 +16,14 @@ def test_josa():
 
 
 def test_similar_topics():
-    assert chronicle.similar("마을 이름 짓기", "우리 동네 이름 짓기 최종 토론")
+    assert chronicle.similar("마을 이름 짓기", "우리 마을 이름 짓기 최종 토론")
     assert not chronicle.similar("마을 이름 짓기", "골목 화단 만들기")
     assert not chronicle.similar("골목 화단 만들기", "골목 벤치 설치")
 
 
 def test_place_label_groups():
-    assert agents._place_label("회사 1층 카페 오후세시") == "☕ 카페 오후세시"
-    assert agents._place_label("포장마차") == "🏮 포장마차 단밤"
+    assert agents._place_label("회사 1층 찻집 오후세시") == "☕ 찻집 오후세시"
+    assert agents._place_label("선술집") == "🏮 선술집 단밤"
     assert agents._place_label("자취방에서 쉬는 중") == "🏠 집"
 
 
@@ -38,21 +38,21 @@ def _schedule(monkeypatch, character, when):
 
 
 def test_child_schedule(monkeypatch):
-    kid = {"id": "t|아이", "name": "아이", "rank": "초등학생", "dept": "", "company": "오아시스 거리", "key_behavior": ""}
+    kid = {"id": "t|아이", "name": "아이", "rank": "초등학생", "dept": "", "company": "오아시스 마을", "key_behavior": ""}
     assert characters.life_type(kid)[0] == "child"
-    assert _schedule(monkeypatch, kid, _at(0, 10))[0] == "초등학교"
+    assert _schedule(monkeypatch, kid, _at(0, 10))[0] == "마을 글방"
     assert _schedule(monkeypatch, kid, _at(0, 22))[2] == "자는 중"
     assert "소개팅" not in _schedule(monkeypatch, kid, _at(5, 15))[1]
 
 
 def test_company_people_are_office_even_with_tricky_words():
-    c = {"id": "x", "name": "구동매", "rank": "부장", "dept": "서가팀", "company": "책방 오아시스",
+    c = {"id": "x", "name": "구동매", "rank": "부장", "dept": "서가팀", "company": "오아시스 마법도서관",
          "outer_persona": "", "inner_truth": "화가 나서가 아니라 손가락이 굵어서", "key_behavior": ""}
     assert characters.life_type(c)[0] == "office"
 
 
 def test_shift_worker_has_night_and_off_days(monkeypatch):
-    nurse = {"id": "n", "name": "간호사님", "rank": "간호사", "dept": "", "company": "오아시스 거리", "key_behavior": "일"}
+    nurse = {"id": "n", "name": "간호사님", "rank": "간호사", "dept": "", "company": "오아시스 마을", "key_behavior": "일"}
     states = {_schedule(monkeypatch, nurse, _at(d, 3))[2] for d in range(3)}
     assert "일하는 중" in states and "자는 중" in states
 
@@ -62,9 +62,9 @@ def test_facility_temp_shown_as_fahrenheit_converted(monkeypatch):
     status = {"cpu": {"host_percent": 30}, "temperature_c": {"max": 95.0}}
     monkeypatch.setattr(mcp_signals, "FACILITY_TEMP_AS_F", True)
     line = mcp_signals.describe_facility(status)
-    assert "설비 온도 35°C" in line and "과열" not in line
+    assert "결계석 온도 35°C" in line and "과열" not in line
     monkeypatch.setattr(mcp_signals, "FACILITY_TEMP_AS_F", False)
-    assert "설비 과열 경보" in mcp_signals.describe_facility(status)
+    assert "결계석 과열 경보" in mcp_signals.describe_facility(status)
 
 
 def test_facility_uses_whole_server_numbers():

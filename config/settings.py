@@ -108,7 +108,7 @@ REDROID_EVENTS_PATH = Path(os.environ.get("REDROID_EVENTS_PATH", "/mnt/redroid_w
 REDROID_NOTIFY_CHANNEL_ID = _int("REDROID_NOTIFY_CHANNEL_ID", 591180628842774554)
 REDROID_WATCH_STATE_PATH = BASE_DIR / "storage" / "redroid_watch_state.json"
 
-# --- 포링푸드 (poring_food/ - 가상 세계 '오아시스 거리': 책방 오아시스/별빛극장/골목, cogs/poring_food.py가 매시 실행) ---
+# --- 포링푸드 (poring_food/ - 마법 판타지 세계 '오아시스 마을': 오아시스 마법도서관/별빛 환영극장/성벽 수비대, cogs/poring_food.py가 매시 실행) ---
 # 원래 별도 cron 프로젝트(/mnt/poring_food)였는데 봇으로 합쳤다. LLM/카톡 브릿지는 봇 설정을 쓴다.
 PORING_FOOD_ENABLED = os.environ.get("PORING_FOOD_ENABLED", "1") not in ("0", "false", "False", "")
 PORING_FOOD_RUN_MINUTE = _int("PORING_FOOD_RUN_MINUTE", 3)  # 매시 몇 분에 실행할지 (예전 cron: 매시 3분)
@@ -125,7 +125,7 @@ PORING_GROUP_WEBHOOK_URL = os.environ.get("PORING_GROUP_WEBHOOK_URL", "")
 # [신규] 동네 단톡방 채널 - 비우면 에이전트 대화 채널에 "동네 단톡방" 머리줄을 붙여 같이 올린다
 PORING_TOWN_CHAT_CHANNEL_ID = _int("PORING_TOWN_CHAT_CHANNEL_ID", 0)
 PORING_AGENT_CHANNEL_ID = _int("PORING_AGENT_CHANNEL_ID", 0) or PORING_DISCORD_CHANNEL_ID
-# [변경] 채널 하나로 통일 (오아시스 거리 새 시작) - 매시 일지/장면, 에이전트 대화, 가게/동네 단톡방이 모두
+# [변경] 채널 하나로 통일 (오아시스 마을 새 시작) - 매시 일지/장면, 에이전트 대화, 기관/마을 통신방이 모두
 # 에이전트 대화 채널(PORING_AGENT_CHANNEL_ID) 하나에 머리줄로 구분돼 올라간다. 예전처럼 나누려면 PORING_ONE_CHANNEL=0.
 PORING_ONE_CHANNEL = os.environ.get("PORING_ONE_CHANNEL", "1") not in ("0", "false", "False", "")
 if PORING_ONE_CHANNEL and PORING_AGENT_CHANNEL_ID:

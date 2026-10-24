@@ -9,7 +9,7 @@
   confidence(자신감) + energy(체력), job_satisfaction(직무 만족), money(원), goals(목표)
 - 변화는 두 갈래:
   1) 규칙(tick, LLM 없음): 매시 근무/휴식/수면에 따른 체력·스트레스 변화, 기준값으로 서서히 회복,
-     월급날(25일)·월세(1일)·식비·여가비, 잔고 부족 스트레스, 바깥 세상 신호(월말 마감, 금요일, 비, 설비 이상)
+     월급날(25일)·세금(1일)·식비·여가비, 잔고 부족 스트레스, 바깥 세상 신호(월말 마감, 금요일, 비, 설비 이상)
   2) 사건(apply_changes): 일지/장면 LLM이 JSON으로 같이 돌려준 변화 제안. 한 번에 ±0.2까지만
      반영하고 돈은 LLM이 못 바꾼다(규칙으로만 움직임 - 세계의 규칙을 LLM이 우회하지 못하게).
 - 행동 연결(bias_weight): 일정 후보의 가중치를 상태로 조정한다 (스트레스↑ → 술자리, 체력↓ → 집 휴식 등).
@@ -40,25 +40,25 @@ LOW_MONEY = 300_000      # 이 밑이면 돈 걱정
 PAYDAY = 25
 RENT_DAY = 1
 
-# 직급별 월급/월세 (원) - 대충 그럴듯한 값. 세계의 경제 규칙.
+# 직급별 월급/세금 (원) - 대충 그럴듯한 값. 세계의 경제 규칙.
 SALARY = {"사원": 2_800_000, "주임": 3_100_000, "대리": 3_500_000, "과장": 4_200_000,
           "차장": 4_800_000, "부장": 5_600_000}
 RENT = {"사원": 550_000, "주임": 600_000, "대리": 650_000, "과장": 750_000, "차장": 850_000, "부장": 950_000}
 
 # 개인 활동 비용 (활동/장소 텍스트에 키워드가 있으면 그 시간에 한 번 지출)
 ACTIVITY_COST = [
-    ("쇼핑", 70_000), ("영화", 15_000), ("맛집", 30_000), ("술", 40_000), ("포장마차", 35_000),
-    ("소주", 35_000), ("데이트", 50_000), ("소개팅", 50_000), ("카페", 6_000), ("커피", 5_000),
-    ("배달", 25_000), ("브런치", 20_000),
+    ("쇼핑", 70_000), ("장터", 50_000), ("환영극", 15_000), ("맛집", 30_000), ("술", 40_000), ("선술집", 35_000),
+    ("화주", 35_000), ("데이트", 50_000), ("소개팅", 50_000), ("찻집", 6_000), ("약초차", 5_000),
+    ("배달", 25_000), ("물약", 20_000),
 ]
 
 GOAL_POOL = [
-    "올해 안에 승진하기", "돈 모아서 해외여행 가기", "건강 챙기기(운동 꾸준히)", "좋은 사람 만나기",
-    "취미 하나 제대로 해보기", "회사에서 인정받기", "몰래 이직 준비하기", "가족과 시간 더 보내기",
-    "빚 없이 적금 만기 채우기", "사내에서 믿을 만한 동료 만들기",
+    "올해 안에 승급하기", "돈 모아서 왕도 구경 가기", "건강 챙기기(수련 꾸준히)", "좋은 사람 만나기",
+    "취미 하나 제대로 해보기", "일하는 곳에서 인정받기", "몰래 다른 길드로 옮길 준비하기", "가족과 시간 더 보내기",
+    "빚 없이 금고 채우기", "믿을 만한 동료 만들기", "몬스터 침입 때 한몫하기",
 ]
 SPECIAL_GOALS = {
-    "애순이": ["라그M 길드 공성전 우승", "연말 보너스까지 버티기 (이직은 일단 보류)", "안구건조증 낫게 하기"],
+    "애순이": ["길드 '포링사랑' 대토벌 우승", "연말 보너스까지 버티기 (도서관 문 닫는 건 일단 보류)", "눈의 피로 낫게 하기"],
 }
 
 
@@ -95,7 +95,7 @@ def _new_state(name: str, rank: str) -> dict:
         "romance": rnd.uniform(0.1, 0.4), "confidence": rnd.uniform(0.35, 0.7),
         "energy": rnd.uniform(0.6, 0.85), "job_satisfaction": rnd.uniform(0.35, 0.65),
     }
-    if name == "애순이":  # 만성 피로의 책방 사장
+    if name == "애순이":  # 만성 피로의 도서관 관장
         base.update(stress=0.55, energy=0.45, job_satisfaction=0.4)
     base = {k: round(v, 3) for k, v in base.items()}
     salary = SALARY.get(rank, 3_200_000)
@@ -106,7 +106,7 @@ def _new_state(name: str, rank: str) -> dict:
         "money": int(salary * rnd.uniform(0.6, 2.5)),
         "goals": SPECIAL_GOALS.get(name) or rnd.sample(GOAL_POOL, 2),
         "recent": [],
-        # 처음 생긴 달은 월세/월급을 이미 처리한 걸로 본다 (생기자마자 돈이 빠지거나 들어오지 않게)
+        # 처음 생긴 달은 세금/월급을 이미 처리한 걸로 본다 (생기자마자 돈이 빠지거나 들어오지 않게)
         "last_paid": now_kst().strftime("%Y-%m"), "last_rent": now_kst().strftime("%Y-%m"), "last_tick": "",
     }
 
@@ -222,7 +222,7 @@ def _signal_effects(st: dict, info: dict, signals: dict, now: datetime) -> dict:
     elif "비" in weather or "눈" in weather:
         d["happiness"] = d.get("happiness", 0) - 0.01
     # 아래는 건물 안 사정(전력/창고/통신 회선, 입고/상영) - 누가 아는지는 signals.KNOWN_BY가 정한다
-    # (건물 설비는 두 가게+관리사무소, 입고/상영 현황은 두 가게만. 건물 밖 가족/친구는 상관없다)
+    # (건물 설비는 두 가게+성벽 수비대, 입고/상영 현황은 두 가게만. 건물 밖 가족/친구는 상관없다)
     from . import signals as _signals  # signals가 processor -> life를 가져오므로 순환을 피해 여기서
     company = info.get("company", "")
     facility = "".join(signals.get(k, "") for k in ("facility", "factory") if _signals.knows(company, k))
@@ -236,7 +236,7 @@ def _signal_effects(st: dict, info: dict, signals: dict, now: datetime) -> dict:
 
 def tick(roster: list[dict], states: dict, signals: dict | None = None) -> None:
     """
-    매시 회차에서 한 번. 근무/휴식/수면, 기준값 회복, 돈(월급/월세/지출), 바깥 신호를 규칙으로 반영한다.
+    매시 회차에서 한 번. 근무/휴식/수면, 기준값 회복, 돈(월급/세금/지출), 바깥 신호를 규칙으로 반영한다.
     같은 시간에 두 번 돌아도(관리자 수동 실행) 한 번만 반영되게 last_tick으로 막는다.
     """
     now = now_kst()
@@ -275,7 +275,7 @@ def tick(roster: list[dict], states: dict, signals: dict | None = None) -> None:
             d["loneliness"] += 0.02 if alone else -0.04
             if any(w in activity for w in ("데이트", "소개팅")):
                 d["romance"] += 0.05
-            if any(w in activity for w in ("술", "포장마차", "소주")):
+            if any(w in activity for w in ("술", "선술집", "화주", "소주")):
                 d["stress"] -= 0.04
                 d["energy"] -= 0.02
 
@@ -289,7 +289,7 @@ def tick(roster: list[dict], states: dict, signals: dict | None = None) -> None:
             st["last_paid"] = month_key
             d["happiness"] += 0.08
             d["stress"] -= 0.05
-            _note(st, "월급날", {"happiness": 0.08})
+            _note(st, "품삯 받는 날", {"happiness": 0.08})
         if now.day >= RENT_DAY and st.get("last_rent") != month_key:
             st["money"] = st.get("money", 0) - RENT.get(rank, 650_000)
             st["last_rent"] = month_key
@@ -310,15 +310,15 @@ def tick(roster: list[dict], states: dict, signals: dict | None = None) -> None:
 # ===================================================================== 상태 -> 행동
 _BIAS_RULES = [
     # (조건, 키워드들, 배율)
-    (lambda s: s.get("stress", 0) >= 0.65, ("술", "포장마차", "소주", "맥주"), 2.5),
-    (lambda s: s.get("stress", 0) >= 0.65, ("운동", "헬스", "산책"), 1.3),
+    (lambda s: s.get("stress", 0) >= 0.65, ("술", "선술집", "화주", "곡주"), 2.5),
+    (lambda s: s.get("stress", 0) >= 0.65, ("운동", "수련", "훈련장", "산책"), 1.3),
     (lambda s: s.get("energy", 1) <= 0.3, ("휴식", "집", "침대", "낮잠", "잠"), 2.5),
     (lambda s: s.get("energy", 1) <= 0.3, ("운동", "쇼핑", "모임", "나들이"), 0.5),
-    (lambda s: s.get("loneliness", 0) >= 0.6, ("친구", "모임", "카페", "동료", "수다"), 2.0),
+    (lambda s: s.get("loneliness", 0) >= 0.6, ("친구", "모임", "찻집", "동료", "수다"), 2.0),
     (lambda s: s.get("romance", 0) >= 0.6, ("소개팅", "데이트"), 2.5),
-    (lambda s: s.get("money", 10**9) < LOW_MONEY, ("쇼핑", "맛집", "영화", "데이트"), 0.3),
-    (lambda s: s.get("happiness", 0) >= 0.7, ("나들이", "영화", "맛집", "쇼핑"), 1.4),
-    (lambda s: s.get("anger", 0) >= 0.5, ("운동", "헬스", "게임"), 1.8),
+    (lambda s: s.get("money", 10**9) < LOW_MONEY, ("쇼핑", "장터", "맛집", "환영극", "데이트"), 0.3),
+    (lambda s: s.get("happiness", 0) >= 0.7, ("나들이", "환영극", "맛집", "장터"), 1.4),
+    (lambda s: s.get("anger", 0) >= 0.5, ("운동", "수련", "내기"), 1.8),
 ]
 
 
@@ -345,7 +345,7 @@ def _level_words(st: dict) -> list[str]:
     lv(st.get("romance", 0.2), "누군가에게 설레는 중", None, th_hi=0.6)
     lv(st.get("confidence", 0.5), "자신감 넘침", "자신감이 떨어짐")
     lv(st.get("energy", 0.6), "쌩쌩함", "몹시 피곤함", th_hi=0.8)
-    lv(st.get("job_satisfaction", 0.5), "요즘 일이 꽤 할 만함", "회사에 정이 떨어지는 중")
+    lv(st.get("job_satisfaction", 0.5), "요즘 일이 꽤 할 만함", "일하는 곳에 정이 떨어지는 중")
     return words or ["평소와 비슷한 컨디션"]
 
 
@@ -353,7 +353,7 @@ def describe(name: str) -> str:
     """짧은 한 줄 (도구 응답 등)."""
     st = get(name)
     money = st.get("money", 0)
-    return f"{', '.join(_level_words(st))} / 통장 {money // 10_000:,}만원"
+    return f"{', '.join(_level_words(st))} / 모은 돈 {money // 10_000:,}만원"
 
 
 def prompt_block(name: str) -> str:
@@ -361,11 +361,11 @@ def prompt_block(name: str) -> str:
     now = now_kst()
     days_to_pay = (PAYDAY - now.day) if now.day < PAYDAY else None
     money = st.get("money", 0)
-    money_line = f"통장 잔고 약 {money // 10_000:,}만원"
+    money_line = f"모은 돈 약 {money // 10_000:,}만원"
     if money < LOW_MONEY:
         money_line += " (돈 걱정 중)"
     if days_to_pay is not None:
-        money_line += f", 월급날까지 {days_to_pay}일"
+        money_line += f", 품삯 받는 날까지 {days_to_pay}일"
     recent = [r["reason"] for r in st.get("recent", [])[-3:] if r.get("reason")]
     lines = [
         f"[{name}의 지금 상태 - 말투와 행동에 자연스럽게 묻어나게 하라. 수치나 '스트레스 지수' 같은 말은 직접 하지 마라]",

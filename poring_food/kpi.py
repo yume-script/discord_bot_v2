@@ -1,20 +1,20 @@
 """
 담당 실적(KPI) - 봇이 쓰는 MCP의 실제 수치를 "자리(부서 업무)"의 실적으로 바꾼다.
 
-| 자리(담당)            | 소속 / 부서                   | 실제 수치 (MCP)                               | 처음 담당 |
-|----------------------|------------------------------|----------------------------------------------|----------|
-| 서가 입고              | 책방 오아시스 운영             | 북오아시스 일반/웹툰 서재 오늘 입고 권 수        | 애순이    |
-| 심야 서고 입고          | 책방 오아시스 심야 서고         | 북오아시스 성인/화보 서재 오늘 입고 권 수        | 김동식    |
-| 손님 문의 처리          | 책방 오아시스 손님 응대         | 가상 손님 문의 처리율 + 실제 봇 대화(VIP 문의) | 최수연    |
-| 신작 입고              | 별빛극장 프로그램팀            | Plex 오늘 신규 등록 영상 수                    | 오동백    |
-| 관객(매표)             | 별빛극장 매표·홍보             | Tautulli 오늘 재생 수                         | 성덕선    |
-| 지금 관객              | 별빛극장 로비 카페             | Tautulli 지금 시청 중인 스트림 수               | 소라      |
-| 건물 전력 사용률        | 오아시스 거리 관리사무소        | server_status 서버(머신) 전체 CPU %            | 지은탁    |
-| 지하 공용 창고 적재율    | 오아시스 거리 관리사무소        | server_status 로컬 디스크 전체 사용률 (낮을수록) | 황용식    |
-| 건물 안전              | 오아시스 거리 관리사무소        | server_status 연속 가동일 / 멈춘 서비스 수      | 리정혁    |
-| 민원 처리              | 오아시스 거리 관리사무소        | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)        | 최택      |
-| 관리비                 | 오아시스 거리 관리사무소        | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)      | 동그라미  |
-| 오락기 매출            | 오아시스 거리 (동네 가게)       | 골목 LP바 오락기 - 손님(인물)들이 잃은 돈 - 딴 돈 | 오윤      |
+| 자리(담당)            | 소속 / 부서                       | 실제 수치 (MCP)                                | 처음 담당 |
+|----------------------|----------------------------------|-----------------------------------------------|----------|
+| 마법서 입고            | 오아시스 마법도서관 운영             | 북오아시스 일반/웹툰 서재 오늘 입고 권 수         | 애순이    |
+| 금서고 입고            | 오아시스 마법도서관 금서고           | 북오아시스 성인/화보 서재 오늘 입고 권 수         | 김동식    |
+| 대출 문의 처리          | 오아시스 마법도서관 대출 창구        | 가상 손님 문의 처리율 + 실제 봇 대화(VIP 문의)  | 최수연    |
+| 새 환영극 입고          | 별빛 환영극장 환영 연출팀            | Plex 오늘 신규 등록 영상 수                     | 오동백    |
+| 관객(매표)             | 별빛 환영극장 매표·홍보              | Tautulli 오늘 재생 수                          | 성덕선    |
+| 지금 관객              | 별빛 환영극장 로비 찻집              | Tautulli 지금 시청 중인 스트림 수                | 소라      |
+| 결계 부하              | 오아시스 마을 성벽 수비대            | server_status 서버(머신) 전체 CPU %             | 지은탁    |
+| 보급 창고 적재율        | 오아시스 마을 성벽 수비대            | server_status 로컬 디스크 전체 사용률 (낮을수록)  | 황용식    |
+| 성벽 안전              | 오아시스 마을 성벽 수비대            | server_status 연속 가동일 / 멈춘 서비스 수       | 리정혁    |
+| 수비대 주문 처리        | 오아시스 마을 성벽 수비대            | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)         | 최택      |
+| 마나 소모              | 오아시스 마을 성벽 수비대            | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)       | 동그라미  |
+| 주점 내기 판 매출       | 오아시스 마을 (마을 가게)            | 음유 주점 내기 판 - 손님(인물)들이 잃은 돈 - 딴 돈 | 오윤      |
 
 - 담당은 사람이 아니라 자리에 붙는다: 담당자가 교체(rotation.py)로 쉬러 가면 같은 소속·부서의 다른 에이전트가
   인수인계받는다 (처음 담당자가 있으면 그 사람 먼저). 부서에 에이전트가 없으면 그동안 공석.
@@ -22,9 +22,9 @@
 - 매시 회차(record)마다 자리별 오늘 점수(평소=100)를 그날 담당자 이름과 함께 남긴다. 누적 지표(입고/출하/문의)는
   오늘 값 / 최근 7일 하루 평균, 수준 지표(손님/가동률)는 오늘 평균 / 지난 기록 평균, 적재율은 낮을수록,
   안정성은 멈춘 서비스/재가동이 없을수록 높다.
-- 주간 실적 발표(weekly): 월요일 아침, 지난주 점수로 소속별 순위. 책방/극장은 각 가게 단톡방에 사장(없으면 부장)이 발표
+- 주간 실적 발표(weekly): 월요일 아침, 지난주 점수로 소속별 순위. 도서관/극장은 각 기관 통신방에 사장(없으면 부장)이 발표
   (LLM 한 번), 1등은 기분/자신감 + 보너스, 꼴찌는 스트레스. 순위를 매길 사람이 없는 소속은 본인에게만 알린다.
-- 월간 평가(monthly): 매달 1일 아침, 지난달 소속별 1등에게 "N월 우수 사원" 칭호 - 영구 기억으로 남는다.
+- 월간 평가(monthly): 매달 1일 아침, 지난달 소속별 1등에게 "N월의 공로자" 칭호 - 영구 기억으로 남는다.
 - 고객 문의 창구(desk): 봇에게 말을 거는 실제 사람이 적어서(혼자 쓰는 서버) 메시지 수로는 실적이 늘 바닥이라,
   가상 손님 문의를 만든다. 하루 문의 수요 = PORING_DESK_DAILY x 요일(월요일은 주말에 쌓인 문의) x 날씨(비/눈이면
   배송 문의) x 그날 운(날짜로 정해진 0.75~1.3). 매시 회차마다 지난 한 시간치 문의가 시간대 비율대로 들어오고,
@@ -32,7 +32,7 @@
   쌓여 다음 시간/다음 날로 넘어간다 (밤에 온 문의는 아침에 밀려 있다). 실제 사람이 봇에게 보낸 메시지는
   VIP 문의 - 봇이 바로 응대했으니 처리된 것으로 치고, 1건을 일반 문의 PORING_DESK_VIP_WEIGHT건 실적으로 가산한다.
   점수 = (오늘 처리 + VIP x 가중치) / 오늘 들어온 문의 x 100 (다 처리하면 100, 밀린 걸 털거나 VIP가 있으면 그 이상).
-- 날씨 장사(weather_trade): 기상청 날씨로 카페/포장마차 손님이 오늘 얼마나 달라질지 (agents.json "trade").
+- 날씨 장사(weather_trade): 기상청 날씨로 카페/선술집 손님이 오늘 얼마나 달라질지 (agents.json "trade").
 
 저장: storage/poring_food/kpi.json {"holders", "daily": {날짜: {자리: 기록}}, "weekly_done", "monthly_done",
 "titles", "history", "desk"} - daily는 최근 70일만, 나머지는 지우지 않는다.
@@ -69,36 +69,36 @@ DESK_BACKLOG_ALERT = 25
 _DESK_HOURS = [0.2] * 7 + [0.6, 0.6] + [1.6] * 3 + [0.8] + [1.6] * 5 + [0.8] * 3 + [0.4] * 3
 _DESK_WEEKDAY = [(1.3, "월요일 - 주말에 쌓인 문의"), (1.0, ""), (1.0, ""), (1.0, ""), (0.9, "금요일 - 조금 한산"),
                  (0.6, "토요일 - 주말이라 한산"), (0.5, "일요일 - 주말이라 한산")]
-_DESK_WEATHER = {"snow": (1.3, "눈 - 못 나오는 손님들 전화 주문/배송 문의 폭주"), "rain": (1.2, "비 - 전화로 책 찾기/배송 문의"),
-                 "hot": (1.1, "폭염 - 시원한 책방에 손님이 몰림"), "cold": (1.15, "한파 - 배송 지연 문의")}
+_DESK_WEATHER = {"snow": (1.3, "눈 - 못 나오는 손님들 통신석 대출/배달 문의 폭주"), "rain": (1.2, "비 - 통신석으로 책 찾기/배달 문의"),
+                 "hot": (1.1, "폭염 - 시원한 도서관에 손님이 몰림"), "cold": (1.15, "한파 - 배송 지연 문의")}
 
 # kind: count(하루 누적, 평소 대비) / cost(하루 누적, 적을수록 좋음) / level(그때그때 수준) / disk(낮을수록 좋음) /
 #       stability(문제 없을수록 좋음) / desk(가상 손님 문의 처리율 + VIP)
 POSTS = [
     {"id": "books", "company": BOOK, "dept": "운영", "first": "애순이", "kind": "count", "metric": "books",
-     "line": "서가 입고", "verb": "입고", "unit": "권", "source": "북오아시스 일반/웹툰 서재 오늘 입고 권 수"},
-    {"id": "books_adult", "company": BOOK, "dept": "심야 서고", "first": "김동식", "kind": "count", "metric": "books_adult",
-     "line": "심야 서고 입고", "verb": "입고", "unit": "권", "source": "북오아시스 성인/화보 서재 오늘 입고 권 수"},
-    {"id": "orders", "company": BOOK, "dept": "손님 응대", "first": "최수연", "kind": "desk", "metric": "orders",
-     "line": "손님 문의 처리", "verb": "문의", "unit": "건", "source": "책방 손님 문의 창구 (실제 봇 대화는 VIP 문의)"},
-    {"id": "plex", "company": CINEMA, "dept": "프로그램팀", "first": "오동백", "kind": "count", "metric": "plex",
-     "line": "신작 입고", "verb": "입고", "unit": "편", "source": "Plex 오늘 신규 등록 영상 수"},
+     "line": "마법서 입고", "verb": "입고", "unit": "권", "source": "북오아시스 일반/웹툰 서재 오늘 입고 권 수"},
+    {"id": "books_adult", "company": BOOK, "dept": "금서고", "first": "김동식", "kind": "count", "metric": "books_adult",
+     "line": "금서고 입고", "verb": "입고", "unit": "권", "source": "북오아시스 성인/화보 서재 오늘 입고 권 수"},
+    {"id": "orders", "company": BOOK, "dept": "대출 창구", "first": "최수연", "kind": "desk", "metric": "orders",
+     "line": "대출 문의 처리", "verb": "문의", "unit": "건", "source": "도서관 대출 창구 문의 (실제 봇 대화는 VIP 문의)"},
+    {"id": "plex", "company": CINEMA, "dept": "환영 연출팀", "first": "오동백", "kind": "count", "metric": "plex",
+     "line": "새 환영극 입고", "verb": "입고", "unit": "편", "source": "Plex 오늘 신규 등록 영상 수"},
     {"id": "sales", "company": CINEMA, "dept": "매표·홍보", "first": "성덕선", "kind": "count", "metric": "sales",
      "line": "관객(매표)", "verb": "매표", "unit": "장", "source": "Tautulli 오늘 재생 수"},
-    {"id": "streams", "company": CINEMA, "dept": "로비 카페", "first": "소라", "kind": "level", "metric": "streams",
-     "line": "지금 관객", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수 (상영관이 차면 로비 카페도 바쁘다)"},
-    {"id": "facility_cpu", "company": STREET, "dept": "관리사무소", "first": "지은탁", "kind": "level", "metric": "cpu",
-     "line": "건물 전력 사용률", "unit": "%", "source": "server_status 서버 전체 CPU 사용률"},
-    {"id": "facility_disk", "company": STREET, "dept": "관리사무소", "first": "황용식", "kind": "disk", "metric": "disk",
-     "line": "지하 공용 창고 적재율", "unit": "%", "source": "server_status 서버 로컬 디스크 전체 사용률"},
-    {"id": "facility_stability", "company": STREET, "dept": "관리사무소", "first": "리정혁", "kind": "stability",
-     "metric": "stability", "line": "건물 안전", "unit": "점", "source": "server_status 연속 가동일 / 멈춘 서비스"},
-    {"id": "llm_requests", "company": STREET, "dept": "관리사무소", "first": "최택", "kind": "count", "metric": "llm_requests",
-     "line": "민원 처리", "verb": "처리", "unit": "건", "source": "LiteLLM 오늘 요청 수 (프록시 전체, 못 받으면 봇 집계)"},
-    {"id": "llm_cost", "company": STREET, "dept": "관리사무소", "first": "동그라미", "kind": "cost", "metric": "llm_tokens",
-     "line": "관리비", "unit": "토큰", "source": "LiteLLM 오늘 사용 토큰 (평소보다 적을수록 좋음)"},
-    {"id": "arcade", "company": STREET, "dept": "동네 가게", "first": arcade.MANAGER, "kind": "arcade",
-     "metric": "arcade", "line": "오락기 매출", "unit": "원", "source": f"골목 {arcade.PLACE} - 손님들이 봇 미니게임에서 잃은 돈 - 딴 돈"},
+    {"id": "streams", "company": CINEMA, "dept": "로비 찻집", "first": "소라", "kind": "level", "metric": "streams",
+     "line": "지금 관객", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수 (상영관이 차면 로비 찻집도 바쁘다)"},
+    {"id": "facility_cpu", "company": STREET, "dept": "성벽 수비대", "first": "지은탁", "kind": "level", "metric": "cpu",
+     "line": "결계 부하", "unit": "%", "source": "server_status 서버 전체 CPU 사용률"},
+    {"id": "facility_disk", "company": STREET, "dept": "성벽 수비대", "first": "황용식", "kind": "disk", "metric": "disk",
+     "line": "보급 창고 적재율", "unit": "%", "source": "server_status 서버 로컬 디스크 전체 사용률"},
+    {"id": "facility_stability", "company": STREET, "dept": "성벽 수비대", "first": "리정혁", "kind": "stability",
+     "metric": "stability", "line": "성벽 안전", "unit": "점", "source": "server_status 연속 가동일 / 멈춘 서비스"},
+    {"id": "llm_requests", "company": STREET, "dept": "성벽 수비대", "first": "최택", "kind": "count", "metric": "llm_requests",
+     "line": "수비대 주문 처리", "verb": "처리", "unit": "건", "source": "LiteLLM 오늘 요청 수 (프록시 전체, 못 받으면 봇 집계)"},
+    {"id": "llm_cost", "company": STREET, "dept": "성벽 수비대", "first": "동그라미", "kind": "cost", "metric": "llm_tokens",
+     "line": "마나 소모", "unit": "토큰", "source": "LiteLLM 오늘 사용 토큰 (평소보다 적을수록 좋음)"},
+    {"id": "arcade", "company": STREET, "dept": "마을 가게", "first": arcade.MANAGER, "kind": "arcade",
+     "metric": "arcade", "line": "주점 내기 판 매출", "unit": "원", "source": f"{arcade.PLACE} 내기 판 - 손님들이 봇 미니게임에서 잃은 돈 - 딴 돈"},
 ]
 POST_BY_ID = {p["id"]: p for p in POSTS}
 _RANK_ORDER = {"사원": 0, "주임": 1, "대리": 2, "과장": 3, "차장": 4, "부장": 5, "사장": 6}
@@ -186,10 +186,10 @@ def reading(post: dict, data: dict | None = None) -> dict | None:
         plays, rev = int(st.get("plays", 0)), int(st.get("revenue", 0))
         score = 80 if not plays else int(max(0, min(SCORE_CAP, 100 + rev / 5000)))
         top = max((st.get("by") or {}).items(), key=lambda kv: kv[1], default=None)
-        text = (f"오늘 {arcade.PLACE} 손님 {plays}판 · 매출 {rev:+,}원" + (f" (제일 많이 딴 손님 {top[0]} {top[1]:+,}원)"
+        text = (f"오늘 {arcade.PLACE} 내기 판 {plays}판 · 매출 {rev:+,}원" + (f" (제일 많이 딴 손님 {top[0]} {top[1]:+,}원)"
                                                                        if top and top[1] > 0 else ""))
         return {"value": rev, "score": score, "text": text,
-                "alert": "오늘 손님들이 크게 따 가서 가게가 적자" if rev <= -arcade.BIG else ""}
+                "alert": "오늘 손님들이 크게 따 가서 주점이 적자" if rev <= -arcade.BIG else ""}
     if kind == "count":
         x = metrics.count(metric)
         if not x:
@@ -198,7 +198,7 @@ def reading(post: dict, data: dict | None = None) -> dict | None:
         extra = [f"최근 7일 하루 평균 {x['avg']:g}{post['unit']}" if x.get("avg") is not None else "", x.get("pace", "")]
         extra = [e for e in extra if e]
         fails = int(x.get("failures") or 0)
-        alert = f"오늘 처리 실패 {fails}건 - 연산 라인이 자꾸 멈춘다" if fails >= max(5, x["today"] * 0.2) else ""
+        alert = f"오늘 주문 실패 {fails}건 - 주문 두루마리가 자꾸 불발된다" if fails >= max(5, x["today"] * 0.2) else ""
         return {"value": int(x["today"]), "avg": x.get("avg"), "pace": x.get("pace", ""),
                 "saturated": bool(x.get("saturated")), "text": text + (f" ({', '.join(extra)})" if extra else ""),
                 "alert": alert}
@@ -207,35 +207,35 @@ def reading(post: dict, data: dict | None = None) -> dict | None:
         if not x:
             return None
         avg = x.get("avg")
-        text = f"오늘 쓴 연산 경비 {x['today']:,}{post['unit']}" + (f" (최근 7일 하루 평균 {avg:,.0f}{post['unit']})" if avg else "")
+        text = f"오늘 쓴 마나 {x['today']:,}{post['unit']}" + (f" (최근 7일 하루 평균 {avg:,.0f}{post['unit']})" if avg else "")
         heavy = bool(avg) and metrics.pace(int(x["today"]), avg) == "평소보다 훨씬 바쁨"
         return {"value": int(x["today"]), "avg": avg, "text": text,
-                "alert": "경비가 평소보다 훨씬 많이 나가는 중" if heavy else ""}
+                "alert": "마나가 평소보다 훨씬 많이 새는 중" if heavy else ""}
     if metric == "streams":
         n = metrics.streams()
         if n is None:
             return None
-        return {"value": n, "text": f"지금 매장 손님 {n}명", "alert": ""}
+        return {"value": n, "text": f"지금 환영극 관객 {n}명", "alert": ""}
     fac = signals.live_value("facility_numbers")
     if not fac:
         return None
     if metric == "cpu" and "cpu" in fac:
         v = fac["cpu"]
-        return {"value": v, "text": f"지금 설비 가동률 {v:g}%",
-                "alert": "설비 과부하 - 라인이 숨가쁘게 돌아감" if v >= CPU_OVERLOAD else ""}
+        return {"value": v, "text": f"지금 결계 부하 {v:g}%",
+                "alert": "결계 과부하 - 결계석이 뜨겁게 달아오름" if v >= CPU_OVERLOAD else ""}
     if metric == "disk" and "disk" in fac:
         v = fac["disk"]
-        return {"value": v, "text": f"지금 창고 적재율 {v:g}% (낮을수록 여유)",
-                "alert": "창고가 거의 찼다 - 재고 정리 필요" if v >= DISK_ALERT else ""}
+        return {"value": v, "text": f"지금 보급 창고 적재율 {v:g}% (낮을수록 여유)",
+                "alert": "보급 창고가 거의 찼다 - 정리 필요" if v >= DISK_ALERT else ""}
     if metric == "stability":
         down, days = int(fac.get("down", 0)), fac.get("uptime_days")
         problems = []
         if down:
-            problems.append(f"멈춘 라인 {down}개")
+            problems.append(f"꺼진 감시탑 {down}개")
         if days is not None and days < 1:
-            problems.append("설비가 최근 재가동됨(정비/정전 후 복구)")
+            problems.append("결계가 최근 다시 세워짐(균열 뒤 복구)")
         score = max(0, 100 - 30 * down - (40 if days is not None and days < 1 else 0))
-        text = (f"설비 안정성 {score}점" + (f", 연속 가동 {int(days)}일" if days is not None else "")
+        text = (f"성벽 안전 {score}점" + (f", 연속 가동 {int(days)}일" if days is not None else "")
                 + (f" - {', '.join(problems)}" if problems else " (이상 없음)"))
         return {"value": score, "text": text, "alert": ", ".join(problems)}
     return None
@@ -412,7 +412,7 @@ def prompt_block(name: str, posts: list[dict]) -> str:
         return ""
     now = now_kst()
     week = week_scores(now - timedelta(days=now.weekday()), now + timedelta(days=1)).get(name)
-    out = "[내 담당 업무 - 실제 수치가 내 실적이다. 회사 사람들도 이 숫자를 안다]\n" + "\n".join(lines)
+    out = "[내 담당 업무 - 실제 수치가 내 실적이다. 같은 소속 사람들도 이 숫자를 안다]\n" + "\n".join(lines)
     if week:
         out += f"\n이번 주 내 실적 점수: 평균 {week['score']}점 (평소=100, 월요일 아침에 순위 발표)"
     t = titles(name)
@@ -423,10 +423,10 @@ def prompt_block(name: str, posts: list[dict]) -> str:
 
 def weather_trade(trade: str, weather: str | None = None) -> dict | None:
     """
-    카페/포장마차의 오늘 날씨 장사. {"pct": 손님 증감 %, "why": 이유} 또는 None (날씨 모름/해당 없음).
+    카페/선술집의 오늘 날씨 장사. {"pct": 손님 증감 %, "why": 이유} 또는 None (날씨 모름/해당 없음).
     날씨는 기상청 실측 한 줄 ("기온 18°C, 맑음, 비 (1mm), ...").
     """
-    if trade not in ("카페", "포장마차"):
+    if trade not in ("카페", "선술집"):
         return None
     weather = signals.weather_text() if weather is None else weather
     if not weather:
@@ -434,11 +434,11 @@ def weather_trade(trade: str, weather: str | None = None) -> dict | None:
     kind = _weather_kind(weather)
     cafe = trade == "카페"
     if kind == "snow":
-        return {"pct": 5 if cafe else 20, "why": "눈 오는 날 - " + ("창가 자리에 오래 머무는 손님" if cafe else "어묵 국물에 소주 한잔")}
+        return {"pct": 5 if cafe else 20, "why": "눈 오는 날 - " + ("창가 자리에 오래 머무는 손님" if cafe else "뜨끈한 국물에 화주 한잔")}
     if kind == "rain":
-        return {"pct": 15 if cafe else 25, "why": "비 오는 날 - " + ("따뜻한 음료 들고 비 피하는 손님" if cafe else "비 오는 날엔 파전에 막걸리")}
+        return {"pct": 15 if cafe else 25, "why": "비 오는 날 - " + ("따뜻한 약초차 들고 비 피하는 손님" if cafe else "비 오는 날엔 전에 곡주")}
     if kind == "hot":
-        return {"pct": 20 if cafe else -20, "why": "더운 날 - " + ("아이스 음료 주문 폭주" if cafe else "더워서 포장마차는 한산")}
+        return {"pct": 20 if cafe else -20, "why": "더운 날 - " + ("얼음 박하차 주문 폭주" if cafe else "더워서 선술집은 한산")}
     if kind == "cold":
         return {"pct": 10 if cafe else 15, "why": "추운 날 - " + ("몸 녹이러 들어오는 손님" if cafe else "따끈한 국물 찾는 손님")}
     return {"pct": 0, "why": "무난한 날씨 - 평소 장사"}
@@ -522,7 +522,7 @@ def monthly(now: datetime) -> dict:
         if len(rows) >= 2:
             name, x = rows[0]
             winners[company] = (name, x)
-            title = f"{start.year}년 {start.month}월 우수 사원"
+            title = f"{start.year}년 {start.month}월의 공로자"
             data.setdefault("titles", {}).setdefault(name, []).append(title)
     _save(data)
     return {"month": month, "label": f"{start.month}월", "winners": winners}

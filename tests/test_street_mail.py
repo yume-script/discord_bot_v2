@@ -1,4 +1,4 @@
-"""골목 청소/우체통: 알림방의 메일 관리 알림을 종류와 개수만 골목 일로 (제목/본문은 안 씀)."""
+"""성벽 청소/전령 우편함: 알림방의 메일 관리 알림을 종류와 개수만 마을 일로 (제목/본문은 안 씀)."""
 import json
 from datetime import datetime
 
@@ -20,7 +20,7 @@ def test_parse_kinds_only():
 
 def test_cleanup_pays_cleaner_and_posts(fake_llm, monkeypatch):
     monkeypatch.setattr(agents, "_group_channel", lambda g: 123)
-    fake_llm(lambda system, user: {"text": "골목 싹 치웠어요~ 일당은 받아요!"})
+    fake_llm(lambda system, user: {"text": "성벽 앞 싹 치웠어요~ 품삯은 받아요!"})
     money = life.get("홍두식")["money"]
     now = datetime(2026, 10, 14, 15, 0)
     street_mail.handle({"kind": "trash", "count": 12}, now)
@@ -31,7 +31,7 @@ def test_cleanup_pays_cleaner_and_posts(fake_llm, monkeypatch):
     street_mail.handle({"kind": "mail", "count": 1}, now)
     street_mail.handle({"kind": "registered", "count": 1}, now)
     block = street_mail.prompt_block(now)
-    assert "쓰레기 2봉지" in block and "편지 1통" in block and "등기 1통" in block and "123456" not in block
+    assert "잔해 2수레" in block and "편지 1통" in block and "봉인 편지 1통" in block and "123456" not in block
 
 
 def test_town_event_once_per_kind():
@@ -44,6 +44,6 @@ def test_town_event_once_per_kind():
         street_mail.handle({"kind": "traffic", "count": 1}, now)
         street_mail.handle({"kind": "traffic", "count": 1}, now.replace(hour=10))    # 3시간 안에 또 - 한 번만
         street_mail.handle({"kind": "traffic", "count": 1}, now.replace(hour=13))
-        assert sent == ["건물 인터넷 데이터 바닥", "건물 인터넷 데이터 바닥"]
+        assert sent == ["통신석 중계탑 마나 바닥", "통신석 중계탑 마나 바닥"]
     finally:
         ag.inject_event = orig

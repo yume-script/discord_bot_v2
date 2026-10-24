@@ -16,7 +16,7 @@ def test_assign_first_holders_then_handover():
     assert [p["id"] for p in posts["성덕선"]] == ["sales"]
     assert [p["id"] for p in posts["리정혁"]] == ["facility_stability"]
     assert [p["id"] for p in posts["소라"]] == ["streams"]
-    # 성덕선이 쉬러 가면 같은 별빛극장 매표·홍보의 조이서가 매표를 맡는다
+    # 성덕선이 쉬러 가면 같은 별빛 환영극장 매표·홍보의 조이서가 매표를 맡는다
     posts, changes = kpi.assign(_agents(without=("성덕선",)), roster)
     assert [(p["id"], o, n) for p, o, n in changes] == [("sales", "성덕선", "조이서")]
     assert "sales" in [p["id"] for p in posts["조이서"]]
@@ -110,7 +110,7 @@ def test_weekly_ranking_and_rewards(fake_llm, monkeypatch):
     monkeypatch.setattr(agents.runtime, "send_as", lambda acc, name, text, *a, **k: sent.append((name, text)))
     monkeypatch.setattr(agents.runtime, "has_agent_sender", lambda: True)
     monkeypatch.setattr(agents, "_group_channel", lambda g: 1)
-    fake_llm(lambda system, user: {"text": "지난주 1등 애순이! 김동식 씨는 분발."} if "책방 단톡방" in user else {})
+    fake_llm(lambda system, user: {"text": "지난주 1등 애순이! 김동식 씨는 분발."} if "도서관 통신방" in user else {})
     money = life.get("애순이")["money"]
     data = {}
     monday = datetime(2026, 10, 12, 9, 30)
@@ -121,7 +121,7 @@ def test_weekly_ranking_and_rewards(fake_llm, monkeypatch):
     assert any("3명 중 1등" in m["text"] for m in data["애순이"]["inbox"])
     assert any("3명 중 3등" in m["text"] for m in data["김동식"]["inbox"])
     assert any("실적 100점" in m["text"] for m in data["성덕선"]["inbox"])  # 극장은 혼자라 본인에게만
-    assert sent and sent[0][0] == "애순이" and "애순이" in sent[0][1]   # 책방 사장이 책방 단톡방에 발표
+    assert sent and sent[0][0] == "애순이" and "애순이" in sent[0][1]   # 도서관 사장이 도서관 통신방에 발표
     # 같은 주에 다시 돌아도 또 발표하지 않는다
     agents._kpi_reviews(agent_list, roster, {}, monday.replace(hour=11))
     assert len(sent) == 1
@@ -138,8 +138,8 @@ def test_monthly_title_is_permanent(monkeypatch):
     kpi._save(data)
     monkeypatch.setattr(agents, "_group_channel", lambda g: 0)
     agents._kpi_reviews(agent_list, roster, {}, datetime(2026, 10, 1, 10))
-    assert kpi.titles("애순이") == ["2026년 9월 우수 사원"]
-    assert any(m.get("permanent") and "9월 우수 사원" in m["text"] for m in memory.store.memories("애순이"))
+    assert kpi.titles("애순이") == ["2026년 9월의 공로자"]
+    assert any(m.get("permanent") and "9월의 공로자" in m["text"] for m in memory.store.memories("애순이"))
     assert not kpi.monthly_due(datetime(2026, 10, 1, 11))
 
 
@@ -147,10 +147,10 @@ def test_weather_trade():
     rain = "기온 18°C, 흐림, 비 (1mm), 습도 80% (기상청 실측 예보)"
     hot = "기온 33°C, 맑음, 습도 50% → 폭염 - 현장 더위 비상 (기상청 실측 예보)"
     assert kpi.weather_trade("카페", rain)["pct"] == 15
-    assert kpi.weather_trade("포장마차", rain)["pct"] == 25
+    assert kpi.weather_trade("선술집", rain)["pct"] == 25
     assert kpi.weather_trade("카페", hot)["pct"] == 20  # "비상"을 비로 읽지 않는다
-    assert kpi.weather_trade("포장마차", hot)["pct"] == -20
-    assert kpi.weather_trade("포장마차", "기온 15°C, 맑음")["pct"] == 0
+    assert kpi.weather_trade("선술집", hot)["pct"] == -20
+    assert kpi.weather_trade("선술집", "기온 15°C, 맑음")["pct"] == 0
     assert kpi.weather_trade("", rain) is None
     assert kpi.weather_trade("카페", "") is None
 

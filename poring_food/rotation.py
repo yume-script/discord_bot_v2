@@ -1,11 +1,11 @@
 """
 에이전트 <-> 배경 인물 교체 - 하루에 한 번, 소속별로 한 명씩 스스로 사는 사람(LLM 에이전트)과 배경 인물이 자리를 바꾼다.
 
-같은 사람들만 계속 주인공이면 이야기가 좁아진다. 그래서 매일 새벽(ROTATE_FROM_HOUR 이후 첫 회차) 책방 오아시스/
-별빛극장/동네(오아시스 거리)마다 오래 활동한 에이전트 한 명이 배경 인물로 쉬러 가고, 오래 쉰 배경 인물
+같은 사람들만 계속 주인공이면 이야기가 좁아진다. 그래서 매일 새벽(ROTATE_FROM_HOUR 이후 첫 회차) 오아시스 마법도서관/
+별빛 환영극장/마을(오아시스 마을)마다 오래 활동한 에이전트 한 명이 배경 인물로 쉬러 가고, 오래 쉰 배경 인물
 한 명이 에이전트로 나선다. 소속별 인원은 그대로다.
 
-- 고정(교체 안 함): 자기 디스코드 계정이 있는 사람(애순이/소라), 역할(role, 예: 통장)이 있는 사람, agents.json에서
+- 고정(교체 안 함): 자기 디스코드 계정이 있는 사람(애순이/소라), 역할(role, 예: 촌장)이 있는 사람, agents.json에서
   "fixed": true인 사람. 지금 맡은 마을 프로젝트 담당자, 진행 중인 모임 제안자도 이번엔 안 뺀다.
   담당 업무(실적)는 사람이 아니라 자리에 붙어서(kpi.py) 담당자가 쉬러 가면 같은 부서 에이전트가 인수인계받는다.
   자리의 이야기(하던 일/약속/다툼/받은 소식/진행 중인 일)는 handover.py가 후임에게 넘긴다 (인수인계서 + 동료 알림 + 승계).
@@ -35,7 +35,7 @@ ROTATE_FROM_HOUR = 5
 SWAPS_PER_COMPANY = int(os.getenv("PORING_AGENT_ROTATION_SWAPS", "1"))
 COMPANIES = (worldcfg.BOOK, worldcfg.CINEMA, worldcfg.STREET)
 TOWN_COMPANY = worldcfg.STREET
-TOWN_GROUP = "동네 단톡방"
+TOWN_GROUP = worldcfg.TOWN_GROUP
 DEFAULT_EVERY = 3
 TIMEOUT_SEC = 60
 
@@ -93,17 +93,17 @@ def _profile_for(member: dict, data: dict) -> dict:
     saved = _reserve().get(member["name"]) or (data.get("profiles") or {}).get(member["name"])
     if saved:
         return dict(saved)
-    persona = (f"{member.get('company', '')} {member.get('dept', '')} {member.get('rank', '')}. "
+    persona = (f"{member.get('company', '')} {member.get('dept', '')} {member.get('job') or member.get('rank', '')}. "
                f"겉모습: {member.get('outer_persona', '')} / 속마음: {member.get('inner_truth', '')} / "
                f"행동: {member.get('key_behavior', '')}")
     out = llm_json(
-        "너는 가상 도시의 인물 설정 담당이다. 배경 인물을 스스로 판단하며 사는 인물로 만들 프로필을 쓴다. "
-        "주어진 설정에서 벗어나지 말고, 실존 인물/혐오 소재는 쓰지 마라.",
+        "너는 마법 판타지 세계 변경 마을의 인물 설정 담당이다. 배경 인물을 스스로 판단하며 사는 인물로 만들 프로필을 쓴다. "
+        "주어진 설정에서 벗어나지 말고, 실존 인물/혐오 소재는 쓰지 마라.\n" + worldcfg.WORLD_RULE,
         f"[인물] {member['name']}\n[설정] {persona}\n\n"
         "이 사람의 프로필을 써라. 반드시 JSON으로만 응답:\n"
         '{"profile": "나이대, 하는 일, 겉과 속, 요즘 고민 2~3문장", "routine": "평일/주말 하루 일과 한두 문장", '
         '"speech": "말투 한 문장 - 존댓말/반말, 사투리 여부, 따옴표로 입버릇 1~2개", "sleep": [잠드는 시각 0~23, 일어나는 시각 0~23], '
-        '"hangouts": ["카페 오후세시/포장마차 단밤/동네 헬스장/동네 편의점 중 0~2곳"]}',
+        '"hangouts": ["찻집 오후세시/선술집 단밤/수비대 훈련장/마을 잡화점 중 0~2곳"]}',
         temperature=0.7, timeout=TIMEOUT_SEC, tag=f"교체 프로필 {member['name']}")
     out = out if isinstance(out, dict) else {}
     sleep = out.get("sleep") if isinstance(out.get("sleep"), list) and len(out.get("sleep")) == 2 else [0, 7]
@@ -111,7 +111,7 @@ def _profile_for(member: dict, data: dict) -> dict:
         sleep = [int(sleep[0]) % 24, int(sleep[1]) % 24]
     except (TypeError, ValueError):
         sleep = [0, 7]
-    places = {"카페 오후세시", "포장마차 단밤", "동네 헬스장", "동네 편의점"}
+    places = {"찻집 오후세시", "선술집 단밤", "수비대 훈련장", "마을 잡화점"}
     entry = {
         "name": member["name"], "company": member.get("company", ""), "sleep": sleep,
         "avatar_url": f"https://api.dicebear.com/9.x/notionists/png?seed=rot{sum(map(ord, member['name']))}",

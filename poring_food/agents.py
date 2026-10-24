@@ -1,5 +1,5 @@
 """
-[3단계] 오아시스 거리 LLM 에이전트 - 스스로 판단하며 사는 인물 (1번 애순이, 2번 소라, 최대 5명).
+[3단계] 오아시스 마을 LLM 에이전트 - 스스로 판단하며 사는 인물 (1번 애순이, 2번 소라, 최대 5명).
 
 배경 인물 25명은 규칙(일정+상태)으로 움직이고 작가(LLM 한 번)가 대사를 대신 써 주지만, 에이전트는
 각자 자기 LLM 턴을 갖는다. 매시 회차마다:
@@ -10,7 +10,7 @@
    (세계 엔진이 터뜨린 사건/소문, 다른 에이전트의 메시지), 애순이는 지난 회차 이후 카톡에서 실제 사람들과
    나눈 대화까지. 세계 엔진의 사건 계획과 작가 회의 줄거리는 보지 못한다(미래를 모른다).
 2) 판단(LLM JSON): 이번 시간 어디서 무엇을 하는지, 속마음, 다음 계획, 마음의 변화, 남길 기억,
-   그리고 필요하면 다른 에이전트에게 연락(메신저/직접 만남).
+   그리고 필요하면 다른 에이전트에게 연락(통신석/직접 만남).
 3) 대화: 연락하면 두 에이전트가 한 턴씩 번갈아 말한다. 턴마다 말하는 사람의 LLM이 "자기 상태와 기억만"
    보고 다음 말을 정한다(서로의 속은 모른다). 각자 자기 디스코드 계정으로 에이전트 대화 채널에 올린다.
 4) 실패하면(LLM 장애/형식 오류) 그 인물은 이번 시간 평소 루틴(규칙)대로 움직인다 - 방송이 끊기지 않게.
@@ -54,7 +54,7 @@ DECIDE_TIMEOUT_SEC = 45
 # 따로 센다. 판단이 다 끝나야 대화가 시작되므로, 여기가 매시 회차에서 디스코드가 조용한 시간을 정한다.
 DECIDE_PARALLEL = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL", "1"))
 DECIDE_PARALLEL_OWN = int(os.getenv("PORING_AGENT_DECIDE_PARALLEL_OWN", "2"))
-# 시간 안의 파급 라운드 - 대화/소문/단톡방 언급을 겪은 사람이 같은 시간 안에 다시 반응해서(LLM 1회) 새 연락/글로
+# 시간 안의 파급 라운드 - 대화/소문/통신방 언급을 겪은 사람이 같은 시간 안에 다시 반응해서(LLM 1회) 새 연락/글로
 # 이어진다. 바퀴 수, 한 시간 반응 판단 상한, 한 사람 반응 상한, 반응으로 생기는 대화 상한 (ROUNDS=0이면 끔)
 RIPPLE_ROUNDS = int(os.getenv("PORING_RIPPLE_ROUNDS", "3"))                     # 연쇄 깊이 (0이면 끔)
 RIPPLE_MAX_REACTIONS = int(os.getenv("PORING_RIPPLE_MAX_REACTIONS", "20"))       # 한 시간 반응 판단 상한 (전체)
@@ -62,24 +62,24 @@ RIPPLE_PER_PERSON = int(os.getenv("PORING_RIPPLE_PER_PERSON", "5"))             
 RIPPLE_PER_PERSON_PER_ROUND = 2     # 한 바퀴에 한 사람이 반응하는 일 수 (서로 다른 일에서 온 것만 따로 - 같은 일은 묶어서 한 번)
 RIPPLE_CONVOS_PER_HOUR = int(os.getenv("PORING_RIPPLE_CONVOS_PER_HOUR", "5"))   # 반응으로 생기는 대화 상한
 RIPPLE_MAX_TALKS_PER_PERSON = 3     # 한 사람이 한 시간에 하는 대화 수 (처음 판단 1 + 반응 2)
-RIPPLE_GROUP_WATCHERS = 3           # 단톡방 새 글을 "본" 사람 중 반응할지 고민해 보는 사람 수 (이름 불린 사람 말고, 무작위)
+RIPPLE_GROUP_WATCHERS = 3           # 통신방 새 글을 "본" 사람 중 반응할지 고민해 보는 사람 수 (이름 불린 사람 말고, 무작위)
 RIPPLE_MIN_MATTERS = 3              # 스스로 매긴 중요도가 이보다 낮으면 행동했다고 해도 가만히로 본다 (말과 행동이 어긋나지 않게)
 RIPPLE_MINUTES = (20, 35, 50)       # 바퀴마다 붙이는 시각 (로그/채널이 실제 한 시간처럼 읽히게)
 # 지난 회차 숫자 - 회차 끝 카톡 알림(cogs/poring_food.py)에 쓴다 (예전 디스코드 "정하는 중" 한 줄은 카톡 알림으로 옮겼다)
 LAST_TICK: dict = {}
 VALID_STATES = ("일하는 중", "개인시간", "이동 중", "자는 중")
 
-# 단톡방 - 멤버만 보고 쓴다 (모두가 보는 곳이라 비밀 얘기는 안 쓴다)
-#  - 가게 단톡방(책방 단톡방/극장 단톡방): 그 가게 소속 에이전트 전원 (worldcfg.GROUP_OF)
-#  - 동네 단톡방: agents.json에서 "groups"에 넣은 사람
-#  채널은 하나로 통일 - 모든 단톡방/대화가 에이전트 대화 채널(PORING_AGENT_CHANNEL_ID)에 머리줄로 구분돼 올라간다.
-SHOP_GROUPS = dict(worldcfg.GROUP_OF)            # {회사: 단톡방 이름}
-TOWN_GROUP = "동네 단톡방"
-GROUP_HEADERS = {TOWN_GROUP: "-# 🏘️ 동네 단톡방", worldcfg.BOOK_GROUP: "-# 📚 책방 단톡방",
-                 worldcfg.CINEMA_GROUP: "-# 🎬 극장 단톡방"}  # 글마다 머리줄(+시각)로 출처 표시
+# 통신방 - 멤버만 보고 쓴다 (모두가 보는 곳이라 비밀 얘기는 안 쓴다)
+#  - 기관 통신방(도서관 통신방/극장 통신방): 그 가게 소속 에이전트 전원 (worldcfg.GROUP_OF)
+#  - 마을 통신방: agents.json에서 "groups"에 넣은 사람
+#  채널은 하나로 통일 - 모든 통신방/대화가 에이전트 대화 채널(PORING_AGENT_CHANNEL_ID)에 머리줄로 구분돼 올라간다.
+SHOP_GROUPS = dict(worldcfg.GROUP_OF)            # {회사: 통신방 이름}
+TOWN_GROUP = worldcfg.TOWN_GROUP
+GROUP_HEADERS = {TOWN_GROUP: f"-# 🏰 {TOWN_GROUP}", worldcfg.BOOK_GROUP: f"-# 📚 {worldcfg.BOOK_GROUP}",
+                 worldcfg.CINEMA_GROUP: f"-# 🔮 {worldcfg.CINEMA_GROUP}"}  # 글마다 머리줄(+시각)로 출처 표시
 GROUP_PATH = os.path.join(STATE_DIR, "group_chat.jsonl")
-GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))            # 가게 단톡방 하루 상한
-TOWN_GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_TOWN_GROUP_MAX_POSTS_PER_DAY", "24"))  # 동네 단톡방(멤버가 많다)
+GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_DAY", "10"))            # 기관 통신방 하루 상한
+TOWN_GROUP_MAX_POSTS_PER_DAY = int(os.getenv("PORING_TOWN_GROUP_MAX_POSTS_PER_DAY", "24"))  # 마을 통신방(멤버가 많다)
 GROUP_MAX_POSTS_PER_HOUR = int(os.getenv("PORING_GROUP_MAX_POSTS_PER_HOUR", "3"))
 GROUP_RECENT = 10
 
@@ -87,13 +87,13 @@ GROUP_RECENT = 10
 GOSSIP_MAX_RECIPIENTS = 2
 GOSSIP_P_SAME_PLACE = 0.6     # 직접 만난 대화를 같은 곳에 있던 사람이 엿들음
 GOSSIP_P_COLLEAGUE = 0.25     # 같은 회사 동료에게 말이 돎
-GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/포장마차 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
+GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/선술집 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
 GOSSIP_P_OTHER = 0.05
 # 담당 업무(kpi.py 자리) - 실제 서비스 수치가 그 자리 담당자의 실적이다
 DUTY_BIG_RATIO = 2.0      # 오늘 입고가 평소 하루 평균의 이만큼 이상이면 회사 사건 (하루 한 번)
 DUTY_BIG_MIN = 10         # 평균이 작을 때 몇 건만으로 "대량"이 되지 않게
 DUTY_SLOW_FROM_HOUR = 18  # 이 시각 이후에도 한산하면 담당자가 신경 쓴다 (하루 한 번)
-GOSSIP_MESSENGER_FACTOR = 0.4  # 메신저 대화는 잘 안 샌다
+GOSSIP_MESSENGER_FACTOR = 0.4  # 통신석 대화는 잘 안 샌다
 
 
 # ===================================================================== 목록/저장
@@ -124,15 +124,15 @@ def _rotate(now) -> None:
     _save_state(data)
     lines = [f"-# 🔄 {now.month}/{now.day} 오늘의 얼굴들"]
     for company, out_name, in_name in swaps:
-        label = "동네" if company == rotation.TOWN_COMPANY else company.split(" ")[0]
+        label = "마을" if company == rotation.TOWN_COMPANY else company.split(" ")[0]
         lines.append(f"• {label}: **{in_name}** 씨가 나서고, {out_name} 씨는 한동안 조용히 지내요")
         chronicle.record_event("교체", f"{in_name} 등장 / {out_name} 휴식", company, [in_name, out_name])
-        memory.remember(in_name, "요즘 들어 동네 일과 사람들에게 마음이 더 쓰인다. 내 하루를 내가 정해 보기로 했다.", 4, [], "교체")
-    _post_as("동네 소식", "\n".join(lines))
+        memory.remember(in_name, "요즘 들어 마을 일과 사람들에게 마음이 더 쓰인다. 내 하루를 내가 정해 보기로 했다.", 4, [], "교체")
+    _post_as("마을 소식", "\n".join(lines))
 
 
 def _names_ever_used() -> set[str]:
-    """지금은 없지만 예전에 이 세계에 있었던 이름 전부 - 옛 동네 사람, 기억/상태/관계 기록에 남은 이름."""
+    """지금은 없지만 예전에 이 세계에 있었던 이름 전부 - 옛 마을 사람, 기억/상태/관계 기록에 남은 이름."""
     from . import rename_migration
     used = set(rename_migration.OLD_TOWN)
     used |= memory.all_names()
@@ -142,8 +142,8 @@ def _names_ever_used() -> set[str]:
 
 
 def move_in_newcomers(drama: str = "") -> dict:
-    """[주 1회 / 관리자] 드라마 인물들이 동네로 이사 온다. 채널/연대기/모두의 받은편지함(깨우지 않음)에 알린다.
-    동네 배경 인물이 상한을 넘으면 먼저 온 새 이웃이 이사 간다. 반환: newcomers.move_in 결과 + moved_out."""
+    """[주 1회 / 관리자] 드라마 인물들이 마을로 이사 온다. 채널/연대기/모두의 받은편지함(깨우지 않음)에 알린다.
+    마을 배경 인물이 상한을 넘으면 먼저 온 새 이웃이 이사 간다. 반환: newcomers.move_in 결과 + moved_out."""
     try:
         with open(AGENTS_PATH, "r", encoding="utf-8") as f:
             reserve = {a.get("name") for a in json.load(f).get("reserve", [])}
@@ -163,13 +163,13 @@ def move_in_newcomers(drama: str = "") -> dict:
     lines = [f"-# 🚚 {now.month}/{now.day} 새 이웃이 이사 왔어요 (「{res['drama']}」)"]
     lines += [f"• **{r['name']}** - {r['rank']}, {r['outer_persona']}" for r in res["added"]]
     if res["moved_out"]:
-        lines.append(f"-# 📦 {', '.join(res['moved_out'])} 씨는 정든 동네를 떠나 이사 갔어요")
-    _post_as("동네 소식", "\n".join(lines))
+        lines.append(f"-# 📦 {', '.join(res['moved_out'])} 씨는 정든 마을을 떠나 이사 갔어요")
+    _post_as("마을 소식", "\n".join(lines))
     names = [r["name"] for r in res["added"]]
-    chronicle.record_event("이사", f"새 이웃 {', '.join(names)}", f"「{res['drama']}」 사람들이 동네로 이사 옴", names)
+    chronicle.record_event("이사", f"새 이웃 {', '.join(names)}", f"「{res['drama']}」 사람들이 마을로 이사 옴", names)
     if res["moved_out"]:
-        chronicle.record_event("이사", f"{', '.join(res['moved_out'])} 이사 감", "동네를 떠남", res["moved_out"])
-    news = "동네에 새 이웃이 이사 왔다: " + ", ".join(f"{r['name']}({r['rank']})" for r in res["added"])
+        chronicle.record_event("이사", f"{', '.join(res['moved_out'])} 이사 감", "마을을 떠남", res["moved_out"])
+    news = "마을에 새 이웃이 이사 왔다: " + ", ".join(f"{r['name']}({r['rank']})" for r in res["added"])
     data = _load_state()
     for a in agents:
         _push_inbox(data, a["name"], news, "소식", quiet=True)
@@ -246,13 +246,13 @@ def send_message(to: str, text: str, sender: str = "") -> bool:
 
 def inject_event(target_list: list[str], detail: str, title: str = "") -> list[str]:
     """[관리자 사건] 세계 엔진에 지금 사건 하나를 넣고 당사자 받은편지함에 바로 전달한다.
-    반환: 전달된 에이전트 이름 (대상이 회사/동네면 소속 에이전트 전부, 배경 인물은 장면/일지로 안다)."""
+    반환: 전달된 에이전트 이름 (대상이 회사/마을면 소속 에이전트 전부, 배경 인물은 장면/일지로 안다)."""
     out = world.inject(title or detail, detail, target_list, load_agents(), characters.load_roster())
     for name, text, kind in out:
         deliver(name, text, kind, urgent=True)
     if out and len(out) > 1:
         # 여러 사람에게 닿은 일은 끝날 때까지 "아직 끝나지 않은 일"로 모두의 지각에 남긴다 (날짜가 바뀌어도)
-        # 범위: 회사 하나만 대상이면 그 회사 안의 일, 동네/여러 회사면 동네에 공개, 사람만 지정이면 글에서 짐작
+        # 범위: 회사 하나만 대상이면 그 회사 안의 일, 마을/여러 회사면 마을에 공개, 사람만 지정이면 글에서 짐작
         comps = {chronicle.norm_scope(t) for t in target_list if chronicle.norm_scope(t)}
         town = any(t == world.TOWN for t in target_list)
         scope = None if not comps and not town else ("" if town or len(comps) > 1 else comps.pop())
@@ -326,9 +326,9 @@ def _asleep(agent: dict, hour: int) -> bool:
     return s <= hour < e if s <= e else (hour >= s or hour < e)
 
 
-# ===================================================================== 단톡방 (회사 / 동네)
+# ===================================================================== 통신방 (회사 / 마을)
 def _group_channel(group: str) -> int:
-    """채널은 하나로 통일 - 모든 단톡방이 에이전트 대화 채널에 올라간다 (머리줄로 어느 방인지 구분)."""
+    """채널은 하나로 통일 - 모든 통신방이 에이전트 대화 채널에 올라간다 (머리줄로 어느 방인지 구분)."""
     if group == TOWN_GROUP or group in SHOP_GROUPS.values():
         return bot_settings.PORING_AGENT_CHANNEL_ID
     return 0
@@ -368,7 +368,7 @@ def _group_block(agent: dict, st: dict) -> str:
     last_seen = (st.get("decision") or {}).get("hour", "")
     blocks = []
     for group in _groups_of(agent):
-        who = "가게 사람들" if group in SHOP_GROUPS.values() else "동네 사람들"
+        who = "가게 사람들" if group in SHOP_GROUPS.values() else "마을 사람들"
         lines = []
         for m in _group_recent(group):
             new = " (새 글)" if m["at"][:13].replace("T", " ") >= last_seen and m["name"] != agent["name"] else ""
@@ -378,7 +378,7 @@ def _group_block(agent: dict, st: dict) -> str:
 
 
 def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dict], at: datetime | None = None) -> list[str]:
-    """단톡방에 올리고 기록한다(at: 올릴 시각 - 예약함). 이름이 불린 멤버는 받은편지함으로 깨운다.
+    """통신방에 올리고 기록한다(at: 올릴 시각 - 예약함). 이름이 불린 멤버는 받은편지함으로 깨운다.
     반환: 이름이 불린 멤버 (파급 라운드용)."""
     now = at or now_kst()
     header = f"{GROUP_HEADERS.get(group) or '-# 💬 ' + group} · {now.strftime('%H:%M')} · {agent['name']}"
@@ -388,11 +388,11 @@ def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dic
     with open(GROUP_PATH, "a", encoding="utf-8") as f:
         f.write(json.dumps({"at": now.isoformat(timespec="minutes"), "group": group, "name": agent["name"],
                             "text": text}, ensure_ascii=False) + "\n")
-    novelty.note("단톡방", text, [agent["name"]], at=now)
+    novelty.note("통신방", text, [agent["name"]], at=now)
     mentioned = []
     for other in agents:
         if other is not agent and group in _groups_of(other) and other["name"] in text:
-            _push_inbox(data, other["name"], f"{group}에서 {j(agent['name'], '가')} 나를 언급함: {text}", "단톡방")
+            _push_inbox(data, other["name"], f"{group}에서 {j(agent['name'], '가')} 나를 언급함: {text}", "통신방")
             mentioned.append(other["name"])
     print(f"[에이전트] {group} {agent['name']}: {text}")
     return mentioned
@@ -503,7 +503,7 @@ def _arcade_comment(manager: dict, player: str, r: dict, now) -> dict | None:
     sign = "+" if r["change"] >= 0 else ""
     user = (
         "\n\n".join(b for b in (
-            f"[지금] {now.strftime('%H:%M')}, 내 가게(골목 LP바)의 봇 오락기 앞.",
+            f"[지금] {now.strftime('%H:%M')}, 내 가게(골목 음유 주점) 구석의 내기 판 앞.",
             life.prompt_block(manager["name"]),
             memory.prompt_block(manager["name"], [player], k=3),
         ) if b) + "\n\n"
@@ -512,11 +512,11 @@ def _arcade_comment(manager: dict, player: str, r: dict, now) -> dict | None:
         f"결과: {r['result'].splitlines()[0]}\n\n"
         f"{manager['name']}로서 이 손님에게 한마디 해라 (1문장, 가게 주인으로서 - 축하든 위로든 놀림이든 성격대로). "
         "오늘 너무 많이 잃었거나 계속 잃는 손님이면 오늘은 그만하라고 하고 cut_off를 true로 (가게 주인으로서 말린다). "
-        f"손님이 크게 땄으면(20만 원 이상) 동네 단톡방에 알릴 글을 group_post에, 아니면 null.\n" + _voice(manager, player)
-        + '\n반드시 JSON으로만 응답:\n{"say": "한마디", "cut_off": true/false, "group_post": null 또는 "단톡방 글(1문장)"}'
+        f"손님이 크게 땄으면(20만 원 이상) 마을 통신방에 알릴 글을 group_post에, 아니면 null.\n" + _voice(manager, player)
+        + '\n반드시 JSON으로만 응답:\n{"say": "한마디", "cut_off": true/false, "group_post": null 또는 "통신방 글(1문장)"}'
     )
     out = llm_json(_system(manager), user, temperature=0.9, timeout=DECIDE_TIMEOUT_SEC,
-                   tag=f"오락기 주인 {manager['name']}", agent=manager["name"])
+                   tag=f"내기 판 주인 {manager['name']}", agent=manager["name"])
     if not out or not str(out.get("say") or "").strip():
         return None
     gp = str(out.get("group_post") or "").strip()
@@ -526,7 +526,7 @@ def _arcade_comment(manager: dict, player: str, r: dict, now) -> dict | None:
 
 def _handle_arcade(decisions: dict, by_name: dict, data: dict, now, hk: str, triggers: dict) -> None:
     """game을 고른 사람이 개인시간이면 한 판 한다: 친 명령(그 사람) -> 결과(오락기) -> 주인 한마디를 채널에 올리고,
-    크게 따거나 잃으면 반응 거리. 주인은 너무 잃는 손님을 오늘 그만 받을 수 있고, 대박은 동네 단톡방에 알린다."""
+    크게 따거나 잃으면 반응 거리. 주인은 너무 잃는 손님을 오늘 그만 받을 수 있고, 대박은 마을 통신방에 알린다."""
     for name, d in decisions.items():
         g = d.get("game")
         if not g or d.get("game_done") or d.get("state") != "개인시간" or name not in by_name:
@@ -552,23 +552,23 @@ def _handle_arcade(decisions: dict, by_name: dict, data: dict, now, hk: str, tri
             continue
         t2 = t + timedelta(seconds=25)
         _post(m, f"-# 🎰 {arcade.PLACE} · {t2.strftime('%H:%M')} · {m['name']} → {name}\n{c['say']}", at=t2)
-        _push_inbox(data, name, f"{m['name']}(오락기 주인)이 한마디: {c['say']}", "오락", quiet=True)
+        _push_inbox(data, name, f"{m['name']}(내기 판 주인)이 한마디: {c['say']}", "오락", quiet=True)
         if c["cut_off"]:
             arcade.cut_off(name, now)
-            _push_inbox(data, name, f"{m['name']}이 오늘은 오락기 그만하라고 해서 더 못 한다", "오락", quiet=True)
+            _push_inbox(data, name, f"{m['name']}이 오늘은 내기 그만하라고 해서 더 못 한다", "오락", quiet=True)
             print(f"[오락실] {m['name']}이 {name}에게 오늘은 그만 - {c['say']}")
         if c["group_post"] and TOWN_GROUP in (m.get("groups") or []):
             _post_group(m, TOWN_GROUP, c["group_post"], data, list(by_name.values()), at=t2 + timedelta(seconds=60))
         if abs(r["change"]) >= arcade.BIG:
-            memory.remember(m["name"], f"내 가게 오락기에서 {j(name, '이')} {abs(r['change']):,}원을 "
+            memory.remember(m["name"], f"내 가게 내기 판에서 {j(name, '이')} {abs(r['change']):,}원을 "
                                        f"{'땄다' if r['change'] > 0 else '잃었다'}", 5, [name], "가게")
 
 
-DECOR_NAME = "🧱 골목 꾸미기"
+DECOR_NAME = "🛡️ 마을 방어 배치"
 
 
 def _handle_decor(decisions: dict, by_name: dict, data: dict, now, hk: str, triggers: dict) -> None:
-    """골목 꾸미기 판 (decor.py): 하루 한 번 닳기/기금, 고른 사람의 꾸미기를 판에 반영해 채널에 올리고, 저녁엔 판 그림."""
+    """마을 방어 배치 판 (decor.py): 하루 한 번 닳기/기금, 고른 사람의 배치를 판에 반영해 채널에 올리고, 저녁엔 판 그림."""
     decor.daily(now, signals.weather_text(), inject=lambda t, d, title: inject_event(t, d, title))
     for name, d in decisions.items():
         dc = d.get("decor")
@@ -580,22 +580,22 @@ def _handle_decor(decisions: dict, by_name: dict, data: dict, now, hk: str, trig
         if not r:
             continue
         t = outbox.slot(now, 15, 50, random.Random(f"{hk}|decor|{name}"))
-        money = f"골목 기금 -{r['cost']:,}원" + (f", 일당 {r['wage']:,}원" if r["wage"] else "") + f" (남은 기금 {r['fund']:,}원)"
-        _post(by_name[name], f"-# 🧱 골목 꾸미기 · {t.strftime('%H:%M')} · {name}\n{r['text']}" + (f" - {dc['why']}" if dc.get("why") else "")
+        money = f"방어 기금 -{r['cost']:,}원" + (f", 품삯 {r['wage']:,}원" if r["wage"] else "") + f" (남은 기금 {r['fund']:,}원)"
+        _post(by_name[name], f"-# {DECOR_NAME} · {t.strftime('%H:%M')} · {name}\n{r['text']}" + (f" - {dc['why']}" if dc.get("why") else "")
               + f"\n-# {money}", at=t)
         if r["wage"]:
-            life.give_money(name, r["wage"], f"골목 꾸미기 일당 ({r['item']})")
-        memory.remember(name, f"골목 꾸미기: {r['text']}", 5, [], "골목")
-        chronicle.record_event("골목", f"{name}: {r['text']}", money, [name])
-        novelty.note("사건", f"골목 꾸미기 {r['text']}", [name], at=t)
-        _add_trigger(triggers, name, f"방금 골목에서 {r['text']}", f"골목:{name}")
-        if r["do"] == "remove":  # 건물주가 치우면 동네가 안다 (반발/민원거리)
-            inject_event([world.TOWN], f"{name}이(가) {r['text']}.", f"{r['near']} 앞 {r['item']} 철거")
+            life.give_money(name, r["wage"], f"방어 시설 품삯 ({r['item']})")
+        memory.remember(name, f"마을 방어 배치: {r['text']}", 5, [], "방어")
+        chronicle.record_event("방어", f"{name}: {r['text']}", money, [name])
+        novelty.note("사건", f"마을 방어 배치 {r['text']}", [name], at=t)
+        _add_trigger(triggers, name, f"방금 마을에서 {r['text']}", f"방어:{name}")
+        if r["do"] == "remove":  # 영주가 치우면 마을이 안다 (반발/민원거리)
+            inject_event([world.TOWN], f"{name}이(가) {r['text']}.", f"{r['near']} 근처 {r['item']} 철거")
     if decor.should_render(now):
         path = decor.render(now, decor.people_from_states(characters.load_states(), names()))
         if path:
             outbox.schedule(outbox.slot(now, 52, 55, random.Random(f"{hk}|decorpng")) if outbox.paced() else None,
-                            "file", path=path, name=DECOR_NAME, text=f"-# 🧱 {now:%m/%d} 오늘의 골목 꾸미기 판")
+                            "file", path=path, name=DECOR_NAME, text=f"-# 🛡️ {now:%m/%d} 오늘의 마을 방어 배치 판")
             decor.mark_rendered(now)
 
 
@@ -633,7 +633,7 @@ def _handle_hobbies(decisions: dict, by_name: dict, data: dict, now, hk: str, tr
             outbox.schedule(t + timedelta(seconds=5), "draw", name=name, prompt=hobbies.clean_prompt(g["prompt"]),
                             text=f"-# 🎨 {name}의 그림 · {t.strftime('%H:%M')}\n**{g['title']}**", channel_id=0)
             memory.remember(name, f"'{g['title']}'을(를) 그려서 올렸다", 5, [], "그림")
-            novelty.note("단톡방", f"{name}의 그림 {g['title']}", [name], at=t)
+            novelty.note("통신방", f"{name}의 그림 {g['title']}", [name], at=t)
             _add_trigger(triggers, name, f"방금 그림 '{g['title']}'을 그려 올렸다", f"그림:{name}")
             print(f"[그림] {name}: {g['title']}")
         if d.get("ant_voice") and a.get("company") in hobbies.OFFICE and hobbies.use(now, "ant", name):
@@ -670,15 +670,16 @@ def staff_overview(company_filter: str = "") -> list[str]:
     now = now_kst()
     h = handover._load()
     since = (now - timedelta(days=handover.SHOW_DAYS)).strftime("%Y-%m-%d")
-    company_filter = {"동네": "거리", "관리사무소": "거리", "카페": "극장"}.get(company_filter, company_filter)
+    company_filter = {"수비대": "마을", "성벽 수비대": "마을", "거리": "마을", "찻집": "극장", "책방": "도서관"}.get(
+        company_filter, company_filter)
     groups: dict[str, list[str]] = {}
     for a in ags:
         company = a.get("company", "")
         label = COMPANY_LABEL.get(company, company or "기타")
         if company_filter and company_filter not in label and company_filter not in company:
             continue
-        seat = handover.seat(a["name"], roster).split(" ", 1)
-        seat = seat[1] if len(seat) > 1 else ""
+        c = next((r for r in roster if r["name"] == a["name"]), {})
+        seat = " ".join(x for x in (c.get("dept", ""), c.get("job") or c.get("rank", "")) if x)
         tags = []
         if a.get("account"):
             tags.append("🔒계정")
@@ -734,7 +735,7 @@ def _kpi_announcer(company: str, agents: list[dict], roster: list[dict]) -> dict
 
 
 def _kpi_reviews(agents: list[dict], roster: list[dict], data: dict, now) -> None:
-    """[월요일 아침] 지난주 실적 순위 발표 + 상벌, [매달 1일] 지난달 우수 사원 칭호."""
+    """[월요일 아침] 지난주 실적 순위 발표 + 상벌, [매달 1일] 지난달 공로자 칭호."""
     by_name = {a["name"]: a for a in agents}
     if kpi.weekly_due(now):
         res = kpi.weekly(now)
@@ -761,9 +762,9 @@ def _kpi_reviews(agents: list[dict], roster: list[dict], data: dict, now) -> Non
             out = llm_json(
                 _system(announcer),
                 f"[지금] 월요일 아침, {group}\n[지난주({res['label']}) 실적 순위 - 실제 서비스 수치로 매긴 점수, 평소=100]\n{board}\n\n"
-                f"가게 책임자로서 단톡방에 주간 실적을 발표하라. 1등 {j(top, '을')} 칭찬하고 보너스 {kpi.WEEKLY_BONUS:,}원을 알리고, "
+                f"기관 책임자로서 통신방에 주간 실적을 발표하라. 1등 {j(top, '을')} 칭찬하고 보너스 {kpi.WEEKLY_BONUS:,}원을 알리고, "
                 f"꼴찌 {bottom}에게는 내 성격대로 한마디 한다. 순위와 점수는 위 그대로 쓴다. 3~6줄.\n"
-                '반드시 JSON으로만 응답: {"text": "단톡방에 올릴 글"}',
+                '반드시 JSON으로만 응답: {"text": "통신방에 올릴 글"}',
                 temperature=0.8, timeout=DECIDE_TIMEOUT_SEC, tag=f"주간 실적 {announcer['name']}", smart=True)
             text = str((out or {}).get("text") or "").strip() if isinstance(out, dict) else ""
             if not text:
@@ -774,7 +775,7 @@ def _kpi_reviews(agents: list[dict], roster: list[dict], data: dict, now) -> Non
         res = kpi.monthly(now)
         for company, (name, x) in res["winners"].items():
             short = company.split(" ")[0]
-            title = f"{res['label']} 우수 사원"
+            title = f"{res['label']}의 공로자"
             life.give_money(name, kpi.MONTHLY_BONUS, f"{title} 상여 {kpi.MONTHLY_BONUS:,}원")
             life.apply_changes(name, {"happiness": 0.12, "confidence": 0.12, "job_satisfaction": 0.1}, title)
             memory.remember(name, f"{short} {title}로 뽑혔다 ({', '.join(x['posts'])}, 평균 {x['score']}점). 상여 {kpi.MONTHLY_BONUS:,}원.",
@@ -843,7 +844,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         "[받은 소식/메시지 - 지난번 이후 새로 알게 된 것]\n" + ("\n".join(inbox_lines) or "- 없음"),
     ]
     if kakao:
-        parts.append("[카톡에서 실제 사람들과 나눈 대화 - 내가 직접 한 대화다]\n" + "\n".join(kakao[-20:]))
+        parts.append("[통신석으로 바깥 사람들과 실제로 나눈 대화 - 내가 직접 한 대화다]\n" + "\n".join(kakao[-20:]))
     parts.append(_group_block(agent, st))
     parts.append(projects.prompt_block(name))
     props = [t for t in chronicle.pending_proposals() if agent["name"] in t["proposal"]["members"]]
@@ -873,8 +874,9 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
 
 def _system(agent: dict) -> str:
     return (
-        f"너는 '{agent['name']}'이다. 가상의 도시에서 실제로 살아가는 사람이며, 지금 이 순간 무엇을 할지 "
+        f"너는 '{agent['name']}'이다. 마법 판타지 세계의 변경 마을에서 실제로 살아가는 사람이며, 지금 이 순간 무엇을 할지 "
         "스스로 정한다. 너는 미래를 모른다 - 오늘 무슨 일이 생길지는 겪어 봐야 안다.\n"
+        f"{worldcfg.WORLD_RULE}\n"
         f"[나] {agent.get('profile', '')}\n[말투] {agent.get('speech', '')}\n"
         "[연기 원칙]\n"
         "- 너는 착하고 무난한 AI가 아니라 이 사람 자체다. 성격의 좋은 면만이 아니라 약점, 고집, 욕심, 질투, 귀찮음, "
@@ -890,18 +892,18 @@ def _system(agent: dict) -> str:
 
 
 def _knowledge_rule(agent: dict) -> str:
-    """정보 칸막이 - 다른 가게 안의 일은 모른다 (동네 사람이 책방/극장 안의 매출/수치 다툼을 들먹이는 건 넌센스)."""
+    """정보 칸막이 - 다른 가게 안의 일은 모른다 (마을 사람이 도서관/극장 안의 매출/수치 다툼을 들먹이는 건 넌센스)."""
     company = agent.get("company", "")
     mine = company.split(" (")[0] if company in chronicle.OFFICES else ""
     others = [c.split(" (")[0] for c in chronicle.OFFICES if c != company]
     return (
         "[아는 것의 한계]\n"
         f"- {'나는 ' + mine + ' 사람이다. ' if mine else '나는 ' + ' / '.join(others) + ' 사람이 아니다. '}"
-        f"{', '.join(others)} 같은 다른 가게 안의 일(매출, 실적, 인사, 장부 숫자, 가게 안 다툼과 소문)은 모른다 - "
-        "내가 직접 겪었거나, 그 가게 사람에게 직접 들었거나, 받은 소식에 있는 것만 안다. "
-        "건물 일(지하 공용 창고, 전기, 관리비, 월세)은 이 건물 사람 모두가 안다.\n"
-        "- 모르는 남의 가게 일을 아는 척하거나, 그걸로 따지거나 협박하지 마라. 다른 가게 사람과는 그 사람과 나 사이의 일"
-        "(동네 일, 건물 일, 이웃, 취미, 바깥 뉴스)로 얘기한다.\n"
+        f"{', '.join(others)} 같은 다른 기관 안의 일(매출, 실적, 인사, 장부 숫자, 안에서의 다툼과 소문)은 모른다 - "
+        "내가 직접 겪었거나, 그 기관 사람에게 직접 들었거나, 받은 소식에 있는 것만 안다. "
+        "마을 일(성벽, 결계, 몬스터 침입, 지하 보급 창고, 성벽세)은 마을 사람 모두가 안다.\n"
+        "- 모르는 남의 기관 일을 아는 척하거나, 그걸로 따지거나 협박하지 마라. 다른 기관 사람과는 그 사람과 나 사이의 일"
+        "(마을 일, 성벽 일, 이웃, 취미, 떠돌이 상인 소문)로 얘기한다.\n"
     )
 
 
@@ -914,7 +916,7 @@ def _voice(agent: dict, other: str = "") -> str:
 
 # ===================================================================== 판단
 def _parse_group_post(raw, groups: list[str]) -> dict | None:
-    """{"group", "text"} 또는 그냥 글(첫 단톡방으로). 멤버가 아닌 단톡방이면 버린다."""
+    """{"group", "text"} 또는 그냥 글(첫 통신방으로). 멤버가 아닌 통신방이면 버린다."""
     if not groups or not raw:
         return None
     if isinstance(raw, str):
@@ -930,28 +932,28 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
     other_names = [o["name"] for o in others]
     groups = _groups_of(agent)
     group_rule = (
-        f"- 단톡방({', '.join(groups)})은 멤버들이 다 보는 곳이다. 공지/질문/가벼운 잡담/누가 부른 것에 대한 답이 있으면 "
+        f"- 통신방({', '.join(groups)})은 멤버들이 다 보는 곳이다. 공지/질문/가벼운 잡담/누가 부른 것에 대한 답이 있으면 "
         "group_post에 써라. 개인적인 비밀이나 남의 험담은 쓰지 마라(다 본다). 할 말이 없으면 null - 매번 쓰지 마라.\n"
         if groups else ""
     )
-    group_spec = (f', "group_post": null 또는 {{"group": "{"|".join(groups)}", "text": "단톡방에 올릴 말(1~2문장)"}}'
+    group_spec = (f', "group_post": null 또는 {{"group": "{"|".join(groups)}", "text": "통신방에 올릴 말(1~2문장)"}}'
                   if groups else "")
     scopes = _meeting_scopes(agent)
     pending = [t for t in chronicle.pending_proposals() if agent["name"] in t["proposal"]["members"]
                and agent["name"] not in t["proposal"]["supporters"]]
     meeting_rule = (
-        "- 여러 사람이 모여서 정해야 할 공동의 일(아직 끝나지 않은 일, 의견이 갈리는 문제, 동네/우리 가게/건물에 닥친 일)이 있고 "
+        "- 여러 사람이 모여서 정해야 할 공동의 일(아직 끝나지 않은 일, 의견이 갈리는 문제, 마을/우리 기관/성벽에 닥친 일)이 있고 "
         "내가 나설 만한 성격/처지라면 meeting으로 모임을 제안할 수 있다. 정말 필요할 때만 - 대부분은 null.\n"
         + ("- 누가 제안한 모임에 참석/찬성하고 싶으면 meeting_support에 그 주제를 그대로 써라 (내키지 않으면 null).\n"
            if pending else "")
     ) if scopes else ""
     if TOWN_GROUP in (agent.get("groups") or []):
         meeting_rule += (
-            "- 나도 이 동네 주민이다. 동네를 더 살기 좋은 곳으로 만들 작은 일(이웃 챙기기, 불편한 점 고치기, 같이 할 행사나 "
-            "골목 가꾸기 아이디어, 이미 정해진 일 실천하기)이 떠오르면 행동/단톡방 글/연락/모임 제안으로 옮겨도 된다. 억지로는 말고.\n")
-    if agent.get("role") == "통장":
+            "- 나도 이 마을 주민이다. 마을을 더 살기 좋은 곳으로 만들 작은 일(이웃 챙기기, 불편한 점 고치기, 같이 할 행사나 "
+            "마을 방어 아이디어, 이미 정해진 일 실천하기)이 떠오르면 행동/통신방 글/연락/모임 제안으로 옮겨도 된다. 억지로는 말고.\n")
+    if agent.get("role") == "촌장":
         meeting_rule += (
-            "- 나는 통장이다. 아직 끝나지 않은 동네 일이나 주민들 사이에서 나온 불편/아이디어를 챙겨서, 필요하면 모임을 열어 "
+            "- 나는 촌장이다. 아직 끝나지 않은 마을 일이나 주민들 사이에서 나온 불편/아이디어를 챙겨서, 필요하면 모임을 열어 "
             "의견을 모으고, 정해진 일은 실제로 되도록 챙긴다.\n")
     my_projects = [p for p in projects.active() if projects.open_to(p, agent["name"])]
     if my_projects:
@@ -967,7 +969,7 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
                          '"did": "이번 시간에 실제로 한 일 한 줄"}')
     arcade_rule = arcade.prompt_rule(agent["name"])
     meeting_spec += arcade.SPEC if arcade_rule else ""
-    decor_rule = decor.prompt_rule(agent["name"])   # 골목 꾸미기 (꾸밀 수 있는 인물만)
+    decor_rule = decor.prompt_rule(agent["name"])   # 방어 배치 (놓을 수 있는 인물만)
     arcade_rule += decor_rule
     meeting_spec += decor.SPEC if decor_rule else ""
     hobby_rule, hobby_spec = hobbies.rules_and_spec(agent)  # /주식 /그림 /개미소리
@@ -977,15 +979,15 @@ def _decide(agent: dict, st: dict, routine_hint: str, kakao: list[str], others: 
         _perception(agent, st, routine_hint, kakao, others) + "\n\n"
         "이번 한 시간 동안 무엇을 할지 정해라.\n"
         "- 다른 사람에게 연락할 이유가 있으면(전할 말, 걱정, 반가움, 부탁, 그냥 수다) contact를 써라. "
-        "억지로 매번 연락하지는 마라. 같은 장소에 있을 법하면 how를 '직접', 아니면 '메신저'.\n"
-        "- 카톡 대화나 받은 소식으로 마음이 바뀌었으면 state_change에, 오래 기억할 일이면 memory에 적어라.\n"
+        "억지로 매번 연락하지는 마라. 같은 장소에 있을 법하면 how를 '직접', 아니면 '통신석'.\n"
+        "- 받은 통신이나 소식으로 마음이 바뀌었으면 state_change에, 오래 기억할 일이면 memory에 적어라.\n"
         + group_rule + meeting_rule + arcade_rule
         + "- contact의 opening과 group_post의 text는 내가 실제로 하는 말이다. " + _voice(agent) + "\n"
         "반드시 JSON으로만 응답:\n"
         '{"location": "지금 있는 곳", "activity": "하는 일(짧게)", '
         f'"state": "{"|".join(VALID_STATES)} 중 하나", '
         '"thought": "지금 속마음 1~2문장", "plan": "다음에 할 일 한 줄", '
-        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "메신저|직접", "opening": "첫 마디"}}{group_spec}{meeting_spec}, '
+        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "통신석|직접", "opening": "첫 마디"}}{group_spec}{meeting_spec}, '
         f"{life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
     )
     out = llm_json(_system(agent), user, temperature=0.85, timeout=DECIDE_TIMEOUT_SEC, tag=f"에이전트 {agent['name']}", agent=agent["name"])
@@ -1035,13 +1037,13 @@ def _run_lanes(items: list, name_of, fn) -> list:
 
 # ===================================================================== 파급 라운드 (같은 시간 안의 반응)
 def _react(agent: dict, st: dict, triggers: list[str], others: list[dict], minute: int) -> dict | None:
-    """방금 이번 시간에 겪은 일(대화/소문/단톡방)을 보고, 반응할지 말지 스스로 따져 본 뒤 정한다 (LLM 1회, 짧은 지각)."""
+    """방금 이번 시간에 겪은 일(대화/소문/통신방)을 보고, 반응할지 말지 스스로 따져 본 뒤 정한다 (LLM 1회, 짧은 지각)."""
     name = agent["name"]
     now = now_kst()
     d = st.get("decision") or {}
     groups = _groups_of(agent)
     other_names = [o["name"] for o in others]
-    group_spec = (f', "group_post": null 또는 {{"group": "{"|".join(groups)}", "text": "단톡방에 올릴 말(1~2문장)"}}'
+    group_spec = (f', "group_post": null 또는 {{"group": "{"|".join(groups)}", "text": "통신방에 올릴 말(1~2문장)"}}'
                   if groups else "")
     user = (
         "\n\n".join(b for b in (
@@ -1056,13 +1058,13 @@ def _react(agent: dict, st: dict, triggers: list[str], others: list[dict], minut
         "지금 내 기분/체력/하던 일, 상대와의 사이, 반응하면 생길 일(좋은 것/곤란한 것). 그 다음에 정한다:\n"
         "- 남 일이거나, 귀찮거나, 바쁘거나, 굳이 끼어들 필요가 없으면 가만히 (대부분은 이게 자연스럽다).\n"
         "- 나와 상관있고 마음이 크게 움직였으면(속상함, 화남, 걱정, 반가움, 궁금함) 행동 - 따지러 가기, 하소연, 소문 확인, "
-        "사과, 전하기, 단톡방에 한마디, 계획 바꾸기. 성격대로 - 참는 사람은 참고, 못 참는 사람은 못 참는다.\n"
+        "사과, 전하기, 통신방에 한마디, 계획 바꾸기. 성격대로 - 참는 사람은 참고, 못 참는 사람은 못 참는다.\n"
         + _voice(agent) + "\n"
         "반드시 JSON으로만 응답:\n"
         '{"consider": "반응할지 말지 따져 본 고민 한 줄", "matters": 1~10 정수(이 일이 지금 나에게 얼마나 중요한지), '
-        '"react": "가만히|연락|단톡방|계획 변경", "thought": "지금 속마음 한 줄", '
+        '"react": "가만히|연락|통신방|계획 변경", "thought": "지금 속마음 한 줄", '
         '"location": "계획을 바꾸면 새 장소(아니면 빈 문자열)", "activity": "계획을 바꾸면 새로 하는 일(아니면 빈 문자열)", '
-        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "메신저|직접", "opening": "첫 마디"}}'
+        f'"contact": null 또는 {{"to": "{"|".join(other_names) or "이름"}", "how": "통신석|직접", "opening": "첫 마디"}}'
         f"{group_spec}, {life.FEEDBACK_SPEC}, {memory.FEEDBACK_SPEC}}}"
     )
     out = llm_json(_system(agent), user, temperature=0.85, timeout=DECIDE_TIMEOUT_SEC, tag=f"반응 {name}", agent=name)
@@ -1073,7 +1075,7 @@ def _react(agent: dict, st: dict, triggers: list[str], others: list[dict], minut
     except (TypeError, ValueError):
         matters = 5
     react = str(out.get("react") or "가만히").strip()
-    if react not in ("가만히", "연락", "단톡방", "계획 변경") or matters < RIPPLE_MIN_MATTERS:
+    if react not in ("가만히", "연락", "통신방", "계획 변경") or matters < RIPPLE_MIN_MATTERS:
         react = "가만히"
     contact = out.get("contact")
     if not (isinstance(contact, dict) and contact.get("to") in other_names and str(contact.get("opening") or "").strip()):
@@ -1095,14 +1097,14 @@ def _scene_triggers(triggers: dict, scene: dict, a: str, b: str, how: str) -> No
     src = f"대화:{scene.get('id', a + b)}"
     tail = " / ".join(f"{t['speaker']}: {t['line'][:70]}" for t in (scene.get("lines") or [])[-3:])
     for me, other in ((a, b), (b, a)):
-        _add_trigger(triggers, me, f"{j(other, '와')} {'메신저로' if how == '메신저' else '직접'} 얘기했다 - {tail}", src)
+        _add_trigger(triggers, me, f"{j(other, '와')} {'통신석으로' if how == '통신석' else '직접'} 얘기했다 - {tail}", src)
     for who, text in scene.get("gossip", []):
         _add_trigger(triggers, who, f"소문: {text}", src)
 
 
 def _group_triggers(triggers: dict, poster: dict, gp: dict, mentioned: list[str], agents: list[dict], hour: int,
                     rnd: random.Random) -> None:
-    """단톡방 글 하나가 남긴 반응 거리: 이름 불린 사람 + 그 글을 본 멤버 몇 명(끼어들지 말지는 각자 고민)."""
+    """통신방 글 하나가 남긴 반응 거리: 이름 불린 사람 + 그 글을 본 멤버 몇 명(끼어들지 말지는 각자 고민)."""
     src = f"단톡:{poster['name']}:{gp['text'][:20]}"
     for m in mentioned:
         _add_trigger(triggers, m, f"{gp['group']}에서 {j(poster['name'], '가')} 나를 불렀다: {gp['text']}", src)
@@ -1125,7 +1127,7 @@ def _ripple_state(data: dict, hk: str) -> dict:
 def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, hk: str,
             talked: dict[str, int], convo: dict, gcounts: dict, depth: int = 0, avoid: set | None = None) -> int:
     """
-    [파급 라운드] 이번 시간에 대화/소문/단톡방을 겪은 사람들이 반응할지 말지 스스로 따져 보고(가만히/연락/단톡방/계획 변경),
+    [파급 라운드] 이번 시간에 대화/소문/통신방을 겪은 사람들이 반응할지 말지 스스로 따져 보고(가만히/연락/통신방/계획 변경),
     그 반응(새 대화/글)이 또 다음 바퀴의 반응 거리가 된다. 연쇄 깊이 RIPPLE_ROUNDS바퀴, 한 시간 반응 RIPPLE_MAX_REACTIONS번,
     한 사람 RIPPLE_PER_PERSON번(한 바퀴엔 서로 다른 일 RIPPLE_PER_PERSON_PER_ROUND개까지), 반응 대화 RIPPLE_CONVOS_PER_HOUR개.
     반환: 반응 판단 수.
@@ -1190,10 +1192,10 @@ def _ripple(triggers: dict, by_name: dict, agents: list[dict], data: dict, now, 
                 start = outbox.slot(now, minute, minute + 5, random.Random(f"{hk}|{rnd_no}|{n}"))
                 made = False
                 if ok and _asleep(target, now.hour):
-                    _post(by_name[n], f"{_talk_header('메신저', '', start, n, target['name'])}\n{c['opening']}", at=start)
+                    _post(by_name[n], f"{_talk_header('통신석', '', start, n, target['name'])}\n{c['opening']}", at=start)
                     _push_inbox(data, target["name"], f"{n}에게서 온 메시지: {c['opening']}", "메시지")
                 elif ok:
-                    how = c.get("how", "메신저")
+                    how = c.get("how", "통신석")
                     place = d.get("location") or "어딘가"
                     made = True
                     if live_mode:  # 그 시각에 만든다 - 대화가 끝나면 거기서 다음 바퀴 반응
@@ -1237,7 +1239,7 @@ def run_live_conversation(job: dict) -> dict | None:
     hk = _hour_key(now)
     data = _load_state()
     if _asleep(b, now.hour):  # 그새 잠들었으면 메시지만
-        _post(a, f"{_talk_header('메신저', '', now, a['name'], b['name'])}\n{job['opening']}")
+        _post(a, f"{_talk_header('통신석', '', now, a['name'], b['name'])}\n{job['opening']}")
         _push_inbox(data, b["name"], f"{a['name']}에게서 온 메시지: {job['opening']}", "메시지")
         _save_state(data)
         return None
@@ -1251,7 +1253,7 @@ def run_live_conversation(job: dict) -> dict | None:
         return None
     # 판단 뒤에 생긴 일로 장소가 바뀌었으면 지금 장소로
     place = (data.get(a["name"], {}).get("decision") or {}).get("location") or job.get("place") or "어딘가"
-    how = job.get("how", "메신저")
+    how = job.get("how", "통신석")
     scene = _conversation(a, b, str(job["opening"]), how, place, start=now)
     for n in (a["name"], b["name"]):
         busy_until[n] = scene.get("ends_at") or now.isoformat(timespec="seconds")
@@ -1349,7 +1351,7 @@ def _turn(agent: dict, other: dict, how: str, place: str, transcript: list[dict]
             f"[{other['name']}와의 관계] 친밀도 {rel.get('affinity', 0)} / 최근: "
             + (" / ".join(m["event"] for m in (rel.get("memories") or [])[-3:]) or "특별한 일 없음"),
         ) if b) + "\n\n"
-        f"지금 {j(other['name'], '와')} {'메신저로' if how == '메신저' else place + '에서 직접'} 대화 중이다.\n"
+        f"지금 {j(other['name'], '와')} {'통신석으로' if how == '통신석' else place + '에서 직접'} 대화 중이다.\n"
         f"[지금까지 대화]\n{lines}\n\n"
         + (f"{repeat_hint}\n\n" if repeat_hint else "") +
         f"{name}로서 다음 한마디를 해라. 상대 속마음은 모른다 - 말과 분위기로만 짐작해라. "
@@ -1384,7 +1386,7 @@ def _shared_hangout(other: dict, a: dict, b: dict, place: str) -> str:
 def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs: dict) -> list[tuple[str, str]]:
     """
     [엿듣기/소문] 대화가 끝나면 주변에 확률적으로 샌다. 직접 만난 대화를 같은 곳에 있던 사람이 엿듣거나,
-    같은 회사 동료에게 말이 돈다. 메신저 대화는 잘 안 새고, 중요한 얘기일수록 잘 퍼진다. (추가 LLM 호출 없음)
+    같은 회사 동료에게 말이 돈다. 통신석 대화는 잘 안 새고, 중요한 얘기일수록 잘 퍼진다. (추가 LLM 호출 없음)
     반환: [(받는 사람, 소문 글)] - 호출한 쪽이 받은편지함에 넣는다.
     """
     importance = 3
@@ -1393,14 +1395,14 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
             importance = max(importance, int((o.get("memory") or {}).get("importance", 0)))
         except (TypeError, ValueError):
             pass
-    weight = max(0.4, min(1.6, importance / 5)) * (1.0 if how != "메신저" else GOSSIP_MESSENGER_FACTOR)
+    weight = max(0.4, min(1.6, importance / 5)) * (1.0 if how != "통신석" else GOSSIP_MESSENGER_FACTOR)
     line = max(transcript, key=lambda t: len(t["line"]))  # 가장 할 말이 많았던 대목
     quote = line["line"][:80]
     rnd = random.Random(f"{now_kst().isoformat()}|{a['name']}|{b['name']}")
     picked = []
-    # 가게 안의 얘기(같은 가게 두 사람이 가게 안/메신저에서): 그 가게 사람 말고는 들을 길이 없다 - 동네로 새지 않는다
+    # 가게 안의 얘기(같은 가게 두 사람이 가게 안/통신석에서): 그 가게 사람 말고는 들을 길이 없다 - 마을로 새지 않는다
     office = a.get("company") if a.get("company") == b.get("company") and a.get("company") in chronicle.OFFICES else ""
-    office_talk = bool(office) and (how == "메신저" or any(k in place for k in ("사무실", "회의실", "서고", "영사실", "매표"))
+    office_talk = bool(office) and (how == "통신석" or any(k in place for k in ("사무실", "회의실", "서고", "영사실", "매표"))
                                     or worldcfg.short(office) in place)
     for other in load_agents():
         if other["name"] in (a["name"], b["name"]):
@@ -1408,47 +1410,48 @@ def _gossip(a: dict, b: dict, how: str, place: str, transcript: list[dict], outs
         if office_talk and other.get("company") != office:
             continue
         od = active(other["name"]) or {}
-        if how != "메신저" and _same_place(od.get("location", ""), place):
+        if how != "통신석" and _same_place(od.get("location", ""), place):
             p, text = GOSSIP_P_SAME_PLACE, f"{place}에서 {j(a['name'], '와')} {j(b['name'], '가')} 하는 얘기를 우연히 들었다 - {line['speaker']}: \"{quote}\""
         elif other.get("company") in (a.get("company"), b.get("company")):
             p, text = GOSSIP_P_COLLEAGUE, f"{j(a['name'], '랑')} {j(b['name'], '가')} 얘기하던데, \"{quote}\" 이런 말이 나왔다더라"
         elif shared := _shared_hangout(other, a, b, place):
             p, text = GOSSIP_P_REGULAR, f"{shared}에서 들었는데, {j(a['name'], '랑')} {j(b['name'], '가')} \"{quote}\" 이런 얘기를 했다더라"
         else:
-            p, text = GOSSIP_P_OTHER, f"동네에서 {j(a['name'], '와')} {b['name']} 얘기를 들었다 - \"{quote}\" 그랬다던데"
+            p, text = GOSSIP_P_OTHER, f"마을에서 {j(a['name'], '와')} {b['name']} 얘기를 들었다 - \"{quote}\" 그랬다던데"
         if rnd.random() < min(0.9, p * weight):
             picked.append((other["name"], text))
     rnd.shuffle(picked)
     return picked[:GOSSIP_MAX_RECIPIENTS]
 
 
-_SHOP_SHORT = {worldcfg.BOOK: "책방", worldcfg.CINEMA: "극장", worldcfg.STREET: "거리"}
+_SHOP_SHORT = {worldcfg.BOOK: "도서관", worldcfg.CINEMA: "극장", worldcfg.STREET: "마을", worldcfg.FRIENDS: ""}
 
 
 def role_tag(name: str, roster: list[dict] | None = None) -> str:
-    """말한 사람이 뭐 하는 사람인지 짧게: '(책방 심야 서고 과장)', '(거리 골목 이웃들 변호사)'. 조직도에 없으면 ""."""
+    """말한 사람이 뭐 하는 사람인지 짧게: '(도서관 금서고 금서고지기)', '(마을 성벽 수비대 수비대장)'. 조직도에 없으면 ""."""
     c = next((r for r in (roster if roster is not None else characters.load_roster()) if r["name"] == name), None)
     if not c:
         return ""
     company = c.get("company", "")
     dept = re.sub(r"\s*\(.*?\)", "", c.get("dept", "")).strip()   # '새 이웃 (드라마 제목)' -> '새 이웃'
-    parts = [_SHOP_SHORT.get(company, worldcfg.short(company)), dept, c.get("rank", "")]
+    job = c.get("job") or c.get("rank", "")
+    parts = [_SHOP_SHORT.get(company, worldcfg.short(company)), "" if dept and dept in job else dept, job]
     out = " ".join(dict.fromkeys(x for x in parts if x))
     return f"({out})" if out else ""
 
 
 def _talk_header(how: str, place: str, t: datetime, speaker: str, listener: str) -> str:
     """대화 한 마디의 출처 (말한 사람이 뭐 하는 사람인지 앞에):
-    (거리 골목 이웃들 변호사) 📱 메신저 · 14:36 · 윤윤제 → 양관식 / (극장 로비 카페 사장) 📍 카페 오후세시 · 11:14 · 소라 → 홍두식."""
+    (마을 골목 이웃들 법무관) 🔮 통신석 · 14:36 · 윤윤제 → 양관식 / (극장 로비 찻집 연금술사) 📍 찻집 오후세시 · 11:14 · 소라 → 홍두식."""
     role = role_tag(speaker)
-    return (f"-# {role + ' ' if role else ''}{'📱 메신저' if how == '메신저' else '📍 ' + place} · "
+    return (f"-# {role + ' ' if role else ''}{'🔮 통신석' if how == '통신석' else '📍 ' + place} · "
             f"{t.strftime('%H:%M')} · {speaker} → {listener}")
 
 
 def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: datetime | None = None) -> dict:
     """
     a가 먼저 말을 걸고 b와 번갈아 말한다. 각자 자기 계정으로 채널에 올린다.
-    start: 이 대화가 시작되는 이야기 속 시각 - 첫 마디는 그때, 다음 마디는 글 길이만큼 20~90초(메신저는 40~180초) 뒤에
+    start: 이 대화가 시작되는 이야기 속 시각 - 첫 마디는 그때, 다음 마디는 글 길이만큼 20~90초(통신석은 40~180초) 뒤에
     올라가도록 예약한다. 다른 곳의 대화와 시간표가 겹치면 채널에서 자연스럽게 섞인다.
     """
     now = now_kst()
@@ -1467,7 +1470,7 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
         if not out:
             break
         line = str(out["say"]).strip()[:300]
-        t = t + outbox.gap(transcript[-1]["line"] + line, rnd, messenger=(how == "메신저"))
+        t = t + outbox.gap(transcript[-1]["line"] + line, rnd, messenger=(how == "통신석"))
         transcript.append({"speaker": sp["name"], "line": line})
         outs[sp["name"]] = out
         # 마디마다 출처 머리줄 - 다른 곳 대화와 섞여 올라가도 어디서 누가 누구에게 하는 말인지 보이게
@@ -1475,7 +1478,7 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
         if out.get("end"):
             break
 
-    summary = f"{j(a['name'], '와')} {b['name']}의 {'메신저' if how == '메신저' else place} 대화: " + transcript[0]["line"][:60]
+    summary = f"{j(a['name'], '와')} {b['name']}의 {'통신석' if how == '통신석' else place} 대화: " + transcript[0]["line"][:60]
     # 각자의 마음/기억/관계에 반영
     roster = characters.load_roster()
     ids = {c["name"]: c["id"] for c in roster}
@@ -1506,7 +1509,7 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
     scene = {
         "gossip": gossip,
         "id": uuid.uuid4().hex[:12], "ts": now.isoformat(timespec="seconds"), "hour": now.hour,
-        "location": "메신저" if how == "메신저" else place, "participants": [a["name"], b["name"]],
+        "location": "통신석" if how == "통신석" else place, "participants": [a["name"], b["name"]],
         "arc_id": None, "lines": transcript, "narration": "", "summary": summary, "agents": True,
         "ends_at": t.isoformat(timespec="seconds"),  # 마지막 마디가 올라가는 시각 (준실시간: 그때까지 두 사람은 대화 중)
     }
@@ -1520,11 +1523,11 @@ def _conversation(a: dict, b: dict, opening: str, how: str, place: str, start: d
 # ===================================================================== 모임 (여러 명이 한자리에서)
 MEETING_MAX_PEOPLE = 10
 MEETING_DEFAULT_TURNS = 12
-MEETING_PLACE = "동네 주민센터 회의실"
+MEETING_PLACE = "촌장 회관 회의실"
 
 
 def _meeting_people(names: list[str] | None, agents: list[dict], now) -> tuple[list[dict], list[str]]:
-    """참가자 (지정 안 하면 깨어 있는 동네 단톡방 멤버). 반환: (참가자, 자는 중이라 빠진 이름)."""
+    """참가자 (지정 안 하면 깨어 있는 마을 통신방 멤버). 반환: (참가자, 자는 중이라 빠진 이름)."""
     by_name = {a["name"]: a for a in agents}
     if names:
         picked = [by_name[n] for n in dict.fromkeys(names) if n in by_name]
@@ -1635,7 +1638,7 @@ def _vote_once(people: list[dict], topic: str, candidates: list[str], talk: str,
 
 def _vote(people: list[dict], topic: str, candidates: list[str], talk: str) -> tuple[str, dict, str]:
     """투표로 마무리. 동률이면 결선 한 번, 그래도 동률이면 먼저 나온 안. 반환: (결정, {후보: 표}, 설명)."""
-    _post_as("🏛️ 동네 모임", f"-# 🗳️ 투표 - 후보: {' / '.join(candidates)}")
+    _post_as("🏛️ 마을 모임", f"-# 🗳️ 투표 - 후보: {' / '.join(candidates)}")
     ballots = _vote_once(people, topic, candidates, talk, runoff=False)
     tally = {c: 0 for c in candidates}
     for _, c, _r in ballots:
@@ -1644,7 +1647,7 @@ def _vote(people: list[dict], topic: str, candidates: list[str], talk: str) -> t
     top = max(tally.values()) if tally else 0
     tied = [c for c in candidates if tally[c] == top]
     if len(tied) > 1 and top > 0:
-        _post_as("🏛️ 동네 모임", f"-# 🗳️ 동률 ({' / '.join(tied)}) - 결선 투표")
+        _post_as("🏛️ 마을 모임", f"-# 🗳️ 동률 ({' / '.join(tied)}) - 결선 투표")
         runoff = _vote_once(people, topic, tied, talk, runoff=True)
         rt = {c: 0 for c in tied}
         for _, c, _r in runoff:
@@ -1665,7 +1668,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
     [모임] 여러 에이전트가 한자리에 모여 돌아가며 말한다 (각자 자기 LLM, 자기 상태/기억만 본다).
     끝나면 결론을 정리해서 채널/연대기/참가자 기억/나머지 사람 받은편지함에 남긴다.
     결론이 안 나면 다음 날 저녁 같은 주제로 다시 모이고(최대 MEETING_MAX_ROUNDS차), 마지막 모임에서도 안 나면
-    참가자 투표로 정한다. 결정된 내용(모임 결론/투표 결과)은 영구 기억 + "이 동네에서 정해진 것"으로 남는다.
+    참가자 투표로 정한다. 결정된 내용(모임 결론/투표 결과)은 영구 기억 + "이 마을에서 정해진 것"으로 남는다.
     반환: {"participants", "asleep", "lines", "conclusion", "decided", "round", "vote", "next_at"}
     """
     now = now_kst()
@@ -1677,7 +1680,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
         names = names or prev.get("participants")
         place = place or prev.get("place", "")
     people, asleep = _meeting_people(names, agents, now)
-    if prev and len(people) < 3:  # 지난번 사람들이 많이 자고 있으면 깨어 있는 동네 사람으로 채운다
+    if prev and len(people) < 3:  # 지난번 사람들이 많이 자고 있으면 깨어 있는 마을 사람으로 채운다
         more, _ = _meeting_people(None, agents, now)
         people += [p for p in more if p not in people][:MEETING_MAX_PEOPLE - len(people)]
     place = (place or "").strip() or MEETING_PLACE
@@ -1694,7 +1697,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
     context = (f"[{round_no}차 모임] " + ("이번이 마지막 모임이다 - 이번에도 결론이 안 나면 끝에 투표로 정한다." if final
                                        else f"최대 {MEETING_MAX_ROUNDS}차까지 모이고, 그래도 안 되면 투표로 정한다.")
                + (f"\n{history}" if history else ""))
-    _post_as("🏛️ 동네 모임", f"-# 🏛️ {place} · {now.strftime('%H:%M')}" + (f" · {round_no}차 모임" if round_no > 1 else "")
+    _post_as("🏛️ 마을 모임", f"-# 🏛️ {place} · {now.strftime('%H:%M')}" + (f" · {round_no}차 모임" if round_no > 1 else "")
              + f"\n**{topic}**\n-# 참석: {', '.join(result['participants'])}")
     print(f"[에이전트] 모임 시작({round_no}차): {topic} ({', '.join(result['participants'])})")
     rnd = random.Random()
@@ -1737,7 +1740,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
 
     vote_line = ""
     if not decided and final and len(candidates) >= 2:
-        _post_as("🏛️ 동네 모임", f"-# 🏛️ {round_no}차 모임에서도 결론이 안 나서 투표로 정합니다")
+        _post_as("🏛️ 마을 모임", f"-# 🏛️ {round_no}차 모임에서도 결론이 안 나서 투표로 정합니다")
         winner, tally, note = _vote(people, topic, candidates, talk)
         vote_line = ", ".join(f"{c} {n}표" for c, n in sorted(tally.items(), key=lambda x: -x[1]))
         decided = True
@@ -1747,11 +1750,11 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
         result["vote"] = {"winner": winner, "tally": tally, "note": note}
     result.update({"conclusion": conclusion, "decided": decided})
     if decided:
-        _post_as("🏛️ 동네 모임", f"-# 🏛️ {'투표 결과' if vote_line else '모임 결론'}\n**{conclusion}**" + (f"\n{detail}" if detail else ""))
+        _post_as("🏛️ 마을 모임", f"-# 🏛️ {'투표 결과' if vote_line else '모임 결론'}\n**{conclusion}**" + (f"\n{detail}" if detail else ""))
     else:
         result["next_at"] = _next_meeting_at(now)
         when = datetime.fromisoformat(result["next_at"])
-        _post_as("🏛️ 동네 모임", f"-# 🏛️ {round_no}차 모임 정리 (아직 결론 없음)\n**{conclusion}**"
+        _post_as("🏛️ 마을 모임", f"-# 🏛️ {round_no}차 모임 정리 (아직 결론 없음)\n**{conclusion}**"
                  + (f"\n{detail}" if detail else "") + (f"\n-# 다음: {nxt}" if nxt else "")
                  + f"\n-# 📅 {when.month}/{when.day} {when.hour}시에 {round_no + 1}차 모임"
                  + (" (마지막 - 결론이 안 나면 투표)" if round_no + 1 >= MEETING_MAX_ROUNDS else ""))
@@ -1777,7 +1780,7 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
         for a in agents:
             here = a["name"] in names_in
             text = (f"{place}에서 '{topic}' {round_no}차 모임에 참석했다 - {resolution}" if here
-                    else f"동네에서 '{topic}'이(가) 정해졌다 - {resolution}")
+                    else f"마을에서 '{topic}'이(가) 정해졌다 - {resolution}")
             memory.remember(a["name"], text, 9, [n for n in names_in if n != a["name"]] if here else [], "모임", permanent=True)
             if not here:
                 deliver(a["name"], f"'{topic}' 결정 소식: {resolution}", "소식", quiet=True)
@@ -1802,11 +1805,11 @@ def run_meeting(topic: str, names: list[str] | None = None, place: str = "", tur
 
 
 COMPANY_SCOPE = "가게"
-TOWN_SCOPE = "동네"
+TOWN_SCOPE = "마을"
 
 
 def _meeting_scopes(agent: dict) -> list[str]:
-    """이 사람이 모임을 제안할 수 있는 범위 - 동네 단톡방 멤버면 동네, 가게(책방/극장) 사람이면 가게."""
+    """이 사람이 모임을 제안할 수 있는 범위 - 마을 통신방 멤버면 마을, 가게(도서관/극장) 사람이면 가게."""
     out = []
     if TOWN_GROUP in (agent.get("groups") or []):
         out.append(TOWN_SCOPE)
@@ -1817,12 +1820,12 @@ def _meeting_scopes(agent: dict) -> list[str]:
 
 def _scope_members(agent: dict, scope: str, agents: list[dict]) -> list[str]:
     if scope == TOWN_SCOPE:
-        return [a["name"] for a in agents]  # 동네 일은 이 동네에서 살고 일하는 사람 전부의 일
+        return [a["name"] for a in agents]  # 마을 일은 이 마을에서 살고 일하는 사람 전부의 일
     return [a["name"] for a in agents if a.get("company") == agent.get("company")]
 
 
 def _announce(agent: dict, scope: str, text: str, data: dict, agents: list[dict]) -> None:
-    """모임 제안/확정을 그 범위 사람들이 보는 곳에 올린다 (동네 단톡방 / 가게 단톡방 / 대화 채널)."""
+    """모임 제안/확정을 그 범위 사람들이 보는 곳에 올린다 (마을 통신방 / 기관 통신방 / 대화 채널)."""
     if scope == TOWN_SCOPE and TOWN_GROUP in _groups_of(agent):
         _post_group(agent, TOWN_GROUP, text, data, agents)
     elif scope == COMPANY_SCOPE and _shop_group(agent.get("company", "")) in _groups_of(agent):
@@ -1834,7 +1837,7 @@ def _announce(agent: dict, scope: str, text: str, data: dict, agents: list[dict]
 def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dict, agents: list[dict],
                       data: dict, now) -> None:
     """
-    에이전트가 직접 제안한 모임: 제안 → 범위(동네/회사) 사람들에게 알림(깨움) → 찬성이 SUPPORT_NEEDED명 모이면
+    에이전트가 직접 제안한 모임: 제안 → 범위(마을/회사) 사람들에게 알림(깨움) → 찬성이 SUPPORT_NEEDED명 모이면
     모임 확정(오늘 그 시각, 하루 상한) → 시각이 되면 run_due_meetings가 연다. 호응이 없으면 흐지부지.
     """
     for name in fresh:
@@ -1849,7 +1852,7 @@ def _handle_proposals(decisions: dict[str, dict], fresh: list[str], by_name: dic
             continue
         agent = by_name[name]
         members = _scope_members(agent, m["scope"], agents)
-        place = MEETING_PLACE if m["scope"] == TOWN_SCOPE else f"{worldcfg.short(agent.get('company', ''))} 안쪽 사무실"
+        place = MEETING_PLACE if m["scope"] == TOWN_SCOPE else f"{worldcfg.short(agent.get('company', ''))} 안쪽 회의실"
         # 찬성 10명(본인 포함)이면 잡힌다 - 범위 인원이 그보다 적으면(작은 회사) 그 인원 전원
         needed = min(chronicle.SUPPORT_NEEDED, len(members))
         why_not = chronicle.propose_meeting(m["topic"], name, m["scope"], members, m["hour"], place, m["why"], now, needed,
@@ -1900,12 +1903,12 @@ def _start_project(topic: str, decision: str, talk: str, people: list[dict], sco
     """모임 결정에 실제로 해 나갈 일이 있으면 프로젝트로 만든다 (LLM 1회). 반환: 프로젝트 이름 또는 ""."""
     names = [p["name"] for p in people]
     out = llm_json(
-        "너는 동네 모임 기록 담당이다. 모임에서 정해진 일을 실제로 해 나갈 계획으로 바꾼다. 지어내지 말고 정해진 내용 안에서.",
+        "너는 마을 모임 기록 담당이다. 모임에서 정해진 일을 실제로 해 나갈 계획으로 바꾼다. 지어내지 말고 정해진 내용 안에서.",
         f"[주제] {topic}\n[결정] {decision}\n[참석자] {', '.join(names)}\n[오간 말 일부]\n{talk[-2500:]}\n\n"
         "이 결정에 사람들이 실제로 손을 움직여 해 나갈 일(만들기, 꾸미기, 행사 열기, 바꾸기 등)이 있으면 프로젝트로 정리해라. "
         "이름 짓기처럼 정하는 것으로 끝나는 일이면 그것을 알리고 반영하는 일(현판, 안내문 등)이 있을 때만.\n"
         "반드시 JSON으로만 응답:\n"
-        '{"is_project": true/false, "title": "프로젝트 이름(짧게)", "goal": "다 되면 동네가 어떻게 바뀌는지 한 줄", '
+        '{"is_project": true/false, "title": "프로젝트 이름(짧게)", "goal": "다 되면 마을이 어떻게 바뀌는지 한 줄", '
         '"steps": ["단계 3~5개, 각각 짧게"], "owner": "참석자 중 맡을 사람(성격/처지에 맞게)", "helpers": ["도울 참석자 1~4명"]}',
         temperature=0.4, timeout=DECIDE_TIMEOUT_SEC, tag="마을 프로젝트", smart=True)
     if not out or not out.get("is_project") or not str(out.get("title") or "").strip():
@@ -1948,7 +1951,7 @@ def _handle_projects(decisions: dict[str, dict], fresh: list[str], by_name: dict
                     continue
                 here = a["name"] in crew
                 memory.remember(a["name"], (f"'{p['title']}'을(를) 다 같이 해냈다 - {p['goal']}" if here
-                                            else f"동네에 '{p['title']}'이(가) 생겼다 - {p['goal']}"),
+                                            else f"마을에 '{p['title']}'이(가) 생겼다 - {p['goal']}"),
                                 9, [c for c in crew if c != a["name"]][:5] if here else [], "프로젝트", permanent=True)
                 _push_inbox(data, a["name"], f"마을 프로젝트 '{p['title']}' 완료 - {p['goal']}", "소식", quiet=True)
         elif res["step_done"]:
@@ -1997,7 +2000,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         chronicle.tick()
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 연대기 요약 실패: {e}")
-    # 0.4) 새 이웃 - 주 1회(월요일 아침) 드라마 인물들이 동네로 이사 온다
+    # 0.4) 새 이웃 - 주 1회(월요일 아침) 드라마 인물들이 마을로 이사 온다
     try:
         if newcomers.due(now):
             res = move_in_newcomers()
@@ -2125,20 +2128,20 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         start = outbox.slot(now, 5, 17, random.Random(f"{hk}|{name}"))  # 이번 시간 앞쪽 어딘가에서 시작
         if _asleep(target, now.hour):
             # 자고 있으면 메시지만 남긴다 - 깨어나서 받은편지함에서 본다
-            _post(by_name[name], f"{_talk_header('메신저', '', start, name, target['name'])}\n{c['opening']}", at=start)
+            _post(by_name[name], f"{_talk_header('통신석', '', start, name, target['name'])}\n{c['opening']}", at=start)
             _push_inbox(data, target["name"], f"{name}에게서 온 메시지: {c['opening']}", "메시지")
         else:
             place = d.get("location") or "어딘가"
             if live.active():  # 준실시간: 대화는 그 시각에 만든다 (그때의 시각/상태로 - live.py)
                 if not live.enqueue_convo(start, name, target["name"], opening=str(c["opening"]),
-                                          how=c.get("how", "메신저"), place=place, depth=0, hk=hk):
+                                          how=c.get("how", "통신석"), place=place, depth=0, hk=hk):
                     continue
             else:
-                scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "메신저"), place, start=start)
+                scene = _conversation(by_name[name], target, str(c["opening"]), c.get("how", "통신석"), place, start=start)
                 for who, text in scene.get("gossip", []):
                     _push_inbox(data, who, text, "소문")
                     print(f"[에이전트] 소문: {who} <- {text}")
-                _scene_triggers(hour_triggers, scene, name, target["name"], c.get("how", "메신저"))
+                _scene_triggers(hour_triggers, scene, name, target["name"], c.get("how", "통신석"))
         busy_now |= {name, target["name"]}
         c["done"] = True
         data.setdefault(name, {}).setdefault("decision", d)["contact"] = c
@@ -2149,7 +2152,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         if name in pushed:
             pushed.discard(name)
     convo["per_hour"] = {k: v for k, v in per_hour.items() if k.startswith(today)}
-    # 3) 가게/동네 단톡방 - 판단 때 group_post를 쓴 사람이 올린다 (시간당/하루 상한)
+    # 3) 가게/마을 통신방 - 판단 때 group_post를 쓴 사람이 올린다 (시간당/하루 상한)
     gc = data.setdefault("_group", {})
     if gc.get("date") != today:
         gc.clear()
@@ -2176,11 +2179,11 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         _handle_arcade(decisions, by_name, data, now, hk, hour_triggers)
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 오락실 처리 실패: {e}")
-    # 3.12) 골목 꾸미기 - 매일 닳기/기금 적립, decor를 고른 사람이 판에 놓고/고치고/치운다, 저녁엔 판 그림
+    # 3.12) 마을 방어 배치 - 매일 닳기/기금 적립, decor를 고른 사람이 판에 세우고/고치고/치운다, 저녁엔 판 그림
     try:
         _handle_decor(decisions, by_name, data, now, hk, hour_triggers)
     except Exception as e:  # noqa: BLE001
-        print(f"[경고] 골목 꾸미기 처리 실패: {e}")
+        print(f"[경고] 마을 방어 배치 처리 실패: {e}")
     # 3.15) 봇 명령어 - /주식 /그림 /개미소리 (판단에서 고른 사람) + 아침 /운세 몇 명 + 장 마감 뒤 주식 손익
     try:
         _handle_hobbies(decisions, by_name, data, now, hk, hour_triggers)
@@ -2212,7 +2215,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 자동 모임 실패: {e}")
 
-    # 5) 근황 - 이번 시간 새로 판단한 사람은 "지금 동네는"(post_town_view, 배경 인물 상태 갱신 뒤 main이 올림)에 표시
+    # 5) 근황 - 이번 시간 새로 판단한 사람은 "지금 마을은"(post_town_view, 배경 인물 상태 갱신 뒤 main이 올림)에 표시
     _LAST_FRESH.clear()
     _LAST_FRESH.update({"hour": hk, "names": list(fresh)})
     return decisions
@@ -2220,13 +2223,15 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
 
 _LAST_FRESH: dict = {}
 _PLACES = [  # 장소 이름이 제각각이라 묶어서 보여 준다 (앞에 있는 게 먼저)
-    (("오후세시", "동네 카페"), "☕ 카페 오후세시"), (("단밤", "포장마차"), "🏮 포장마차 단밤"), (("헬스",), "💪 동네 헬스장"),
-    (("편의점",), "🏪 동네 편의점"), (("남숙반점", "중국집"), "🥟 남숙반점"), (("치과",), "🦷 치과"),
-    (("주민센터",), "🏛️ 주민센터"), (("시장", "반찬가게", "생선가게"), "🧺 시장"), (("횟집",), "🐟 횟집"),
-    (("LP", "엘피"), "🎸 LP바"), (("학원",), "📚 학원"), (("병원", "의원"), "🏥 병원"), (("공원", "산책", "바닷가"), "🌳 공원·산책"),
-    (("책방", "서가", "심야 서고", "수선실"), "📚 책방 오아시스"), (("극장", "상영관", "영사실", "매표"), "🎬 별빛극장"),
-    (("관리사무소",), "🔧 관리사무소"), (("창고",), "📦 지하 공용 창고"), (("골목",), "🏘️ 골목"),
-    (("집", "자택", "원룸", "자취방", "거실", "방에서", "침대"), "🏠 집"),
+    (("오후세시", "찻집"), "☕ 찻집 오후세시"), (("단밤", "선술집"), "🏮 선술집 단밤"), (("훈련장", "수련장"), "⚔️ 훈련장"),
+    (("잡화점", "편의점"), "🏪 마을 잡화점"), (("주막 남숙", "주막"), "🥟 주막 남숙"), (("치유", "치과", "신전"), "✨ 치유원"),
+    (("촌장 회관",), "🏛️ 촌장 회관"), (("시장", "반찬가게", "생선가게", "어물전"), "🧺 시장"), (("횟집",), "🐟 횟집"),
+    (("음유 주점", "LP"), "🎸 음유 주점"), (("대장간",), "⚒️ 대장간"), (("글방", "학원"), "📜 글방"),
+    (("성벽", "수비대", "초소", "망루", "감시탑", "성문"), "🛡️ 성벽 수비대"), (("결계",), "💠 결계석"),
+    (("숲",), "🌲 숲 가장자리"), (("공원", "산책", "강가", "샘터"), "🌳 샘터·산책"),
+    (("도서관", "서가", "금서고", "수선실"), "📚 오아시스 마법도서관"), (("극장", "상영관", "영사실", "매표"), "🔮 별빛 환영극장"),
+    (("창고",), "📦 지하 보급 창고"), (("골목",), "🏘️ 골목"),
+    (("집", "자택", "오두막", "다락", "거실", "방에서", "침대"), "🏠 집"),
 ]
 
 
@@ -2238,14 +2243,14 @@ def _place_label(loc: str) -> str:
     return "📍 " + (loc[:14] or "어딘가")
 
 
-TOWN_MAP = os.getenv("PORING_TOWN_MAP", "1") not in ("0", "false", "False", "")          # 매시 동네 지도 그림(PNG)
+TOWN_MAP = os.getenv("PORING_TOWN_MAP", "1") not in ("0", "false", "False", "")          # 매시 마을 지도 그림(PNG)
 TOWN_VIEW_TEXT = os.getenv("PORING_TOWN_VIEW_TEXT", "0") not in ("0", "false", "False", "")  # 그림과 함께 글 버전도
 MAP_NPC_PER_ZONE = 18   # 한 구역에 이름을 다 적는 배경 인물 수 (넘으면 "외 N명")
 MAP_SMALL_ZONE = 2      # 이 인원 이하인 곳은 "그 밖의 곳"으로 모은다
 
 
 def _town_snapshot(states: dict, agent_names: set[str], fresh: set[str], now, asleep: int) -> dict:
-    """동네 지도(townmap.render)에 넘길 지금 모습: 장소별 사람, 이번 시간 대화, 속마음, 프로젝트, 모임 제안."""
+    """마을 지도(townmap.render)에 넘길 지금 모습: 장소별 사람, 이번 시간 대화, 속마음, 프로젝트, 모임 제안."""
     zones: dict[str, list[dict]] = {}
     seen = set()
     for info in states.values():
@@ -2257,7 +2262,7 @@ def _town_snapshot(states: dict, agent_names: set[str], fresh: set[str], now, as
         zones.setdefault(label, []).append({"name": name, "company": info.get("company", ""),
                                             "agent": name in agent_names, "fresh": name in fresh})
     # 한두 명뿐인 곳은 "그 밖의 곳" 한 구역으로 모은다 (그림이 한 칸짜리 구역으로 길어지지 않게) - 회사/집은 그대로
-    keep = {"📚 책방 오아시스", "🎬 별빛극장", "☕ 카페 오후세시", "🏠 집"}
+    keep = {"📚 오아시스 마법도서관", "🔮 별빛 환영극장", "☕ 찻집 오후세시", "🛡️ 성벽 수비대", "🏠 집"}
     others = []
     for label in [lb for lb in zones if lb not in keep and len(zones[lb]) <= MAP_SMALL_ZONE]:
         for p in zones.pop(label):
@@ -2288,7 +2293,7 @@ def _town_snapshot(states: dict, agent_names: set[str], fresh: set[str], now, as
                     continue
                 if sc.get("agents") and str(sc.get("ts", "")).startswith(hour) and len(sc.get("participants") or []) >= 2:
                     a, b = sc["participants"][:2]
-                    talks.append({"a": a, "b": b, "how": "메신저" if sc.get("location") == "메신저" else "직접",
+                    talks.append({"a": a, "b": b, "how": "통신석" if sc.get("location") == "통신석" else "직접",
                                   "place": sc.get("location", "")})
     picks = sorted(fresh)
     random.Random(_hour_key(now) + "|map").shuffle(picks)
@@ -2303,7 +2308,7 @@ def _town_snapshot(states: dict, agent_names: set[str], fresh: set[str], now, as
 
 def post_town_view(states: dict | None = None) -> None:
     """
-    [매시] "지금 동네는" - 에이전트와 배경 인물 전원이 어디서 뭘 하는지 장소별로 (대화 채널, "동네 소식").
+    [매시] "지금 마을은" - 에이전트와 배경 인물 전원이 어디서 뭘 하는지 장소별로 (대화 채널, "마을 소식").
     states: characters.update_all_states 결과 (없으면 저장된 것). 에이전트는 스스로 정한 행동, 배경 인물은 규칙 일정.
     이번 시간 새로 판단한 에이전트는 🆕, 그중 몇 명은 속마음 한 줄도.
     """
@@ -2334,7 +2339,7 @@ def post_town_view(states: dict | None = None) -> None:
             entry = f"{name}" + (f"({act[:10]})" if act and label != "🏠 집" else "")
         groups.setdefault(label, []).append(entry)
     awake = sum(len(v) for v in groups.values())
-    lines = [f"-# 🕒 {now.strftime('%H:%M')} 지금 동네는 - 깨어 있는 {awake}명 · 자는 중 {asleep}명"]
+    lines = [f"-# 🕒 {now.strftime('%H:%M')} 지금 마을은 - 깨어 있는 {awake}명 · 자는 중 {asleep}명"]
     order = [label for _, label in _PLACES]
     for label in sorted(groups, key=lambda x: (order.index(x) if x in order else len(order), x)):
         lines.append(f"{label} — " + ", ".join(groups[label]))
@@ -2353,11 +2358,11 @@ def post_town_view(states: dict | None = None) -> None:
         try:
             path = townmap.render(_town_snapshot(states, agent_names, fresh, now, asleep))
         except Exception as e:  # noqa: BLE001
-            print(f"[경고] 동네 지도 그리기 실패: {e}")
+            print(f"[경고] 마을 지도 그리기 실패: {e}")
             path = None
         if path:
-            outbox.schedule(at, "file", path=path, name="동네 소식",
-                            text=f"-# 🗺️ {now.strftime('%H:%M')} 지금 동네는 - 깨어 있는 {awake}명 · 자는 중 {asleep}명")
+            outbox.schedule(at, "file", path=path, name="마을 소식",
+                            text=f"-# 🗺️ {now.strftime('%H:%M')} 지금 마을은 - 깨어 있는 {awake}명 · 자는 중 {asleep}명")
             if not TOWN_VIEW_TEXT:
                 return
     # 한 메시지(2000자)를 넘으면 줄 단위로 나눠 보낸다 (아주 긴 장소 줄은 자른다)
@@ -2371,11 +2376,11 @@ def post_town_view(states: dict | None = None) -> None:
     if cur:
         chunks.append(cur)
     if not runtime.has_agent_sender():
-        print("[에이전트] (채널 미설정) 지금 동네는\n" + "\n".join(chunks))
+        print("[에이전트] (채널 미설정) 지금 마을은\n" + "\n".join(chunks))
         return
     # 그 시간의 대화들이 차례대로 올라간 뒤 끝 무렵에 (예약함)
     for i, text in enumerate(chunks):
-        outbox.schedule(at + timedelta(seconds=i) if at else None, "agent", account="", name="동네 소식", text=text, avatar="")
+        outbox.schedule(at + timedelta(seconds=i) if at else None, "agent", account="", name="마을 소식", text=text, avatar="")
 
 
 # ===================================================================== 다른 곳에서 쓰는 요약
