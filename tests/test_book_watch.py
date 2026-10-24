@@ -1,4 +1,4 @@
-"""책방 손님 알림: 북오아시스에서 새로 읽은 기록이 생기면 단톡방에 알리고, 처음은 기준만, 심야 서고는 제목 없이 책방 안에서만."""
+"""도서관 손님 알림: 북오아시스에서 새로 읽은 기록이 생기면 통신방에 알리고, 처음은 기준만, 금서고는 제목 없이 도서관 안에서만."""
 import json
 from datetime import datetime
 
@@ -20,7 +20,7 @@ def _posts():
 
 def test_first_is_baseline_then_new_read_announced(fake_llm, monkeypatch):
     monkeypatch.setattr(agents, "_group_channel", lambda g: 123)
-    fake_llm(lambda system, user: {"text": "책방에 손님이 오셨어요!"})
+    fake_llm(lambda system, user: {"text": "도서관에 손님이 오셨어요!"})
     now = datetime(2026, 10, 14, 15, 0)
     base = [_row(1, "어린 왕자", "2026-10-14 10:00:00")]
     assert book_watch.has_new(base)                       # 처음 - 기준을 적으러
@@ -36,19 +36,19 @@ def test_first_is_baseline_then_new_read_announced(fake_llm, monkeypatch):
     # 같은 책을 계속 읽어 쪽수만 바뀌면 다시 안 알린다
     rows[0] = _row(1, "어린 왕자", "2026-10-14 15:10:00", pages=50)
     assert book_watch.process(rows, datetime(2026, 10, 14, 15, 10)) == []
-    assert "어린 왕자" in book_watch.prompt_block("오아시스 거리", datetime(2026, 10, 14, 15, 20))
+    assert "어린 왕자" in book_watch.prompt_block("오아시스 마을", datetime(2026, 10, 14, 15, 20))
 
 
 def test_adult_shelf_hidden_and_inside_shop_only(fake_llm, monkeypatch):
     monkeypatch.setattr(agents, "_group_channel", lambda g: 123)
     monkeypatch.setattr(book_watch, "BOOKOASIS_ADULT_DB_TYPES", ["adult"])
-    fake_llm(lambda system, user: {"text": "심야 서고에 손님 한 분."})
+    fake_llm(lambda system, user: {"text": "금서고에 손님 한 분."})
     now = datetime(2026, 10, 14, 21, 0)
     book_watch.process([_row(9, "비밀 화보집", "2026-10-14 20:00:00", db="adult")], now)
     got = book_watch.process([_row(9, "비밀 화보집", "2026-10-14 20:55:00", db="adult", pages=40)], now)
     assert got == [{"work": "adult|비밀 화보집", "title": ""}]
     p = _posts()[-1]
-    assert p["name"] == "김동식" and p["group"] == "책방 단톡방" and "비밀 화보집" not in p["text"]
-    assert book_watch.prompt_block("오아시스 거리", now) == ""              # 동네 사람은 모른다
-    block = book_watch.prompt_block("책방 오아시스", now)
-    assert "심야 서고 책 한 권" in block and "비밀 화보집" not in block
+    assert p["name"] == "김동식" and p["group"] == "도서관 통신방" and "비밀 화보집" not in p["text"]
+    assert book_watch.prompt_block("오아시스 마을", now) == ""              # 마을 사람은 모른다
+    block = book_watch.prompt_block("오아시스 마법도서관", now)
+    assert "금서고 책 한 권" in block and "비밀 화보집" not in block

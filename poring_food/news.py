@@ -1,5 +1,6 @@
 """
-바깥 세상 뉴스 - 이야기가 가게/골목 안에서만 맴돌지 않게, 실제 한국 검색어와 뉴스 제목을 가져와 인물들의 얘깃거리로 쓴다.
+떠돌이 상인 소문 - 이야기가 마을 안에서만 맴돌지 않게, 실제 한국 검색어와 뉴스 제목을 가져와
+'떠돌이 상인이 전한 왕국 소문'으로 인물들의 얘깃거리로 쓴다 (판타지 세계에 맞게 바꿔 말하라고 프롬프트에 적는다).
 
 출처 (키 없음, RSS):
 - Google 트렌드(한국): 지금 많이 검색되는 검색어 + 관련 기사 제목  (TRENDS_URL)
@@ -225,7 +226,8 @@ def prompt_block(agent: dict, now: datetime | None = None) -> str:
     pick = for_agent(agent, now)
     if not pick:
         return ""
-    return ("[오늘 본 뉴스/검색어 - 실제 바깥 세상 소식. 관심 가면 얘깃거리나 생각거리로 (억지로는 말고, 내용을 지어내지 마라)]\n"
+    return ("[떠돌이 상인이 전한 왕국 소문 - 실제 바깥 세상 소식을 이 세계의 소문으로 들은 것. 관심 가면 얘깃거리나 생각거리로 "
+            "(억지로는 말고, 내용을 지어내지 마라. 현대 물건 이름은 이 세계에 맞게 바꿔 말한다)]\n"
             + "\n".join(f"- {_line(i)}" for i in pick))
 
 
@@ -235,7 +237,8 @@ def world_block(now: datetime | None = None, k: int = 10) -> str:
         return ""
     rnd = random.Random(f"news-world|{_slot(now or now_kst())}")
     pick = rnd.sample(items, min(k, len(items)))
-    return ("[오늘 실제 뉴스/검색어 - 어울리는 게 있으면 사건 하나쯤 이것과 이어도 좋다 (뉴스 내용을 지어내거나 실존 인물을 등장시키지 마라)]\n"
+    return ("[떠돌이 상인이 전한 왕국 소문(실제 뉴스/검색어) - 어울리는 게 있으면 사건 하나쯤 이것과 이어도 좋다 "
+            "(이 세계의 소문으로 바꿔서, 뉴스 내용을 지어내거나 실존 인물을 등장시키지 마라)]\n"
             + "\n".join(f"- {_line(i)}" for i in pick))
 
 
@@ -246,5 +249,5 @@ def topic_line(now: datetime | None = None) -> str:
         return ""
     trends = [i["title"] for i in items if i["category"] == "검색어"][:3]
     heads = [i["title"] for i in items if i["category"] in ("경제", "IT", "연예", "스포츠")][:3]
-    parts = ([f"요즘 검색어: {', '.join(trends)}"] if trends else []) + heads
+    parts = ([f"요즘 상인들이 수군대는 말: {', '.join(trends)}"] if trends else []) + heads
     return " / ".join(parts)

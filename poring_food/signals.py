@@ -1,20 +1,20 @@
 """
-오아시스 거리 세계 밖의 "실제 변화"를 모아서 이야기의 외부 자극으로 쓴다.
+오아시스 마을 세계 밖의 "실제 변화"를 모아서 이야기의 외부 자극으로 쓴다.
 
 사람처럼 보이려면 이야기가 자기들끼리만 굴러가지 않고 바깥 세상 변화에 반응해야 한다.
 그래서 봇이 이미 알고 있는 실제 신호를 이야기 속 사건으로 바꿔 넣는다:
 
 | 실제 신호                        | 이야기 속 의미 (LLM에게 알려주는 대응)         |
 |----------------------------------|-----------------------------------------------|
-| 광주 날씨(기상청 MCP) / 오늘의 화제(실제 검색어·뉴스, news.py) | 골목 손님 발길·가게 수다·포장마차 분위기 |
-| 서버 상태 MCP(서버 전체 CPU/메모리/디스크 합계/온도) | 건물 전력 사용률·건물 혼잡도·지하 공용 창고 적재율·과열 |
+| 광주 날씨(기상청 MCP) / 오늘의 화제(실제 검색어·뉴스, news.py) | 골목 손님 발길·가게 수다·선술집 분위기 |
+| 서버 상태 MCP(서버 전체 CPU/메모리/디스크 합계/온도) | 건물 전력 사용률·건물 혼잡도·지하 보급 창고 적재율·과열 |
 | 카톡 브릿지 서버 상태             | 건물 통신 회선(인터넷/전화) 정상/먹통          |
-| Plex/북오아시스 신규 등록 (metrics) | 신규 입고(극장 새 필름 / 책방 새 책 상자)       |
-| Plex 재생 수 / 지금 시청 중 (Tautulli) | 별빛극장 상영(관람) / 지금 객석 손님           |
+| Plex/북오아시스 신규 등록 (metrics) | 신규 입고(극장 새 필름 / 도서관 새 책 상자)       |
+| Plex 재생 수 / 지금 시청 중 (Tautulli) | 별빛 환영극장 상영(관람) / 지금 객석 손님           |
 | 오늘 대화량                       | 주문·고객 문의 (각각 최근 7일 평균과 비교)        |
-| 북오아시스 신간/장애              | 책방 오아시스 서가 입고 / 서가 전산 먹통        |
-| Redroid 비인가 앱 차단            | 건물 공용 와이파이 보안 사고 / 관리사무소 비상   |
-| 요일·월말·계절                   | 월말 관리비·월세 정산, 주말 손님 러시, 휴무일    |
+| 북오아시스 신간/장애              | 오아시스 마법도서관 서가 입고 / 서가 전산 먹통        |
+| Redroid 비인가 앱 차단            | 건물 공용 와이파이 보안 사고 / 성벽 수비대 비상   |
+| 요일·월말·계절                   | 월말 관리비·세금 정산, 주말 손님 러시, 휴무일    |
 
 collect()는 가벼운 신호만(파일/DB/짧은 HTTP) 모으고, 느린 건 캐시(signals_cache.json)를 쓴다:
 - 날씨/건물 설비: 매시 회차 시작 때 refresh_live()가 MCP(korea_weather, server_status)로
@@ -130,16 +130,16 @@ def refresh_daily_topic() -> None:
 def _calendar_line(now: datetime) -> str:
     parts = [f"{now.month}월 {now.day}일 {_WEEKDAYS[now.weekday()]}요일 {now.hour}시"]
     if now.weekday() == 0:
-        parts.append(f"월요일이라 {worldcfg.BOOK} 휴무")
+        parts.append(f"월요일이라 {worldcfg.BOOK} 휴관")
     elif now.weekday() == 4:
-        parts.append("금요일이라 불금 손님 기대")
+        parts.append("금요일이라 장 서기 전날, 손님 기대")
     elif now.weekday() >= 5:
         parts.append("주말이라 골목에 손님이 많은 날")
     last_day = (now.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     if last_day.day - now.day <= 2:
         parts.append("월말 마감 직전")
     elif now.day == 25:
-        parts.append("월급날")
+        parts.append("품삯 받는 날")
     season = {12: "겨울", 1: "겨울", 2: "겨울", 3: "봄", 4: "봄", 5: "봄",
               6: "여름", 7: "여름", 8: "여름"}.get(now.month, "가을")
     parts.append(season)
@@ -200,7 +200,7 @@ def collect(include_factory: bool = True) -> dict:
     if include_factory:
         try:
             msg, ok = checker.check_poring_factory_status()
-            signals["factory"] = "건물 통신 회선 정상" if ok else f"건물 통신 회선 이상: {msg}"
+            signals["factory"] = "통신석 중계탑 정상" if ok else f"통신석 중계탑 이상: {msg}"
         except Exception:  # noqa: BLE001
             pass
 
@@ -222,15 +222,15 @@ def collect(include_factory: bool = True) -> dict:
 
     blocked = _redroid_today(now)
     if blocked:
-        signals["security"] = f"오늘 건물 공용 와이파이에 수상한 프로그램 설치 시도 {blocked}건 - 관리사무소 보안 시스템이 자동 차단"
+        signals["security"] = f"오늘 성문 결계에 수상한 저주 부적을 들이려는 시도 {blocked}건 - 성벽 수비대 경비 결계가 자동 차단"
 
     return signals
 
 
 # 누가 어떤 신호를 아는가 (신호 키 -> 알 수 있는 회사들).
-# - 건물 설비(통신 회선/전력/창고/보안)는 같은 건물을 쓰는 두 가게와 관리사무소(오아시스 거리)가 다 안다.
+# - 건물 설비(통신 회선/전력/창고/보안)는 같은 건물을 쓰는 두 가게와 성벽 수비대(오아시스 마을)가 다 안다.
 #   가족/친구(FRIENDS)처럼 건물 밖 사람은 모른다.
-# - 입고/상영 현황은 두 가게 안의 일이라 두 가게 사람만, 책방 서가 소식은 책방 사람만 안다.
+# - 입고/상영 현황은 두 가게 안의 일이라 두 가게 사람만, 도서관 서가 소식은 도서관 사람만 안다.
 BUILDING_COMPANIES = (worldcfg.BOOK, worldcfg.CINEMA, worldcfg.STREET)
 KNOWN_BY = {
     "factory": BUILDING_COMPANIES,
@@ -240,7 +240,7 @@ KNOWN_BY = {
     "bookoasis": (worldcfg.BOOK,),
 }
 INTERNAL_KEYS = tuple(KNOWN_BY)
-# 예전 이름 호환 - 건물 안 사정을 아는 "본진"(대표로 애순이의 책방)
+# 예전 이름 호환 - 건물 안 사정을 아는 "본진"(대표로 애순이의 도서관)
 HOME_COMPANY = worldcfg.BOOK
 
 
@@ -251,7 +251,7 @@ def knows(company: str, key: str) -> bool:
 
 
 def for_company(signals: dict, company: str) -> dict:
-    """그 회사 사람이 알 수 있는 신호만 남긴다. 회사/동네 사건도 그 회사 것과 동네 것만."""
+    """그 회사 사람이 알 수 있는 신호만 남긴다. 회사/마을 사건도 그 회사 것과 마을 것만."""
     out = dict(signals)
     for k in INTERNAL_KEYS:
         if not knows(company, k):
@@ -267,11 +267,11 @@ def for_company(signals: dict, company: str) -> dict:
 def format_block(signals: dict) -> str:
     """프롬프트에 넣을 "바깥 세상 변화" 블록."""
     labels = {
-        "calendar": "날짜/시간", "weather": "날씨(광주)", "topic": "오늘 세상의 화제",
-        "factory": "건물 통신 회선", "facility": "건물 설비(전력/창고)", "world": "오늘 가게/동네에서 생긴 일",
-        "production": "입고/상영 현황", "bookoasis": "책방 서가 소식", "security": "건물 보안",
+        "calendar": "날짜/시간", "weather": "날씨(전투 날씨)", "topic": "떠돌이 상인이 전한 왕국 소문",
+        "factory": "통신석 중계탑", "facility": "성벽과 결계(결계 부하/보급 창고)", "world": "오늘 기관/마을에서 생긴 일",
+        "production": "입고/환영극 현황", "bookoasis": "도서관 서가 소식", "security": "성문 경비",
     }
     lines = [f"- {labels[k]}: {v}" for k, v in signals.items() if k in labels and v]
     if not lines:
         return ""
-    return "[바깥 세상 변화 - 실제로 일어난 일이다. 인물들이 자연스럽게 반응하게 하되, 수치는 그대로 쓰고 지어내지 마라]\n" + "\n".join(lines)
+    return "[세상 변화 - 실제로 일어난 일이다. 인물들이 자연스럽게 반응하게 하되, 수치는 그대로 쓰고 지어내지 마라]\n" + "\n".join(lines)

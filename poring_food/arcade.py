@@ -7,9 +7,9 @@
 - 돈은 이야기 속 돈(life.py money): 하기 전에 게임 머니를 그 사람 돈으로 맞추고, 끝나면 바뀐 만큼 이야기 속 돈에 반영한다.
 - 건 돈은 가진 돈의 MAX_BET_RATIO 이하, MAX_BET 이하로 자른다. 한 사람 하루 MAX_PLAYS_PER_DAY판.
 - 결과: 인물이 친 명령과 오락실 결과를 에이전트 채널에 올리고(사람이 하듯), 기분이 바뀌고, 크게 따거나 잃으면 기억에 남는다.
-- 주인: 오락기는 골목 LP바(PLACE)에 있고 주인은 MANAGER(기본 오윤 - 실적 자리 "오락기 매출", 교체되면 인수인계받은 사람).
+- 주인: 오락기는 골목 음유 주점(PLACE)에 있고 주인은 MANAGER(기본 오윤 - 실적 자리 "오락기 매출", 교체되면 인수인계받은 사람).
   손님이 한 판 할 때마다 주인이 자기 말투로 한마디(LLM 1회/판, agents._arcade_comment), 너무 잃는 손님은 오늘 그만 받을 수 있고
-  (cut_off), 크게 딴 손님이 나오면 동네 단톡방에 알린다. 손님들이 잃은 돈이 가게 매출 = 주인 실적(kpi.py "arcade").
+  (cut_off), 크게 딴 손님이 나오면 마을 통신방에 알린다. 손님들이 잃은 돈이 가게 매출 = 주인 실적(kpi.py "arcade").
 저장: storage/poring_food/arcade.json {"days": {날짜: {"plays", "revenue", "by": {이름: 손익}}}, "cutoff": {날짜: [이름]}} - 14일
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ MIN_BET = 1000
 MAX_PLAYS_PER_DAY = int(os.getenv("PORING_ARCADE_MAX_PER_DAY", "3"))
 BIG = 200_000            # 이만큼 넘게 따거나 잃으면 오래 기억한다
 MANAGER = os.getenv("PORING_ARCADE_MANAGER", "오윤")
-PLACE = os.getenv("PORING_ARCADE_PLACE", "LP바 오락기")
+PLACE = os.getenv("PORING_ARCADE_PLACE", "음유 주점")
 ARCADE_PATH = os.path.join(STATE_DIR, "arcade.json")
 KEEP_DAYS = 14
 
@@ -102,8 +102,8 @@ def prompt_rule(name: str, now: datetime | None = None) -> str:
         return ""
     money = int(life.get(name).get("money", 0))
     games = ", ".join(f"{g}({'/'.join(c)})" if c else g for g, (_, c, _) in GAMES.items())
-    where = f"골목 {PLACE}(주인 {MANAGER})" if name != MANAGER else f"내 가게의 {PLACE}"
-    return (f"- 개인시간에 심심하거나 기분 전환/한탕이 필요하면 {where}로 봇 미니게임을 할 수 있다: {games}. "
+    where = f"골목 {PLACE} 구석 내기 판(주인 {MANAGER})" if name != MANAGER else f"내 {PLACE} 구석 내기 판"
+    return (f"- 개인시간에 심심하거나 기분 전환/한탕이 필요하면 {where}에서 내기(봇 미니게임)를 할 수 있다: {games}. "
             f"내 돈 {money:,}원, 한 판에 최대 {min(MAX_BET, int(money * MAX_BET_RATIO)):,}원. 성격과 돈 사정대로 - "
             "하고 싶을 때만 game에 쓰고 대부분은 null.\n")
 

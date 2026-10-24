@@ -6,7 +6,7 @@
 보여주지 않고, 시각이 되면 그때 당사자에게만 "지각"으로 전달한다.
 
 - 하루 계획(plan_day): 그날 처음 돌 때 LLM이 오늘 일어날 사건 4~8개를 시각별로 정해 둔다
-  (회사 전체/동네 사건으로 여러 명에게 닿게, 좋은 일/나쁜 일/소소한 일 골고루).
+  (회사 전체/마을 사건으로 여러 명에게 닿게, 좋은 일/나쁜 일/소소한 일 골고루).
   실제 바깥 신호(날씨/화제/날짜)와 어긋나지 않게 한다.
 - 발생(release): 시각이 된 사건을 터뜨린다.
   · 당사자 에이전트에게 전달할 목록을 돌려준다 (agents.py가 받은편지함에 넣음)
@@ -35,7 +35,7 @@ RUMOR_CONFIRM_AFTER_H = 2
 MAX_LOG = 150             # 최근 사건 기록 (사건 종류 분포를 2주치 보려고)
 PLAN_TIMEOUT_SEC = 120
 DETAILED_AGENTS = 12        # 계획 프롬프트에 루틴/기억까지 자세히 넣는 에이전트 수 (agents.json 앞에서부터)
-TOWN = "동네"
+TOWN = "마을"
 
 
 def _load() -> dict:
@@ -78,17 +78,17 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
             goals = ", ".join((st.get("goals") or [])[:2])
             agent_lines.append(f"- {a['name']} ({a.get('company', '')}): {a.get('profile', '')[:70]}"
                                + (f" / 목표: {goals}" if goals else ""))
-    npc_sample = [f"{c['name']}({c['company'].split(' ')[0]} {c['dept']} {c['rank']})"
+    npc_sample = [f"{c['name']}({c['company'].split(' ')[0]} {c['dept']} {c.get('job') or c['rank']})"
                   for c in roster if c["name"] not in {a["name"] for a in agents}][:30]
     system = (
         "너는 가상 세계의 '세계 엔진'이다. 이 세계에는 스스로 판단하며 사는 인물(에이전트)들이 있고, "
         "너는 그들이 미리 알 수 없는 사건을 일으킨다. 줄거리를 짜는 작가가 아니라 날씨처럼 세상을 굴리는 쪽이다. "
-        "사건이 어떻게 풀릴지는 정하지 마라 - 인물들이 알아서 반응한다."
+        "사건이 어떻게 풀릴지는 정하지 마라 - 인물들이 알아서 반응한다.\n" + worldcfg.WORLD_RULE
     )
     user = (
         f"오늘: {now.strftime('%Y-%m-%d')} (지금 {now.hour}시). 사건은 {first_hour}~{LAST_EVENT_HOUR}시 사이에만.\n\n"
         "[에이전트 - 이들은 오늘 무슨 일이 생길지 모른다]\n" + "\n".join(agent_lines) + "\n\n"
-        f"[가게/장소] {', '.join(companies)}, {TOWN}(오아시스 거리 동네 전체)\n"
+        f"[기관/장소] {', '.join(companies)}, {TOWN}(오아시스 마을 전체 - 성벽, 결계, 시장, 골목)\n"
         f"[배경 인물 일부] {', '.join(npc_sample)}\n\n"
         f"{signals_block}\n\n"
         + (chronicle.prompt_block() + "\n\n" if chronicle.prompt_block() else "")
@@ -98,17 +98,18 @@ def _plan_day(now, agents: list[dict], roster: list[dict], signals_block: str, r
         + (worldcfg.seed_block(now.strftime("%Y-%m-%d")) + "\n" if worldcfg.seed_block(now.strftime("%Y-%m-%d")) else "")
         + (news.world_block(now) + "\n\n" if news.world_block(now) else "") +
         "오늘 일어날 사건 4~8개를 정해라:\n"
-        "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 가게 전체/동네(건물) 사건으로 여러 명에게 닿게 하고,"
+        "- 에이전트가 많으니 전원에게 줄 필요는 없다 - 기관 전체/마을(성벽) 사건으로 여러 명에게 닿게 하고,"
         " 개인 사건은 최근에 사건이 없던 사람 위주로.\n"
         "- 좋은 일, 나쁜 일, 소소한 일을 골고루. 매일 큰 사건이 터지면 안 된다(큰 사건은 가끔).\n"
         "- 사건 종류(kind)를 골고루 - 같은 종류를 하루에 두 번 넘게 쓰지 마라.\n"
         "- 실제 날씨/날짜/화제와 어긋나지 않게. 최근 사건과 똑같은 걸 반복하지 마라.\n"
-        "- 가게 안의 불확실한 일(매각, 감원, 체인 가맹, 재개발 등)은 visibility를 rumor로 - 먼저 소문으로 돈다.\n"
+        "- 기관 안의 불확실한 일(매각, 감원, 마탑 지부 흡수, 영주의 땅 정리 등)은 visibility를 rumor로 - 먼저 소문으로 돈다.\n"
+        "- 몬스터 침입 자체는 따로 계산된다 - 침입 결과를 지어내지 말고, 정찰 소문/전조/준비 같은 일만 사건으로 써도 된다.\n"
         "- 실존 인물/정치/혐오 소재 금지.\n"
         "반드시 JSON으로만 응답:\n"
         '{"events": [{"hour": 정수, "kind": "사건 종류(위 목록 중 하나)", "title": "사건 제목", "detail": "실제로 일어난 일(당사자가 알게 되는 내용) 1~2문장", '
         '"rumor": "visibility가 rumor일 때 먼저 도는 흐릿한 소문 한 문장(아니면 빈 문자열)", '
-        '"targets": ["에이전트 이름 또는 가게 이름 또는 동네"], "visibility": "direct 또는 rumor", '
+        '"targets": ["에이전트 이름 또는 가게 이름 또는 마을"], "visibility": "direct 또는 rumor", '
         '"effects": {"stress|happiness|loneliness|anger|romance|confidence|energy|job_satisfaction": -0.2~0.2}}]}'
     )
     out = llm_json(system, user, temperature=0.9, timeout=PLAN_TIMEOUT_SEC, tag="세계 엔진", smart=True)
@@ -165,20 +166,20 @@ def _news_events(now, agents: list[dict], roster: list[dict], new_items: list[di
     companies = sorted({c["company"] for c in roster})
     lines = "\n".join(f"- {news._line(i)}" for i in new_items[:12])
     planned = "\n".join(f"- {e['hour']}시 {e['title']}" for e in plan) or "- 없음"
-    system = ("너는 가상 세계의 '세계 엔진'이다. 방금 바깥 세상(실제 한국)에 새 뉴스가 들어왔다. 이 도시 사람들의 삶에 "
-              "그 뉴스가 닿는 사건을 일으킨다. 어떻게 풀릴지는 정하지 마라.")
+    system = ("너는 가상 세계의 '세계 엔진'이다. 방금 떠돌이 상인이 왕국 소문(실제 한국의 새 뉴스)을 마을에 전했다. "
+              "이 마을 사람들의 삶에 그 소문이 닿는 사건을 일으킨다. 어떻게 풀릴지는 정하지 마라.\n" + worldcfg.WORLD_RULE)
     user = (
         f"지금: {now:%Y-%m-%d %H}시. 사건은 {first_hour}~{LAST_EVENT_HOUR}시 사이에만.\n\n"
-        f"[방금 들어온 실제 뉴스/검색어]\n{lines}\n\n"
+        f"[방금 떠돌이 상인이 전한 소문 - 실제 뉴스/검색어]\n{lines}\n\n"
         f"[오늘 이미 정해 둔 사건 - 겹치지 않게]\n{planned}\n\n"
-        f"[사람/가게/장소] 에이전트: {', '.join(a['name'] for a in agents)} / 가게: {', '.join(companies)}, {TOWN}\n"
+        f"[사람/기관/장소] 에이전트: {', '.join(a['name'] for a in agents)} / 가게: {', '.join(companies)}, {TOWN}\n"
         f"{novelty.kind_balance([], now).splitlines()[0]}\n\n"
-        f"이 뉴스들 중 이 도시 사람들과 이어질 만한 것으로 사건 0~{NEWS_MAX_EVENTS}개를 정해라 (어울리는 게 없으면 빈 목록):\n"
-        "- 뉴스 자체를 지어내거나 바꾸지 말고, 뉴스가 이 동네/가게/사람에게 미치는 영향(가격, 장사, 업무, 수다거리, 계획 변경)으로.\n"
+        f"이 소문들 중 이 마을 사람들과 이어질 만한 것으로 사건 0~{NEWS_MAX_EVENTS}개를 정해라 (어울리는 게 없으면 빈 목록):\n"
+        "- 뉴스 자체를 지어내지 말고, 이 판타지 세계의 소문으로 옮겨서 이 마을/기관/사람에게 미치는 영향(물가, 장사, 일, 수다거리, 계획 변경)으로.\n"
         "- 실존 인물을 등장시키지 마라. 정치/혐오/참사 소재 금지.\n"
         "반드시 JSON으로만 응답:\n"
         '{"events": [{"hour": 정수, "kind": "사건 종류", "title": "사건 제목", "detail": "실제로 일어난 일 1~2문장", '
-        '"news": "이어진 뉴스 제목", "rumor": "", "targets": ["에이전트/가게/동네"], "visibility": "direct", '
+        '"news": "이어진 뉴스 제목", "rumor": "", "targets": ["에이전트/가게/마을"], "visibility": "direct", '
         '"effects": {"stress|happiness|...": -0.2~0.2}}]}'
     )
     out = llm_json(system, user, temperature=0.85, timeout=PLAN_TIMEOUT_SEC, tag="세계 엔진(뉴스)")
@@ -199,7 +200,7 @@ def _recipients(event: dict, agents: list[dict]) -> list[str]:
 
 
 def _apply_npc_effects(event: dict, roster: list[dict], agent_names: set[str]) -> None:
-    """회사 전체/동네 사건은 그곳 배경 인물들의 상태에도 바로 반영한다 (에이전트는 스스로 반응하니 제외)."""
+    """회사 전체/마을 사건은 그곳 배경 인물들의 상태에도 바로 반영한다 (에이전트는 스스로 반응하니 제외)."""
     if not event.get("effects"):
         return
     for c in roster:
@@ -267,7 +268,7 @@ def tick(agents: list[dict], roster: list[dict], signals_block: str = "") -> lis
 
 
 def targets(agents: list[dict], roster: list[dict]) -> list[str]:
-    """사건 대상으로 쓸 수 있는 이름들: 에이전트, 회사, 동네."""
+    """사건 대상으로 쓸 수 있는 이름들: 에이전트, 회사, 마을."""
     return [a["name"] for a in agents] + sorted({c["company"] for c in roster}) + [TOWN]
 
 
@@ -322,7 +323,7 @@ def today_lines(company: str | None = None) -> list[str]:
     for e in _today_events(data, now_kst().strftime("%Y-%m-%d")):
         if not e.get("released") or e.get("private"):
             continue
-        # company가 주어지면(에이전트 지각) 그 회사 사건과 동네 사건만 - 다른 회사 내부 일은 모른다
+        # company가 주어지면(에이전트 지각) 그 회사 사건과 마을 사건만 - 다른 회사 내부 일은 모른다
         if company and company not in e["targets"] and TOWN not in e["targets"]:
             continue
         where = ", ".join(e["targets"])

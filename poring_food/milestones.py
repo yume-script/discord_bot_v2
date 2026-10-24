@@ -6,7 +6,7 @@
 - 전환점: 승진 심사/이직 제안/이사/연애 시작/이별/새 취미/건강 문제/가족 소식/큰돈/자격증/반려동물/목표 달성 ...
   그 사람의 성격·처지·목표·기억·지난 전환점에 맞게 LLM이 고르고, 지난번과 같은 종류는 피한다.
 - 반영: 감정 변화, 목표 갱신(이룬 목표는 빼고 새 목표), 영구 기억, 연대기. 당사자는 받은편지함으로 바로 알게 되고(깨움),
-  공개되는 일(승진 소식, 결혼 발표 등)이면 같은 회사/동네에 사건으로 퍼진다.
+  공개되는 일(승진 소식, 결혼 발표 등)이면 같은 회사/마을에 사건으로 퍼진다.
 - 직급/회사 같은 조직 정보는 바꾸지 않는다 (실적 자리 배정이 흔들리지 않게) - 그런 일은 제안/심사/소문 단계로만.
 저장: storage/poring_food/milestones.json {"date": 마지막으로 돌린 날, "people": {이름: {"last", "history": [...]}}}
 """
@@ -18,7 +18,7 @@ import os
 import random
 from datetime import datetime
 
-from . import chronicle, life, memory, novelty, world
+from . import chronicle, life, memory, novelty, world, worldcfg
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -29,9 +29,10 @@ ENABLED = os.getenv("PORING_MILESTONES", "1") not in ("0", "false", "False", "")
 PER_DAY = int(os.getenv("PORING_MILESTONES_PER_DAY", "0"))   # 0이면 에이전트 수에 맞춰 (한 사람당 한 달 1.5번꼴)
 MILESTONE_HOUR = 10
 MIN_GAP_DAYS = 14
-KINDS = ["승진 심사/인정", "이직 제안/스카우트", "이사/집 문제", "연애 시작", "이별/관계 정리", "새 취미 시작",
-         "건강 문제/회복", "가족 소식(결혼/출산/병환/재회)", "큰돈(보너스/빚/투자)", "자격증/공부 성과",
-         "반려동물", "목표 달성", "오랜 친구/옛 인연 재회", "큰 실수/위기", "새로운 꿈/진로 고민"]
+KINDS = ["승급 심사/인정", "다른 길드/왕도의 스카우트", "이사/집 문제", "연애 시작", "이별/관계 정리", "새 취미 시작",
+         "건강 문제/회복", "가족 소식(혼인/출산/병환/재회)", "큰돈(보너스/빚/투자)", "마법 수련/시험 성과",
+         "반려동물/길들인 짐승", "목표 달성", "오랜 친구/옛 인연 재회", "큰 실수/위기", "새로운 꿈/진로 고민",
+         "몬스터와의 인연(부상/공훈/구출)"]
 
 
 def _load() -> dict:
@@ -82,18 +83,19 @@ def _generate(agent: dict, history: list[dict], now: datetime) -> dict | None:
     st = life.get(name)
     past = "\n".join(f"- {h['date']} [{h['kind']}] {h['title']}" for h in history[-5:]) or "- 없음"
     system = ("너는 가상 세계 인물들의 삶을 굴리는 '운명'이다. 사람의 삶에는 가끔 방향을 바꾸는 큰일이 생긴다. "
-              "그 사람의 성격과 처지에 맞게, 그러나 본인도 예상 못 한 일을 하나 일으켜라. 어떻게 풀릴지는 정하지 마라.")
+              "그 사람의 성격과 처지에 맞게, 그러나 본인도 예상 못 한 일을 하나 일으켜라. 어떻게 풀릴지는 정하지 마라.\n"
+              + worldcfg.WORLD_RULE)
     user = (
-        f"오늘: {now:%Y-%m-%d}\n[인물] {name} ({agent.get('company', '')} {agent.get('dept', '')} {agent.get('rank', '')})\n"
+        f"오늘: {now:%Y-%m-%d}\n[인물] {name} ({agent.get('company', '')} {agent.get('dept', '')} {agent.get('job') or agent.get('rank', '')})\n"
         f"{agent.get('profile', '')}\n평소: {agent.get('routine', '')}\n\n"
         f"{life.prompt_block(name)}\n\n{memory.prompt_block(name, k=5)}\n\n"
         f"[지난 전환점 - 같은 종류는 피해라]\n{past}\n\n"
         f"[전환점 종류] {', '.join(KINDS)}\n\n"
         "규칙:\n"
         f"- 요즘 목표({', '.join(st.get('goals') or []) or '없음'})와 이어지면 좋다 - 목표를 이루거나, 크게 막히거나, 목표가 바뀔 계기.\n"
-        "- 직급/소속 회사가 실제로 바뀌는 일(발령/퇴사 확정)은 하지 마라 - 제안/심사/면접/소문 단계까지만.\n"
+        "- 직급/소속이 실제로 바뀌는 일(전출/그만둠 확정)은 하지 마라 - 제안/심사/시험/소문 단계까지만.\n"
         "- 좋은 일과 힘든 일이 고르게. 너무 비극적이거나 자극적인 일, 실존 인물/정치/혐오 소재는 금지.\n"
-        "- public: 회사나 동네 사람들이 알게 될 일이면 true (승진 심사 통과, 결혼 발표 등), 혼자만 아는 일이면 false.\n"
+        "- public: 같은 소속이나 마을 사람들이 알게 될 일이면 true (승급 심사 통과, 혼인 발표 등), 혼자만 아는 일이면 false.\n"
         "반드시 JSON으로만 응답:\n"
         '{"kind": "전환점 종류(위 목록 중 하나)", "title": "짧은 제목", "detail": "실제로 일어난 일 1~2문장(3인칭)", '
         '"public": true/false, "effects": {"happiness|stress|loneliness|anger|romance|confidence|energy|job_satisfaction": -0.2~0.2}, '

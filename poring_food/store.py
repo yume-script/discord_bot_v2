@@ -11,7 +11,7 @@
 
 처음 열 때 예전 jsonl(memories.jsonl, archive/memories.jsonl, archive/events.jsonl, archive/actions.jsonl)을
 한 번 옮겨 담고, 원래 파일은 *.imported로 이름만 바꿔 백업으로 남긴다.
-대화 원문(dialogues.jsonl)/단톡방(group_chat.jsonl)/연대기 요약(chronicle.jsonl)은 다른 모듈이 그대로 쓴다.
+대화 원문(dialogues.jsonl)/통신방(group_chat.jsonl)/연대기 요약(chronicle.jsonl)은 다른 모듈이 그대로 쓴다.
 """
 from __future__ import annotations
 

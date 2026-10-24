@@ -1,5 +1,5 @@
 """
-오아시스 거리 연재 드라마 - 인물들이 실제로 대화하고, 그 대화가 쌓여서 줄거리가 된다.
+오아시스 마을 연재 드라마 - 인물들이 실제로 대화하고, 그 대화가 쌓여서 줄거리가 된다.
 
 [구조]
 1) 장면(run_scene): SCENE_HOURS(기본 업무 시간 2시간 간격)마다 2~3명이 대사를 주고받는 짧은
@@ -114,7 +114,7 @@ def _display_keys(roster: list[dict]) -> dict[str, dict]:
 
 
 def _cast_line(key: str, c: dict) -> str:
-    return (f"- {key}: {c['company']} {c['dept']} {c['rank']} / 겉모습: {c.get('outer_persona', '')} "
+    return (f"- {key}: {c['company']} {c['dept']} {c.get('job') or c['rank']} / 겉모습: {c.get('outer_persona', '')} "
             f"/ 속마음: {c.get('inner_truth', '')}")
 
 
@@ -273,9 +273,10 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
     )
 
     system = (
-        f"너는 가상의 동네 세계 '{worldcfg.STREET}'를 연재 드라마처럼 써 내려가는 작가다. "
+        f"너는 가상의 마을 세계 '{worldcfg.STREET}'를 연재 드라마처럼 써 내려가는 작가다. "
         f"[세계 설정] {worldcfg.PREMISE} "
-        "인물마다 겉모습과 속마음이 다르고, 그 괴리가 재미의 핵심이다. 대사는 각자 말투가 확실히 달라야 한다."
+        "인물마다 겉모습과 속마음이 다르고, 그 괴리가 재미의 핵심이다. 대사는 각자 말투가 확실히 달라야 한다.\n"
+        + worldcfg.WORLD_RULE
     )
     user = (
         "등장인물 (이 사람들만 말할 수 있다):\n" + "\n".join(_cast_line(k, c) for k, c in zip(cast_keys, cast)) + "\n\n"
@@ -288,7 +289,7 @@ def run_scene(roster: list[dict], states: dict, rnd: random.Random) -> dict | No
         f"{signals.format_block(signals.collect())}\n\n"
         "작성 규칙:\n"
         f"- {now.hour}시에 있을 법한 장소에서 대사 4~8줄짜리 짧은 장면을 써라. 지금 위치가 같으면 그곳, "
-        f"다르면 둘이 마주칠 만한 곳({worldcfg.CAFE_PLACE}, {worldcfg.STORAGE_PLACE}, 건물 계단, 골목 편의점 등)으로 정해라.\n"
+        f"다르면 둘이 마주칠 만한 곳({worldcfg.CAFE_PLACE}, {worldcfg.STORAGE_PLACE}, 성벽 계단, 마을 잡화점 등)으로 정해라.\n"
         "- 바깥 세상 변화 중 어울리는 게 있으면 인물들이 그걸 화제로 삼거나 그 영향을 받게 해라(전부 쓸 필요는 없다).\n"
         "- 지난 일을 기억하고 있는 티를 내라. 같은 대화를 반복하지 말고 관계가 조금씩 변하게 해라.\n"
         "- 'inner'(속마음)는 꼭 필요한 대사 1~2개에만 짧게.\n"
@@ -403,13 +404,14 @@ def maybe_run_writers_room(roster: list[dict], force: bool = False) -> bool:
         )
 
     system = (
-        f"너는 가상의 동네 세계 '{worldcfg.STREET}'를 장기 연재 드라마로 끌고 가는 메인 작가다. "
+        f"너는 가상의 마을 세계 '{worldcfg.STREET}'를 장기 연재 드라마로 끌고 가는 메인 작가다. "
         f"[세계 설정] {worldcfg.PREMISE} "
-        "현실의 동네처럼 바깥 세상의 변화가 사람들 일상과 사건에 영향을 주게 만든다."
+        "세상의 변화(날씨, 결계, 몬스터, 떠돌이 상인 소문)가 사람들 일상과 사건에 영향을 주게 만든다.\n"
+        + worldcfg.WORLD_RULE
     )
     user = (
         "[등장 가능한 인물] (cast에는 이 이름을 그대로 써라)\n"
-        + "\n".join(f"- {k}: {c['company']} {c['dept']} {c['rank']} / {c.get('outer_persona', '')}" for k, c in keys.items())
+        + "\n".join(f"- {k}: {c['company']} {c['dept']} {c.get('job') or c['rank']} / {c.get('outer_persona', '')}" for k, c in keys.items())
         + f"\n\n[지난 이야기 요약]\n{data.get('previously') or '아직 없음'}\n\n"
         "[진행 중인 줄거리]\n" + ("\n".join(arcs_desc) or "- 없음 (새로 2~3개 만들어라)") + "\n\n"
         "[오늘 있었던 장면들]\n" + ("\n".join(f"- {s['ts'][11:16]} {s['summary']}" for s in today_scenes) or "- 없음")
@@ -418,9 +420,9 @@ def maybe_run_writers_room(roster: list[dict], force: bool = False) -> bool:
         "1. 진행 중인 줄거리마다 오늘 장면을 반영해 summary_so_far와 next_hook(다음에 일어날 일 한 줄)을 갱신해라. "
         "충분히 무르익었으면 status를 climax로, 결말이 났으면 resolved로 바꿔라(시작한 지 10일 넘은 건 정리 방향으로).\n"
         f"2. 진행 중(active/climax) 줄거리가 2개 미만이면 새로 만들어 2~{MAX_ACTIVE_ARCS - 1}개를 유지해라. 새 줄거리 중 "
-        "하나는 [바깥 세상 변화]에서 의미 있는 게 있으면 거기서 출발해라(예: 건물 전력 이상 → 상영 중단·책방 정전 책임 공방, "
-        "창고 포화 → 두 가게의 창고 자리싸움, 월말 → 관리비·월세 정산 전쟁). 가게 안 사건, 연애/우정, "
-        f"{worldcfg.BOOK}와 {worldcfg.CINEMA}의 손님 쟁탈전, 건물주/체인 본사와의 신경전 등 "
+        "하나는 [바깥 세상 변화]에서 의미 있는 게 있으면 거기서 출발해라(예: 결계 과부하 → 환영극 중단·도서관 마법등 꺼짐 책임 공방, "
+        "창고 포화 → 두 기관의 창고 자리싸움, 월말 → 성벽세·세금 정산 전쟁, 숲의 기척 → 성벽 방어 준비). 기관 안 사건, 연애/우정, "
+        f"{worldcfg.BOOK}과 {worldcfg.CINEMA}의 방문객 쟁탈전, 영주/왕도 마탑·상회와의 신경전, 몬스터 침입을 둘러싼 이야기 등 "
         "종류를 섞어라. 등장인물은 2~4명.\n"
         "3. previously: 지금까지의 큰 흐름을 600자 이내로 압축 요약(오래된 일은 짧게).\n"
         f"4. today_digest: 오늘 {worldcfg.STREET}에 있었던 일을 3~4문장으로.\n"
@@ -492,7 +494,7 @@ def story_block_for(name: str) -> str:
         lines.append(f"- {a['title']}{involved}: {latest}")
     today = now_kst().replace(hour=0, minute=0, second=0, microsecond=0)
     mine = _recent_scenes(limit=2, since=today, name=name)
-    block = "\n[동네에서 진행 중인 이야기]\n" + "\n".join(lines) + "\n"
+    block = "\n[마을에서 진행 중인 이야기]\n" + "\n".join(lines) + "\n"
     if mine:
         block += "[오늘 네가 직접 겪은 장면]\n" + "\n".join(f"- {s['summary']}" for s in mine) + "\n"
     block += ("- 위 이야기를 알고 있는 사람으로서 일지에 1~2문장 정도 자연스럽게 반영해라. "
@@ -501,7 +503,7 @@ def story_block_for(name: str) -> str:
 
 
 def story_so_far(character: str = "") -> str:
-    """대화 중 "오아시스 거리 요즘 무슨 일 있어?" 질문용 요약."""
+    """대화 중 "오아시스 마을 요즘 무슨 일 있어?" 질문용 요약."""
     data = load_arcs()
     parts = []
     if data.get("previously"):

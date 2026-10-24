@@ -5,7 +5,7 @@
     단계: 장소 정하기 -> 흙과 모종 구하기 -> 심기 -> 이름표 달기 (담당 여화정, 도움 홍두식/박충섭)
 
 - 만들기(create): 모임이 결정을 내리면 agents.run_meeting이 실천할 일이 있는지 LLM에게 물어서 만든다
-  (단계 3~5개, 담당자/도움, 범위 동네/회사). 동시에 진행하는 프로젝트는 MAX_ACTIVE개.
+  (단계 3~5개, 담당자/도움, 범위 마을/회사). 동시에 진행하는 프로젝트는 MAX_ACTIVE개.
 - 참여(contribute): 에이전트가 판단할 때 project_work {"project", "did"}를 쓰면 그 시간에 그 일을 한 것.
   담당자 > 도움 > 그 밖의 사람 순으로 진행도가 오르고, 하루에 오를 수 있는 진행도에 상한이 있어서 며칠에 걸쳐 된다.
   단계를 넘을 때마다 채널에 진행 소식, 끝나면 완료 소식.
@@ -49,11 +49,11 @@ def _save(items: list[dict]) -> None:
     os.replace(tmp, PROJECTS_PATH)
 
 
-TOWN_SCOPE = "동네"
+TOWN_SCOPE = "마을"
 
 
 def open_to(p: dict, name: str) -> bool:
-    """이 사람이 이 프로젝트에 손을 보탤 수 있나. 동네 범위는 지금 동네에 있는 누구나(교체로 새로 나선 사람 포함),
+    """이 사람이 이 프로젝트에 손을 보탤 수 있나. 마을 범위는 지금 마을에 있는 누구나(교체로 새로 나선 사람 포함),
     회사 범위는 만들 때의 회사 사람들."""
     return p.get("scope") == TOWN_SCOPE or not p.get("members") or name in p["members"]
 

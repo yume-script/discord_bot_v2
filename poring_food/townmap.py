@@ -1,9 +1,9 @@
 """
-"지금 동네는" 그림 - 매시 동네 전체를 PNG 한 장으로 (장소별로 누가 있는지, 이번 시간 누가 누구와 대화했는지).
+"지금 마을은" 그림 - 매시 마을 전체를 PNG 한 장으로 (장소별로 누가 있는지, 이번 시간 누가 누구와 대화했는지).
 
     ┌ 🕒 11:00 · 날씨 · 깨어 있음 41 / 자는 중 9 ┐
-    │ [책방 오아시스] ● 애순이 ● 김동식 …  [카페 오후세시] ● 소라 …  │   ← 장소별 구역, 소속별 색 점, 에이전트는 밝게/배경 인물은 흐리게
-    │ [골목] ● 홍두식 ── ● 윤혜진 …                              │   ← 이번 시간 대화한 사람끼리 선 (메신저는 점선)
+    │ [오아시스 마법도서관] ● 애순이 ● 김동식 …  [찻집 오후세시] ● 소라 …  │   ← 장소별 구역, 소속별 색 점, 에이전트는 밝게/배경 인물은 흐리게
+    │ [골목] ● 홍두식 ── ● 윤혜진 …                              │   ← 이번 시간 대화한 사람끼리 선 (통신석은 점선)
     └ 이번 시간 대화 · 속마음 · 진행 중인 마을 프로젝트(진행률) ┘
 
 - LLM을 쓰지 않는다 (Pillow로 그리기만).
@@ -31,7 +31,7 @@ PAD = 24
 COLS = 3
 BG, PANEL, LINE, TEXT, DIM, ACCENT = "#1E1F22", "#2B2D31", "#3F4147", "#F2F3F5", "#8E9297", "#FEE75C"
 COMPANY_COLORS = [
-    ("책방", "#F0883E"), ("별빛", "#4E9BF5"), ("오아시스 거리", "#57C27A"), ("카페", "#C8915A"),
+    ("도서관", "#F0883E"), ("별빛", "#4E9BF5"), ("오아시스 마을", "#57C27A"), ("찻집", "#C8915A"),
     ("애순이·소라", "#B58BE8"),
 ]
 OTHER_COLOR = "#A0A4AA"
@@ -61,7 +61,7 @@ def _font_file() -> str | None:
                 f.write(res.content)
             return FONT_PATH
     except Exception as e:  # noqa: BLE001
-        print(f"[경고] 동네 지도 글꼴 받기 실패: {e}")
+        print(f"[경고] 마을 지도 글꼴 받기 실패: {e}")
     return None
 
 
@@ -82,8 +82,8 @@ def render(snapshot: dict) -> str | None:
     """
     snapshot = {
       "when": "2026-10-12 11:00", "weather": "...", "asleep": 9,
-      "zones": [{"label": "카페 오후세시", "people": [{"name", "company", "agent": bool, "fresh": bool}]}],
-      "talks": [{"a", "b", "how": "메신저|직접", "place"}],
+      "zones": [{"label": "찻집 오후세시", "people": [{"name", "company", "agent": bool, "fresh": bool}]}],
+      "talks": [{"a", "b", "how": "통신석|직접", "place"}],
       "thoughts": [(이름, 속마음)], "projects": [(제목, 진행률 0~100)], "meetings": [문자열],
     }
     반환: 저장한 PNG 경로 (글꼴/Pillow가 없으면 None).
@@ -130,7 +130,7 @@ def render(snapshot: dict) -> str | None:
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
     awake = sum(len(z["people"]) for z in snapshot.get("zones", []))
-    d.text((PAD, 22), f"지금 동네는 · {snapshot.get('when', '')}", font=f_title, fill=TEXT)
+    d.text((PAD, 22), f"지금 마을은 · {snapshot.get('when', '')}", font=f_title, fill=TEXT)
     sub = f"깨어 있음 {awake}명 · 자는 중 {snapshot.get('asleep', 0)}명"
     if snapshot.get("weather"):
         sub += " · " + _strip_emoji(snapshot["weather"])[:60]
@@ -174,7 +174,7 @@ def render(snapshot: dict) -> str | None:
             if not a or not b:
                 continue
             col = (254, 231, 92, 190)
-            if t.get("how") == "메신저":
+            if t.get("how") == "통신석":
                 n = max(1, int(((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 // 14))
                 for i in range(0, n, 2):
                     p1 = (a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n)
@@ -205,9 +205,9 @@ def render(snapshot: dict) -> str | None:
             d.text((PAD * 2 + 10, fy), _wrap(d, text, f_small, W - PAD * 5)[0], font=f_small, fill=color)
             fy += 30
         if talks:
-            head(f"이번 시간 대화 {len(talks)}개  (실선: 직접 만남 / 점선: 메신저)")
+            head(f"이번 시간 대화 {len(talks)}개  (실선: 직접 만남 / 점선: 통신석)")
             for t in talks[:6]:
-                where = "메신저" if t.get("how") == "메신저" else _strip_emoji(t.get("place", ""))
+                where = "통신석" if t.get("how") == "통신석" else _strip_emoji(t.get("place", ""))
                 line(f"{t['a']} → {t['b']}  ({where})")
         if thoughts:
             head("속마음")

@@ -17,12 +17,12 @@ STATE_DIR = str(settings.PORING_FOOD_STATE_DIR)
 os.makedirs(STATE_DIR, exist_ok=True)
 
 # --- 기본 데이터 (조직도/이슈 템플릿/페르소나/경쟁 가게) ---
-# 매시 일지 주인공 애순이의 가게 (책방 오아시스) 조직도
+# 매시 일지 주인공 애순이의 가게 (오아시스 마법도서관) 조직도
 ORG_PATH = os.path.join(DATA_DIR, "book_oasis_organization.json")
 ISSUE_PATH = os.path.join(DATA_DIR, "porting_food_issue.json")
 PERSONA_PATH = os.path.join(DATA_DIR, "aesun_persona.json")
 RIVALS_PATH = os.path.join(DATA_DIR, "rival_companies.json")
-# 이 패턴에 걸리는 파일은 전부 자동으로 "회사"(가게/동네)로 인식된다 - 가게가 늘어나도
+# 이 패턴에 걸리는 파일은 전부 자동으로 "회사"(가게/마을)로 인식된다 - 가게가 늘어나도
 # "무슨무슨_organization.json" 파일 하나만 data 폴더에 추가하면 코드 수정 없이 인식된다
 # (파일의 최상위 "company_name" 값을 회사명으로 쓴다).
 ORGANIZATION_GLOB = os.path.join(DATA_DIR, "*_organization.json")
@@ -71,7 +71,7 @@ def _chat_completions_url(base: str) -> str:
 
 API_URL = _chat_completions_url(settings.LITELLM_BASE_URL)
 
-# --- 책방 오아시스 서가 "북오아시스" (poring_food/bookoasis.py) ---
+# --- 오아시스 마법도서관 서가 "북오아시스" (poring_food/bookoasis.py) ---
 # 봇이 이미 연결해 둔 bookoasis MCP 서버의 조회 도구만 쓴다 (SSH를 따로 열지 않음).
 BOOKOASIS_ENABLED = os.getenv("BOOKOASIS_ENABLED", "1") not in ("0", "false", "False", "")
 BOOKOASIS_MCP_SERVER = os.getenv("BOOKOASIS_MCP_SERVER", "bookoasis")  # config/mcp_servers.yaml의 서버 이름

@@ -1,14 +1,14 @@
 """
-골목 설비 - 실제 docker 컨테이너가 멈추거나 다시 켜지면 오아시스 거리의 "가게 휴업/정전" 사건이 된다.
+감시탑과 초소 - 실제 docker 컨테이너가 멈추거나 다시 켜지면 오아시스 마을의 "감시탑 불 꺼짐/결계 균열" 사건이 된다.
 
 숫자(실적)는 없고 "켜져 있나"만 본다. 매시 회차 시작 때 docker MCP(list_containers, all=true)로 한 번 조회한다.
-- 서버 두 대 = 건물 두 채: etc(docker_local) = 관리사무소동, plex01(docker_bookoasis) = 책방·극장 건물
-- 컨테이너 = 골목의 가게/설비 (FACILITIES). 표에 없는 컨테이너는 무시한다.
+- 서버 두 대 = 성벽의 두 구역: etc(docker_local) = 수비대 본부 쪽 성벽, plex01(docker_bookoasis) = 도서관·극장 쪽 성벽
+- 컨테이너 = 성벽의 감시탑/초소/마을 시설 (FACILITIES). 표에 없는 컨테이너는 무시한다.
 - 사건 (LLM 호출 없음, agents.inject_event로 그 범위 사람들 받은편지함에):
-  · 멈춤(꺼짐/재시작 반복/unhealthy/사라짐) → "OO 문 닫음" - 다시 열릴 때까지 연대기 "진행 중인 일"
-  · 다시 켜짐 → "OO 다시 문 엶" (진행 중인 일 해결)
-  · 켜진 채로 시작 시각만 바뀜(재시작) → 그 가게 사람들에게만 "잠깐 정전됐다 돌아옴"
-  · 한 서버의 표에 있는 컨테이너가 전부 새로 시작됨 → 그 건물 전체 "정전/점검" 사건 하나로 묶는다
+  · 멈춤(꺼짐/재시작 반복/unhealthy/사라짐) → "OO 불 꺼짐" - 다시 켜질 때까지 연대기 "진행 중인 일"
+  · 다시 켜짐 → "OO 다시 불 켜짐" (진행 중인 일 해결)
+  · 켜진 채로 시작 시각만 바뀜(재시작) → 그 범위 사람들에게만 "잠깐 꺼졌다 돌아옴"
+  · 한 서버의 표에 있는 컨테이너가 전부 새로 시작됨 → 그 구역 전체 "결계 균열" 사건 하나로 묶는다
 - 처음 조회(기준 없음)는 기록만 하고 사건을 만들지 않는다. 조회에 실패한 서버는 이번엔 건너뛴다(멈춤으로 치지 않는다).
 - 로그는 절대 보지 않는다 (특히 vaultwarden - 비밀번호 서버).
 저장: storage/poring_food/facilities.json {"containers": {이름: {"up", "started"}}, "down_since": {이름: 시각}}
@@ -27,24 +27,24 @@ from .config import STATE_DIR
 ENABLED = os.getenv("PORING_FACILITIES", "1") not in ("0", "false", "False", "")
 FACILITIES_PATH = os.path.join(STATE_DIR, "facilities.json")
 TIMEOUT_SEC = 60
-TOWN = "동네"   # world.TOWN (순환 import 피하려고 값만)
+TOWN = "마을"   # world.TOWN (순환 import 피하려고 값만)
 
-# 서버(docker MCP 이름) -> 건물 이름
+# 서버(docker MCP 이름) -> 성벽 구역 이름
 HOSTS = {
-    os.getenv("PORING_DOCKER_ETC_MCP_SERVER", "docker_local"): "관리사무소동",
-    os.getenv("PORING_DOCKER_PLEX_MCP_SERVER", "docker_bookoasis"): "책방·극장 건물",
+    os.getenv("PORING_DOCKER_ETC_MCP_SERVER", "docker_local"): "수비대 본부 쪽 성벽",
+    os.getenv("PORING_DOCKER_PLEX_MCP_SERVER", "docker_bookoasis"): "도서관·극장 쪽 성벽",
 }
-# 컨테이너 -> (이야기 속 이름, 사건이 닿는 곳, 멈췄을 때 겪는 일)
+# 컨테이너 -> (이야기 속 이름, 사건이 닿는 곳, 꺼졌을 때 겪는 일)
 FACILITIES = {
-    "litellm-proxy": ("관리사무소 전산실", TOWN, "민원 접수와 관리비 계산이 멈췄다"),
-    "litellm-db": ("관리사무소 장부 창고", TOWN, "관리비 장부를 못 꺼낸다"),
-    "docker-warproxy": ("골목 우체국", TOWN, "바깥으로 나가는 우편과 택배가 멈췄다"),
-    "vaultwarden": ("골목 열쇠집", TOWN, "열쇠를 맡기거나 찾을 수가 없다"),
-    "bookoasis": ("책방 오아시스 서가 전산", worldcfg.BOOK, "책 검색과 대출 장부가 먹통이다"),
-    "bookoasis_mariadb": ("책방 오아시스 장부", worldcfg.BOOK, "재고 장부를 못 연다"),
-    "bookoasis_redis": ("책방 오아시스 계산대", worldcfg.BOOK, "계산대가 먹통이라 손님을 줄 세워 놓았다"),
-    "tautulli": ("별빛극장 매표 집계기", worldcfg.CINEMA, "관객 수 집계가 멈췄다"),
-    "flaskfarm": ("별빛극장 필름 배급소", worldcfg.CINEMA, "새 필름이 들어오지 않는다"),
+    "litellm-proxy": ("수비대 마나 중계탑", TOWN, "수비대 주문 두루마리가 불발되고 마나 장부가 멈췄다"),
+    "litellm-db": ("수비대 기록 보관소", TOWN, "마나 장부를 못 꺼낸다"),
+    "docker-warproxy": ("성문 전령 초소", TOWN, "바깥으로 나가는 전령과 짐마차가 멈췄다"),
+    "vaultwarden": ("마을 열쇠지기 탑", TOWN, "열쇠를 맡기거나 찾을 수가 없다"),
+    "bookoasis": ("도서관 서가 감시탑", worldcfg.BOOK, "책 찾기 마법과 대출 장부가 먹통이다"),
+    "bookoasis_mariadb": ("도서관 장부 금고", worldcfg.BOOK, "재고 장부를 못 연다"),
+    "bookoasis_redis": ("도서관 대출대 수정구", worldcfg.BOOK, "대출대 수정구가 먹통이라 방문객을 줄 세워 놓았다"),
+    "tautulli": ("환영극장 관객 세는 수정구", worldcfg.CINEMA, "관객 수 집계가 멈췄다"),
+    "flaskfarm": ("환영극장 이야기 배급소", worldcfg.CINEMA, "새 환영극이 들어오지 않는다"),
 }
 
 
@@ -143,27 +143,27 @@ def diff(prev: dict, seen: dict[str, list[dict]], now: datetime) -> tuple[dict, 
                 continue
             if old.get("up") and not cur["up"]:
                 down_since[name] = now.isoformat(timespec="minutes")
-                events.append({"kind": "down", "name": name, "title": f"{label} 문 닫음",
-                               "detail": f"{building} {label}이(가) 갑자기 문을 닫았다 - {effect}.", "targets": [target]})
+                events.append({"kind": "down", "name": name, "title": f"{label} 불 꺼짐",
+                               "detail": f"{building} {label}의 불이 갑자기 꺼졌다 - {effect}.", "targets": [target]})
             elif not old.get("up") and cur["up"]:
                 since = down_since.pop(name, "")
-                events.append({"kind": "up", "name": name, "title": f"{label} 다시 문 엶",
-                               "detail": f"{label}이(가) 다시 문을 열었다" + (f" ({since[11:16]}부터 닫혀 있었다)." if since else "."),
-                               "targets": [target], "resolves": f"{label} 문 닫음"})
+                events.append({"kind": "up", "name": name, "title": f"{label} 다시 불 켜짐",
+                               "detail": f"{label}에 다시 불이 켜졌다" + (f" ({since[11:16]}부터 꺼져 있었다)." if since else "."),
+                               "targets": [target], "resolves": f"{label} 불 꺼짐"})
             elif cur["up"] and old.get("started") and cur["started"] and cur["started"] != old["started"]:
                 restarted.append(name)
-        # 한 건물의 설비가 전부 새로 시작됨 = 건물 정전/점검 하나로 묶는다
+        # 한 구역의 시설이 전부 새로 시작됨 = 결계 균열 하나로 묶는다
         known_up = [n for n in mine if containers[n]["up"]]
         if restarted and len(restarted) == len(known_up) and len(restarted) >= 2:
-            events.append({"kind": "blackout", "name": building, "title": f"{building} 정전",
-                           "detail": f"{building}에 잠깐 정전이 있었다 - "
-                                     f"{', '.join(FACILITIES[n][0] for n in restarted)}이(가) 꺼졌다가 다시 켜졌다.",
+            events.append({"kind": "blackout", "name": building, "title": f"{building} 결계 균열",
+                           "detail": f"{building}의 결계에 잠깐 금이 갔다 - "
+                                     f"{', '.join(FACILITIES[n][0] for n in restarted)}의 불이 꺼졌다가 다시 켜졌다.",
                            "targets": sorted({FACILITIES[n][1] for n in restarted})})
         else:
             for name in restarted:
                 label, target, _ = FACILITIES[name]
-                events.append({"kind": "restart", "name": name, "title": f"{label} 잠깐 멈춤",
-                               "detail": f"{label}이(가) 잠깐 꺼졌다가 다시 켜졌다 (전기가 나갔었나?).", "targets": [target]})
+                events.append({"kind": "restart", "name": name, "title": f"{label} 잠깐 꺼짐",
+                               "detail": f"{label}의 불이 잠깐 꺼졌다가 다시 켜졌다 (마나가 끊겼었나?).", "targets": [target]})
     return {"containers": containers, "down_since": down_since, "at": now.isoformat(timespec="minutes")}, events
 
 
@@ -198,10 +198,10 @@ def check(now: datetime | None = None, fetcher=None, inject=None) -> list[dict]:
 
 
 def prompt_block() -> str:
-    """판단용: 지금 문 닫은 골목 설비 (건물 일이라 모두가 안다)."""
+    """판단용: 지금 불 꺼진 감시탑/시설 (성벽 일이라 모두가 안다)."""
     data = _load()
     down = [(n, s) for n, s in (data.get("down_since") or {}).items() if n in FACILITIES]
     if not down:
         return ""
-    return "[지금 문 닫은 곳 - 건물/골목 사정]\n" + "\n".join(
+    return "[지금 불 꺼진 감시탑/시설 - 성벽 사정]\n" + "\n".join(
         f"- {FACILITIES[n][0]} ({s[5:16].replace('T', ' ')}부터): {FACILITIES[n][2]}" for n, s in down)

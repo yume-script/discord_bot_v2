@@ -1,4 +1,4 @@
-"""예약함: 대화/단톡방/장면을 이야기 속 시각대로 차례대로 올린다."""
+"""예약함: 대화/통신방/장면을 이야기 속 시각대로 차례대로 올린다."""
 import random
 from datetime import datetime, timedelta
 
@@ -36,7 +36,7 @@ def test_slot_and_gap():
     late = datetime(2026, 10, 12, 9, 40)
     assert late < outbox.slot(late, 5, 17, rnd) <= late + timedelta(seconds=40)  # 이미 지난 칸이면 곧바로
     assert timedelta(seconds=20) <= outbox.gap("짧은 말", rnd) <= timedelta(seconds=90)
-    assert timedelta(seconds=40) <= outbox.gap("메신저 답장", rnd, messenger=True) <= timedelta(seconds=180)
+    assert timedelta(seconds=40) <= outbox.gap("통신석 답장", rnd, messenger=True) <= timedelta(seconds=180)
 
 
 def test_tick_paces_conversations_through_the_hour(fake_llm, monkeypatch):
@@ -49,7 +49,7 @@ def test_tick_paces_conversations_through_the_hour(fake_llm, monkeypatch):
     agents.tick(characters.load_roster())
     assert run_live_jobs() >= 2                                    # 준실시간: 대화는 그 시각에 만들어진다
     items = outbox.take_due(start + timedelta(minutes=80), limit=500)
-    talks = [it for it in items if it["name"] not in ("동네 소식",)]
+    talks = [it for it in items if it["name"] not in ("마을 소식",)]
     assert len(talks) >= 4
     dues = [datetime.fromisoformat(it["due"]) for it in talks]
     assert dues == sorted(dues)                                   # 시각 순서대로 나온다
@@ -90,7 +90,7 @@ def test_scene_also_goes_to_agent_channel_per_speaker(monkeypatch):
     main._send_scene(scene, now, random.Random(3))
     items = outbox.take_due(now + timedelta(hours=1), limit=50)
     agent = [it for it in items if it["kind"] == "agent"]
-    assert [it["name"] for it in agent] == ["최택", "리정혁", "동네 소식"]
+    assert [it["name"] for it in agent] == ["최택", "리정혁", "마을 소식"]
     assert agent[0]["text"].startswith("-# 🎬 에린 로지스틱스 사무실 · 10:") and "📖 줄거리" in agent[0]["text"]
     assert agent[1]["text"].endswith('"네" *(속마음: 또?)*')
     assert agent[0]["due"] < agent[1]["due"] < agent[2]["due"]

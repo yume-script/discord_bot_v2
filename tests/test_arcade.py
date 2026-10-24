@@ -41,7 +41,7 @@ def test_handle_arcade_posts_command_result_and_manager_comment(money_dir, monke
     calls = []
 
     def handler(system, user):
-        if "오락기 앞" in user:
+        if "내기 판 앞" in user:
             calls.append(user)
             return {"say": "오늘은 여기까지.", "cut_off": True, "group_post": "오늘 대박 손님 나왔어요"}
         return {}
@@ -58,7 +58,7 @@ def test_handle_arcade_posts_command_result_and_manager_comment(money_dir, monke
     assert texts[0][0] == "소라" and texts[0][1].startswith(f"-# 🎰 {arcade.PLACE} · ") and texts[0][1].endswith("\n/보 3000")
     assert texts[1][0] == agents.ARCADE_NAME and "변동:" in texts[1][1]
     assert texts[2][0] == arcade.MANAGER and texts[2][1].endswith(f"{arcade.MANAGER} → 소라\n오늘은 여기까지.")
-    assert len(texts) == 3                                    # 3천 원짜리 판은 대박이 아니라 단톡방엔 안 올린다
+    assert len(texts) == 3                                    # 3천 원짜리 판은 대박이 아니라 통신방엔 안 올린다
     assert not any(n == "김동식" for n, _ in texts)           # 일하는 중이면 안 한다
     assert any(arcade.PLACE in m["text"] for m in data["소라"]["inbox"])
     assert arcade.is_cut_off("소라", now) and arcade.prompt_rule("소라", now) == ""   # 주인이 오늘은 그만 받는다
@@ -72,7 +72,7 @@ def test_arcade_kpi_post_for_manager(money_dir):
     kpi.assign(agents.load_agents(), characters.load_roster())
     assert kpi.holder("arcade") == arcade.MANAGER
     x = kpi.reading(kpi.POST_BY_ID["arcade"])
-    assert x["score"] == 80 and "손님 0판" in x["text"]      # 손님 없으면 한산
+    assert x["score"] == 80 and "내기 판 0판" in x["text"]      # 손님 없으면 한산
     arcade._record("소라", -50000, datetime.now())
     x = kpi.reading(kpi.POST_BY_ID["arcade"])
     assert x["score"] == 110 and "+50,000원" in x["text"]

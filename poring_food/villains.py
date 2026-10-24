@@ -1,5 +1,5 @@
 """
-빌런 - 마을에 진짜 악역이 있게. LLM은 사람을 착하게 그리는 버릇이 있어서, 설정상 갑질 부장/얌체/욕심 많은 건물주도
+빌런 - 마을에 진짜 악역이 있게. LLM은 사람을 착하게 그리는 버릇이 있어서, 설정상 갑질 부장/얌체/욕심 많은 영주도
 몇 마디 뒤엔 "사실 속은 따뜻한 사람"이 되고 갈등이 그 시간 안에 화해로 끝났다.
 
 agents.json에서 "villain"이 있는 인물 (지금: 장대희, 권민우, 부상길 - 교체되지 않게 "fixed"):
@@ -8,11 +8,11 @@ agents.json에서 "villain"이 있는 인물 (지금: 장대희, 권민우, 부�
 1) 악역 연기 원칙 (system_block): 판단/대화/모임 발언 모두에 붙는다 - 착해지지 말 것, 쉽게 사과/화해하지 말 것,
    겉으로 웃어도 속으로 계산, 목표를 끝까지 밀어붙일 것. (LLM 호출 추가 없음)
 2) 수작 (tick): 빌런마다 SCHEME_EVERY_DAYS일에 한 번(SCHEME_HOUR시 이후 첫 회차) 수작을 하나 꾸민다 (LLM 1회).
-   - 당한 사람은 사건으로 겪고(받은편지함, 깨움), 같은 가게/동네 사람들은 소문으로 듣는다 (누가 했는지는 숨길 수 있다).
+   - 당한 사람은 사건으로 겪고(받은편지함, 깨움), 같은 가게/마을 사람들은 소문으로 듣는다 (누가 했는지는 숨길 수 있다).
    - 연대기에 "진행 중인 일"로 올라가 모두의 판단에 보인다 - 모임을 열어 맞서거나, 따지러 가는 이야기로 이어진다.
    - 숨긴 수작은 다음 날부터 하루 EXPOSE_P 확률로 들통난다: 당사자/같은 곳 사람들이 알게 되고, 빌런 평판이 떨어진다.
    - 빌런 자신은 판단할 때 [나의 속셈]과 지금까지 꾸민 일/평판을 본다 (prompt_block).
-안전선: 드라마 수위 (갑질, 뒷담, 성과 가로채기, 월세 압박, 이간질). 실제 범죄 묘사/폭력/혐오/실존 인물 금지.
+안전선: 드라마 수위 (갑질, 뒷담, 성과 가로채기, 세금 압박, 이간질). 실제 범죄 묘사/폭력/혐오/실존 인물 금지.
 저장: storage/poring_food/villains.json {이름: {"last", "reputation", "schemes": [...]}}
 """
 from __future__ import annotations
@@ -90,7 +90,7 @@ def prompt_block(name: str, agent: dict | None = None) -> str:
              + (" (들통남)" if s.get("exposed") else " (아직 아무도 모름)" if s.get("hidden") else "")
              for s in r["schemes"][-5:]]
     return ("[나의 속셈 - 아무에게도 말하지 않는다] 지금까지 꾸민 일:\n" + "\n".join(lines)
-            + f"\n동네/가게에서 내 평판: {r.get('reputation', 60)}/100"
+            + f"\n마을/가게에서 내 평판: {r.get('reputation', 60)}/100"
             + (" - 다들 나를 의심한다. 더 조심하거나, 더 대놓고 나가거나." if r.get("reputation", 60) < 40 else ""))
 
 
@@ -112,7 +112,7 @@ def _scheme(agent: dict, targets: list[str], rec: dict, now: datetime) -> dict |
         "반드시 JSON으로만 응답:\n"
         '{"target": "노린 사람 이름", "title": "짧은 제목(누가 했는지 안 드러나게)", '
         '"action": "당한 사람이 겪는 일 1~2문장(3인칭, 빌런 이름은 hidden이면 빼고)", '
-        '"rumor": "같은 가게/동네 사람들이 듣는 흐릿한 소문 한 문장", "hidden": true/false, '
+        '"rumor": "같은 가게/마을 사람들이 듣는 흐릿한 소문 한 문장", "hidden": true/false, '
         '"truth": "들통날 때 드러나는 진실 한 문장(누가 왜 했는지)", '
         '"effects": {"stress|anger|happiness|confidence|job_satisfaction": -0.2~0.2}, '
         '"inner": "빌런의 속마음 한 줄"}'
@@ -158,7 +158,7 @@ def tick(agents: list[dict], roster: list[dict], now: datetime | None = None) ->
         title = str(s.get("title") or "이상한 일").strip()[:50]
         action = str(s["action"]).strip()[:300]
         world_title = f"{target} - {title}"
-        # 당한 사람: 사건으로 (깨운다) / 같은 가게(동네) 사람들: 소문
+        # 당한 사람: 사건으로 (깨운다) / 같은 가게(마을) 사람들: 소문
         effects = s.get("effects") if isinstance(s.get("effects"), dict) else {}
         life.apply_changes(target, effects, reason=title)
         out.append((target, action if hidden else f"{name}: {action}", "사건"))
@@ -167,7 +167,7 @@ def tick(agents: list[dict], roster: list[dict], now: datetime | None = None) ->
             for who, _, _ in world.inject(world_title, rumor, [_company_or_town(agent)], agents, roster, kind="빌런"):
                 if who not in (name, target):
                     out.append((who, rumor, "소문"))
-        # 가게 안 수작은 그 가게 사람만 안다 (동네 빌런의 수작은 동네 일)
+        # 가게 안 수작은 그 가게 사람만 안다 (마을 빌런의 수작은 마을 일)
         scope = _company_or_town(agent)
         chronicle.open_thread(f"{target}을(를) 둘러싼 일: {title}" if hidden else f"{name}의 수작: {title}",
                               rumor or action, scope="" if scope == world.TOWN else scope)

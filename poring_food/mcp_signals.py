@@ -1,11 +1,11 @@
 """
-봇이 연결해 둔 MCP 서버에서 "실제 수치"를 가져와 오아시스 거리 이야기의 외부 신호로 바꾼다.
+봇이 연결해 둔 MCP 서버에서 "실제 수치"를 가져와 오아시스 마을 이야기의 외부 신호로 바꾼다.
 
 | MCP 서버 / 도구                   | 이야기 속 의미                                       |
 |-----------------------------------|-----------------------------------------------------|
 | korea_weather / get_forecast      | 광주 날씨(기상청 초단기예보) - 골목 손님 발길·점심 수다 |
 | server_status / get_system_status | 건물 설비: CPU=건물 전력 사용률, 메모리=건물 혼잡도,    |
-|                                   | 디스크=지하 공용 창고 적재율, 온도=설비 온도,           |
+|                                   | 디스크=지하 보급 창고 적재율, 온도=설비 온도,           |
 |                                   | 가동시간=무사고 연속 가동(건물 안전)                    |
 | server_status / get_service_status| 건물 핵심 설비(서비스) 정지                           |
 
@@ -80,14 +80,14 @@ def describe_weather(fc: dict) -> str:
 
     events = []
     if temp >= 33:
-        events.append("폭염 - 현장 더위 비상")
+        events.append("폭염 - 성벽 위 보초가 쓰러질 지경")
     elif temp <= -5:
-        events.append("한파 - 출근길 꽁꽁")
+        events.append("한파 - 성벽 돌이 얼어붙음")
     rain_mm = _number(fc.get("1시간 강수량"))
     if rain_mm is not None and rain_mm >= 10:
-        events.append("폭우 - 출근길/배송 차질")
+        events.append("폭우 - 해자가 넘치고 짐마차가 멈춤")
     elif "눈" in pty:
-        events.append("눈 - 출근길 미끄러움")
+        events.append("눈 - 성벽 길이 미끄러움, 발자국이 잘 보임")
     if wind is not None and wind >= 9:
         events.append("강풍")
     line = ", ".join(p for p in parts if p)
@@ -134,7 +134,7 @@ def _uptime_days(uptime) -> float | None:
 
 
 def _server_totals(status: dict) -> tuple:
-    """건물 설비 = 서버 전체 값: (건물 전력 사용률=머신 전체 CPU %, 건물 혼잡도=메모리 %, 지하 공용 창고 적재율=로컬 디스크 전체 %).
+    """건물 설비 = 서버 전체 값: (건물 전력 사용률=머신 전체 CPU %, 건물 혼잡도=메모리 %, 지하 보급 창고 적재율=로컬 디스크 전체 %).
     [변경] 예전엔 CPU를 이 컨테이너 몫으로, 디스크를 가장 꽉 찬 파티션으로 봐서 창고가 늘 포화처럼 보였다.
     서버가 서버 전체 값을 안 주면(예전 MCP) 예전 값으로 대신한다."""
     cpu = _get(status, "cpu", "host_percent")
@@ -178,32 +178,32 @@ def describe_facility(status: dict, services: dict | None = None) -> str:
 
     parts, events = [], []
     if isinstance(cpu, (int, float)):
-        parts.append(f"건물 전력 사용률 {cpu:g}%")
+        parts.append(f"결계 부하 {cpu:g}%")
         if cpu >= 80:
-            events.append("전력 과부하 - 차단기가 내려갈까 조마조마")
+            events.append("결계 과부하 - 결계석이 뜨겁게 웅웅거림")
     if isinstance(mem, (int, float)):
-        parts.append(f"건물 혼잡도 {mem:g}%")
+        parts.append(f"성벽 안 혼잡도 {mem:g}%")
         if mem >= 90:
-            events.append("건물 복도와 로비가 꽉 차서 발 디딜 틈 없음")
+            events.append("성벽 안 길과 광장이 꽉 차서 발 디딜 틈 없음")
     if disk is not None:
-        parts.append(f"지하 공용 창고 적재율 {disk:g}%")
+        parts.append(f"지하 보급 창고 적재율 {disk:g}%")
         if disk >= 90:
-            events.append("지하 공용 창고 포화 직전 - 두 가게 상자 정리 비상")
+            events.append("지하 보급 창고 포화 직전 - 두 기관 상자 정리 비상")
         elif disk >= 80:
-            events.append("지하 공용 창고가 꽤 찼음")
+            events.append("지하 보급 창고가 꽤 찼음")
     if isinstance(temp, (int, float)):
-        parts.append(f"설비 온도 {temp:g}°C")
+        parts.append(f"결계석 온도 {temp:g}°C")
         if temp >= 80:
-            events.append("설비 과열 경보")
+            events.append("결계석 과열 경보")
     if days is not None:
-        parts.append(f"건물 무사고 연속 가동 {int(days)}일")
+        parts.append(f"결계가 끊기지 않은 날 {int(days)}일째")
         if days < 1:
-            events.append("최근 건물 설비 재가동(정비/정전 후 복구)")
+            events.append("최근 결계가 한 번 끊겼다 다시 세워짐 (균열 뒤 복구)")
 
     down = [name for name, s in (services or {}).items()
             if isinstance(s, dict) and s.get("state") in ("failed", "inactive")]
     if down:
-        events.append(f"멈춘 건물 설비 {len(down)}개")
+        events.append(f"꺼진 감시탑 {len(down)}개")
 
     if not parts:
         return ""

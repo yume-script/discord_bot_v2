@@ -5,7 +5,7 @@
    - events  : 세계 사건(세계 엔진/소문/업무/모임/투표/프로젝트/교체/이사) 전부
    - actions : 에이전트 매시 판단(어디서 무엇을, 속마음)
    - 기억 정리(prune) 때 빠진 기억은 지우지 않고 보관 표시만 한다 (memories.archived)
-   대화 원문(dialogues.jsonl)과 단톡방(group_chat.jsonl)은 원래 지우지 않는 파일이라 그대로 쓴다.
+   대화 원문(dialogues.jsonl)과 통신방(group_chat.jsonl)은 원래 지우지 않는 파일이라 그대로 쓴다.
 2) 요약 (chronicle.jsonl, 영구 보관)
    - 매일 새벽(DAILY_FROM_HOUR 이후 첫 회차) 어제 하루를 LLM이 한 번 요약한다: 주요 사건/누가 무엇을/관계 변화
    - 월요일엔 지난주, 1일엔 지난달 요약을 하루 요약들로 만든다
@@ -109,7 +109,7 @@ def _same(a: str, b: str) -> bool:
     return bool(a and b) and (a in b or b in a)
 
 
-_STOP = ("우리", "동네", "마을", "최종", "토론", "모임", "회의", "논의", "관련", "문제", "다시", "결정")
+_STOP = ("우리", "마을", "마을", "최종", "토론", "모임", "회의", "논의", "관련", "문제", "다시", "결정")
 
 
 def _bigrams(text: str) -> set[str]:
@@ -120,7 +120,7 @@ def _bigrams(text: str) -> set[str]:
 
 
 def similar(a: str, b: str) -> bool:
-    """같은 일을 다르게 부른 것인지 ("마을 이름 짓기" ~ "우리 동네 이름 짓기 최종 토론")."""
+    """같은 일을 다르게 부른 것인지 ("마을 이름 짓기" ~ "우리 마을 이름 짓기 최종 토론")."""
     if _same(a, b):
         return True
     x, y = _bigrams(a), _bigrams(b)
@@ -131,14 +131,14 @@ def similar(a: str, b: str) -> bool:
 
 # ---------------------------------------------------------------- 정보 칸막이 (누가 아는 일인가)
 # 가게 안의 일(매출/실적/인사/장부 숫자/가게 안 다툼/빌런의 가게 안 수작)은 그 가게 사람만 안다.
-# 동네 사람이 책방이나 극장 안의 숫자 다툼을 아는 건 넌센스. 건물 일(창고/전기/관리비/월세)은 동네 공개.
-# scope: "" = 동네에 공개된 일(모두가 앎), 그 밖엔 가게 이름 (그 가게 사람만 앎)
+# 마을 사람이 도서관이나 극장 안의 숫자 다툼을 아는 건 넌센스. 건물 일(창고/전기/관리비/세금)은 마을 공개.
+# scope: "" = 마을에 공개된 일(모두가 앎), 그 밖엔 가게 이름 (그 가게 사람만 앎)
 OFFICES = worldcfg.OFFICES
 _SHORT = dict(worldcfg.SHORT)
 
 
 def norm_scope(scope: str | None) -> str:
-    """'책방'/'별빛극장'/'가게 이름 그대로' -> 가게 이름, 그 밖(동네/건물/빈칸) -> ""."""
+    """'도서관'/'별빛 환영극장'/'가게 이름 그대로' -> 가게 이름, 그 밖(마을/건물/빈칸) -> ""."""
     s = str(scope or "").strip()
     if s in OFFICES:
         return s
@@ -150,8 +150,8 @@ def norm_scope(scope: str | None) -> str:
 
 def infer_scope(text: str) -> str:
     """scope 없이 열린 일(예전 기록, 세계 엔진 사건)의 범위를 글에서 짐작한다:
-    가게 이름이 나오면 그 가게, 나오는 사람이 모두 같은 가게 사람이면 그 가게, 아니면 동네.
-    ('책방'/'극장' 같은 짧은 말은 동네 일에도 흔히 나와서 여기선 가게 이름 그대로만 본다.)"""
+    가게 이름이 나오면 그 가게, 나오는 사람이 모두 같은 가게 사람이면 그 가게, 아니면 마을.
+    ('도서관'/'극장' 같은 짧은 말은 마을 일에도 흔히 나와서 여기선 가게 이름 그대로만 본다.)"""
     text = text or ""
     named = {c for c in OFFICES if c in text}
     if len(named) == 1:
@@ -160,7 +160,7 @@ def infer_scope(text: str) -> str:
         return ""
     try:
         roster = characters.load_roster()
-    except Exception:  # noqa: BLE001 - 조직도를 못 읽으면 동네 일로 (기존 동작)
+    except Exception:  # noqa: BLE001 - 조직도를 못 읽으면 마을 일로 (기존 동작)
         return ""
     comps = {c["company"] for c in roster if len(c["name"]) >= 2 and c["name"] in text}
     return comps.pop() if len(comps) == 1 and next(iter(comps)) in OFFICES else ""
@@ -173,7 +173,7 @@ def _scope_of(t: dict) -> str:
 
 
 def visible(t: dict, company: str | None) -> bool:
-    """company=None은 전지적 시점(세계 엔진/관리자). 그 밖엔 동네 일 + 우리 가게 일만."""
+    """company=None은 전지적 시점(세계 엔진/관리자). 그 밖엔 마을 일 + 우리 가게 일만."""
     if company is None:
         return True
     sc = _scope_of(t)
@@ -182,7 +182,7 @@ def visible(t: dict, company: str | None) -> bool:
 
 def open_thread(title: str, note: str = "", scope: str | None = None) -> dict:
     """진행 중인 일을 연다 (같은 제목의 열린 일이 있으면 거기에 메모만 덧붙인다).
-    scope: 가게 이름이면 그 가게 사람만 아는 일, ""면 동네 공개, None이면 글에서 짐작."""
+    scope: 가게 이름이면 그 가게 사람만 아는 일, ""면 마을 공개, None이면 글에서 짐작."""
     sc = norm_scope(scope) if scope is not None else infer_scope(f"{title} {note}")
     threads = _load_threads()
     now = now_kst().isoformat(timespec="minutes")
@@ -202,7 +202,7 @@ def open_thread(title: str, note: str = "", scope: str | None = None) -> dict:
 
 def update_thread(title: str, note: str = "", resolved: bool = False, resolution: str = "",
                   permanent: bool = False) -> bool:
-    """permanent=True면 "이 동네에서 정해진 것"으로 영구히 모두의 지각에 남는다 (모임/투표 결론)."""
+    """permanent=True면 "이 마을에서 정해진 것"으로 영구히 모두의 지각에 남는다 (모임/투표 결론)."""
     threads = _load_threads()
     now = now_kst().isoformat(timespec="minutes")
     for t in threads:
@@ -437,7 +437,7 @@ def _raw_day(date: str) -> str:
         parts.append("[대화]\n" + "\n".join(lines))
     posts = _read(GROUP_PATH, date)
     if posts:
-        parts.append("[단톡방]\n" + "\n".join(f"- {p['at'][11:16]} [{p.get('group', '')}] {p['name']}: {p['text'][:120]}"
+        parts.append("[통신방]\n" + "\n".join(f"- {p['at'][11:16]} [{p.get('group', '')}] {p['name']}: {p['text'][:120]}"
                                              for p in posts))
     acts = store.actions_on(date)
     if acts:
@@ -454,7 +454,7 @@ def _summarize_day(date: str) -> dict | None:
     threads = open_threads()
     if not raw and not threads:
         return {"kind": "day", "key": date, "text": "조용히 지나간 하루.", "public": "조용히 지나간 하루.", "at": now_kst().isoformat(timespec="minutes")}
-    system = ("너는 가상 도시의 연대기 기록자다. 그날 실제로 일어난 일만 사실대로 정리한다. "
+    system = ("너는 마법 판타지 세계 변경 마을 '오아시스 마을'의 연대기 기록자다. 그날 실제로 일어난 일만 사실대로 정리한다. "
               "지어내지 말고, 원본에 없는 결론을 만들지 마라.")
     user = (
         f"[날짜] {date}\n\n{raw or '(기록 없음)'}\n\n"
@@ -463,14 +463,14 @@ def _summarize_day(date: str) -> dict | None:
                                     for t in threads) or "- 없음") + "\n\n"
         "이 하루를 연대기로 정리해라. 반드시 JSON으로만 응답:\n"
         '{"summary": "그날의 주요 사건과 흐름 4~8문장 (누가 무엇을 했고 어떻게 됐는지, 사람 이름 그대로)", '
-        '"public": "동네 사람 누구나 알 만한 공개된 일만 2~5문장 - 속마음, 1:1 대화의 사적인 내용, 한 사람에게만 일어난 일, '
+        '"public": "마을 사람 누구나 알 만한 공개된 일만 2~5문장 - 속마음, 1:1 대화의 사적인 내용, 한 사람에게만 일어난 일, '
         '가게 안의 일(매출/실적/인사/장부 숫자/가게 안 다툼과 소문)은 절대 넣지 마라 (건물/골목 일은 넣어도 된다)", '
-        f'"company": {{"{worldcfg.BOOK}": "책방 사람들끼리만 아는 가게 안 일 1~3문장 (없으면 빈 문자열)", '
+        f'"company": {{"{worldcfg.BOOK}": "도서관 사람들끼리만 아는 가게 안 일 1~3문장 (없으면 빈 문자열)", '
         f'"{worldcfg.CINEMA}": "극장 사람들끼리만 아는 가게 안 일 1~3문장 (없으면 빈 문자열)"}}, '
         '"highlights": ["기억할 만한 일 한 줄", ...최대 5개], '
         '"threads": [{"title": "진행 중인 일 제목(기존 제목 그대로 또는 새로 생긴 공개된 일)", '
         '"status": "open 또는 resolved", "note": "오늘 어떻게 진행됐는지 한 줄 (해결됐으면 결론)", '
-        f'"scope": "동네 (동네/건물에 다 알려진 일) 또는 {worldcfg.BOOK} / {worldcfg.CINEMA} (그 가게 안의 일)"}}]}}\n'
+        f'"scope": "마을 (마을/성벽에 다 알려진 일) 또는 {worldcfg.BOOK} / {worldcfg.CINEMA} (그 기관 안의 일)"}}]}}\n'
         "threads는 함께 아는 일만 (개인 비밀이나 속마음은 넣지 마라). 가게 안의 일은 반드시 scope에 그 가게를 써라 - "
         "그 가게 사람만 안다."
     )
@@ -504,11 +504,11 @@ def _rollup(kind: str, key: str, days: list[str]) -> dict | None:
         return None
     label = "한 주" if kind == "week" else "한 달"
     body = "\n".join(f"- {c['key']}: {c['text']}" for c in items)[:RAW_BUDGET]
-    out = llm_json("너는 가상 도시의 연대기 기록자다. 하루 요약들을 더 긴 기간의 흐름으로 묶는다. 지어내지 마라.",
+    out = llm_json("너는 마법 판타지 세계 변경 마을의 연대기 기록자다. 하루 요약들을 더 긴 기간의 흐름으로 묶는다. 지어내지 마라.",
                    f"[{key} {label}의 하루 요약들]\n{body}\n\n"
                    f"이 {label}를 정리해라. 반드시 JSON으로만 응답:\n"
                    '{"summary": "이 기간의 큰 흐름과 사건, 인물들의 변화 4~8문장", '
-                   '"public": "동네 사람들이 다 알 만한 공개된 흐름만 2~4문장 (사적인 일/속마음/가게 안 기밀 제외)"}',
+                   '"public": "마을 사람들이 다 알 만한 공개된 흐름만 2~4문장 (사적인 일/속마음/기관 안 기밀 제외)"}',
                    temperature=0.4, timeout=SUMMARY_TIMEOUT_SEC, tag="연대기", smart=True)
     if not out or not str(out.get("summary") or "").strip():
         return None
@@ -552,7 +552,7 @@ def tick() -> None:
 def prompt_block(company: str | None = None) -> str:
     """에이전트 지각/세계 엔진용: 최근 며칠 공개 요약 + 지난주/지난달 + 진행 중인 일.
     전체 요약(text)은 사적인 대화/개인 사건까지 담겨 있어서 관리자 조회에만 쓰고, 여기엔 공개본(public)만.
-    company: 그 사람 소속 - 동네 공개 일 + 우리 가게 안의 일만 (None이면 전지적 시점: 세계 엔진)."""
+    company: 그 사람 소속 - 마을 공개 일 + 우리 가게 안의 일만 (None이면 전지적 시점: 세계 엔진)."""
     chron = [c for c in _chronicle() if c.get("public")]
     days = [c for c in chron if c.get("kind") == "day"][-RECENT_DAYS:]
     week = next((c for c in reversed(chron) if c.get("kind") == "week"), None)
@@ -586,7 +586,7 @@ def prompt_block(company: str | None = None) -> str:
             + (f" [{t['meeting']['round']}차 모임까지 결론 없음 - 다시 모이기로 함]" if t.get("meeting_next") else "")
             for t in threads))
     if fixed:
-        out.append("[이 동네에서 정해진 것 - 모임/투표로 정했고 모두가 받아들였다. 잊지 마라]\n" + "\n".join(
+        out.append("[이 마을에서 정해진 것 - 모임/투표로 정했고 모두가 받아들였다. 잊지 마라]\n" + "\n".join(
             f"- {t['title']} → {t['resolution']} ({t.get('resolved_at', '')[:10]})" for t in fixed))
     if done:
         out.append("[최근에 정해진 일]\n" + "\n".join(f"- {t['title']} → {t['resolution']}" for t in done[-5:]))
@@ -607,7 +607,7 @@ def lookup(date: str) -> str:
         posts = _read(GROUP_PATH, date)
         parts.append("(아직 요약 전 - 원본 기록)")
         parts += [f"• {e['at'][11:16]} {e['title']}: {e.get('detail', '')[:120]}" for e in events[-15:]]
-        parts.append(f"대화 {len(scenes)}건 · 단톡방 글 {len(posts)}개")
+        parts.append(f"대화 {len(scenes)}건 · 통신방 글 {len(posts)}개")
     threads = open_threads()
     if threads:
         parts.append("**진행 중인 일**\n" + "\n".join(

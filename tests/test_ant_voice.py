@@ -7,7 +7,7 @@ from core import ant_voice
 def test_wrap_fits_box_and_keeps_text():
     draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     font = ImageFont.load_default(size=40)
-    text = "월세 또 올린다는 건물주 진짜 너무한 거 아니냐 이번 달만 세 번째야"
+    text = "세금 또 올린다는 영주 진짜 너무한 거 아니냐 이번 달만 세 번째야"
     lines = ant_voice._wrap(draw, text, font, ant_voice.BOX_W)
     assert len(lines) > 1
     assert all(draw.textlength(ln, font=font) <= ant_voice.BOX_W for ln in lines)
