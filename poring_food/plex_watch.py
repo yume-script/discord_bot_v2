@@ -68,11 +68,36 @@ def _status(msg: str) -> None:
         print(f"[상영] {msg}")
 
 
+_fallback = False
+
+
+def using_fallback() -> bool:
+    """지금 Tautulli 대신 Plex에 바로 묻고 있나 (Tautulli가 꺼져서 웹훅도 안 온다 - 봇이 매분 확인하게)."""
+    return _fallback
+
+
 def fetch() -> list[dict] | None:
-    """Tautulli get_activity의 재생 목록 (못 받으면 None - 키가 없거나 서버가 안 받음)."""
-    key = os.getenv("TAUTULLI_API_KEY", "")
+    """지금 재생 목록 (Tautulli get_activity 모양). Tautulli가 안 되면 Plex에 바로 묻는다(plex_api). 둘 다 안 되면 None."""
+    global _fallback
     if not ENABLED:
         return None
+    got = _fetch_tautulli()
+    if got is not None:
+        _fallback = False
+        return got
+    from . import plex_api
+    if not plex_api.enabled():
+        return None
+    got = plex_api.sessions()
+    _fallback = got is not None
+    if got is not None:
+        _status(f"Tautulli가 안 돼서 Plex({plex_api.PLEX_URL})에 바로 재생 확인 중")
+    return got
+
+
+def _fetch_tautulli() -> list[dict] | None:
+    """Tautulli get_activity의 재생 목록 (못 받으면 None - 키가 없거나 서버가 안 받음)."""
+    key = os.getenv("TAUTULLI_API_KEY", "")
     if not key:
         _status("TAUTULLI_API_KEY가 없어서 재생 확인을 못 함 (.env 확인)")
         return None

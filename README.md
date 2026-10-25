@@ -220,7 +220,9 @@ python app.py
   켠다(💠 결계 조절 채널 한 줄 + 마을 사건), 감시탑 사고 알림(facilities)으로는 치지 않는다. 몬스터 침입 위험도의 결계 부하는 두
   서버 중 높은 쪽. `/포링푸드침입`에 지금 부하/내려 둔 것/최근 기록. 기준은 `PORING_LOADSHED_HIGH`(90)/`_HIGH_MIN`(5)/`_LOW`(60)/
   `_LOW_MIN`(15)/`_IDLE_CPU`(5)/`_MAX_OFF_HOURS`(6), 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
-  (tautulli를 내리면 그동안 환영극 알림/관객 실적은 멈춘다.)
+  tautulli를 내린 동안(또는 죽었을 때)은 환영극 알림과 관객 실적이 Plex에 바로 묻는 것(`poring_food/plex_api.py` -
+  plex MCP와 같은 `PLEX_URL`/`PLEX_TOKEN`, `/status/sessions`와 `/status/sessions/history/all`, 계정은 안 가져옴)으로 이어지고,
+  웹훅도 안 오니 그동안은 매분 확인한다. Plex 기록은 다 본 것 위주라 재생 수가 Tautulli보다 조금 적게 나온다.
 - **성벽 잔해 치우기/전령 우편함** (`poring_food/street_mail.py`): 메일 관리 Apps Script가 📣│알림방(`PORING_MAIL_CHANNEL_ID`)에 올리는
   웹훅 알림을 봇(아메하나)이 읽어 마을 일로 바꾼다(스크립트는 그대로). "N개의 메일을 휴지통으로" → 홍두식이 성벽 아래 몬스터 잔해
   N/5수레를 치우고 품삯(수레당 2천 원) + 마을 통신방 🧹 한마디(30개 넘으면 "성벽 대청소" 마을 사건). 트래픽 소진 → 통신석 중계탑

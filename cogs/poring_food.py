@@ -145,8 +145,10 @@ class PoringFood(commands.Cog):
         from poring_food import plex_watch
         if not plex_watch.ENABLED:
             return
-        # 웹훅을 받는 중이면 1분 확인은 가끔만 (웹훅이 빠뜨린 것 줍기)
-        if plex_watch.webhook_enabled() and time.monotonic() - self._plex_last_poll < plex_watch.FALLBACK_POLL_SEC:
+        # 웹훅을 받는 중이면 1분 확인은 가끔만 (웹훅이 빠뜨린 것 줍기) - Tautulli가 꺼져 Plex에 바로 묻는 중이면 웹훅도
+        # 안 오니 매분
+        if (plex_watch.webhook_enabled() and not plex_watch.using_fallback()
+                and time.monotonic() - self._plex_last_poll < plex_watch.FALLBACK_POLL_SEC):
             return
         self._plex_last_poll = time.monotonic()
         sessions = await asyncio.to_thread(plex_watch.fetch)
