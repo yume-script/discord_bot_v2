@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from datetime import datetime, timedelta
@@ -47,19 +48,49 @@ NAME = "💠 결계 조절"
 LOADSHED_PATH = os.path.join(STATE_DIR, "loadshed.json")
 
 
-_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")   # 컨테이너 이름 (ssh 명령에 그대로 들어가서 검사)
+_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")   # 컨테이너/서비스 이름 (명령에 들어가서 검사)
+_SAFE_PROC = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]*$")  # 프로세스 이름 (pgrep -f 패턴)
 
 
 def _names(env: str, default: str) -> list[str]:
     return [n.strip() for n in os.getenv(env, default).split(",") if _SAFE.match(n.strip())]
 
 
-# 서버 -> ssh 대상("" = 이 봇이 도는 서버) / 내려도 되는 컨테이너
+def _caps(env: str, default: str) -> dict[str, float]:
+    """"flaskfarm:1,bookoasis_mariadb:2" -> {이름: CPU 상한(코어 수)}."""
+    out = {}
+    for part in os.getenv(env, default).split(","):
+        name, _, cap = part.strip().partition(":")
+        try:
+            if _SAFE.match(name.strip()) and float(cap) > 0:
+                out[name.strip()] = float(cap)
+        except ValueError:
+            continue
+    return out
+
+
+def _procs(env: str, default: str) -> list[str]:
+    return [n.strip() for n in os.getenv(env, default).split(",") if _SAFE_PROC.match(n.strip())]
+
+
+# 서버 -> ssh 대상("" = 이 봇이 도는 서버)
+#  allow: 내려도 되는 컨테이너 (놀고 있을 때만 docker stop)
+#  caps:  늦춰도 되는 컨테이너와 CPU 상한(코어 수) - 끄지 않고 docker update --cpus (CAP_MIN_CPU % 이상 쓰는 중일 때만)
+#  units: 우선순위를 낮춰도 되는 systemd 서비스 - systemctl set-property --runtime CPUWeight=UNIT_WEIGHT
+#  nice:  우선순위를 낮춰도 되는 프로세스 이름 - renice NICE_LEVEL (그때 떠 있는 것만)
 HOSTS = {
-    "etc": {"ssh": "", "allow": _names("PORING_LOADSHED_ETC", "docker-warproxy")},
+    "etc": {"ssh": "", "allow": _names("PORING_LOADSHED_ETC", "docker-warproxy"),
+            "caps": _caps("PORING_LOADSHED_ETC_CAP", ""), "units": _names("PORING_LOADSHED_ETC_UNITS", ""),
+            "nice": _procs("PORING_LOADSHED_ETC_NICE", "")},
     "plex01": {"ssh": os.getenv("PORING_LOADSHED_PLEX_SSH", "192.168.0.31"),
-               "allow": _names("PORING_LOADSHED_PLEX01", "tautulli")},
+               "allow": _names("PORING_LOADSHED_PLEX01", "tautulli"),
+               "caps": _caps("PORING_LOADSHED_PLEX01_CAP", "flaskfarm:1,bookoasis_mariadb:2"),
+               "units": _names("PORING_LOADSHED_PLEX01_UNITS", "bookoasis_assistant.service"),
+               "nice": _procs("PORING_LOADSHED_PLEX01_NICE", "Plex Media Scanner")},
 }
+CAP_MIN_CPU = 20      # 상한은 이만큼(%) 이상 쓰는 컨테이너에만 건다
+UNIT_WEIGHT = 20      # systemd CPUWeight (기본 100)
+NICE_LEVEL = 15
 
 
 def _load() -> dict:
@@ -85,6 +116,11 @@ def _cmd(host: str, args: list[str]) -> list[str]:
     if not ssh:
         return args
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", ssh, " ".join(args)]
+
+
+def _sh(host: str, script: str) -> str | None:
+    """셸 한 줄 실행 (이 서버면 sh -c, 아니면 ssh 원격 셸)."""
+    return _run(host, [script] if HOSTS[host]["ssh"] else ["sh", "-c", script])
 
 
 def _run(host: str, args: list[str]) -> str | None:
@@ -173,34 +209,89 @@ def _sustained(samples: list, now: datetime, minutes: int, pred) -> bool:
 
 
 def decide(host: str, st: dict, running: dict | None, now: datetime) -> list[dict]:
-    """한 서버의 할 일 [{"host", "do": stop|start, "name", "why"}]. 순수 함수 (테스트용)."""
+    """한 서버의 할 일 [{"host", "do": stop|start|throttle|unthrottle, "name", "kind"?, "cap"?, "why"}]. 순수 함수 (테스트용).
+    kind: cpus(컨테이너 CPU 상한) / unit(systemd CPUWeight) / nice(프로세스 우선순위)."""
     samples = st.get("samples") or []
     shed = st.get("shed") or {}
+    slow = st.get("throttled") or {}
+    cfg = HOSTS[host]
     acts = []
-    if shed:
-        too_long = [n for n, t in shed.items() if t <= (now - timedelta(hours=MAX_OFF_HOURS)).isoformat()]
+    if shed or slow:
+        old = (now - timedelta(hours=MAX_OFF_HOURS)).isoformat()
         if _sustained(samples, now, LOW_MIN, lambda c: c < LOW):
-            return [{"host": host, "do": "start", "name": n, "why": f"결계 부하가 {LOW_MIN}분째 {LOW:g}% 아래"} for n in shed]
-        acts += [{"host": host, "do": "start", "name": n, "why": f"{MAX_OFF_HOURS:g}시간 넘게 꺼져 있었음"} for n in too_long]
+            why = f"결계 부하가 {LOW_MIN}분째 {LOW:g}% 아래"
+            return ([{"host": host, "do": "start", "name": n, "why": why} for n in shed]
+                    + [{"host": host, "do": "unthrottle", "name": t["name"], "kind": t["kind"], "orig": t.get("orig"), "why": why}
+                       for t in slow.values()])
+        why = f"{MAX_OFF_HOURS:g}시간 넘게 그대로였음"
+        acts += [{"host": host, "do": "start", "name": n, "why": why} for n, t in shed.items() if t <= old]
+        acts += [{"host": host, "do": "unthrottle", "name": t["name"], "kind": t["kind"], "orig": t.get("orig"), "why": why}
+                 for t in slow.values() if t.get("at", "") <= old]
     if running is None or not _sustained(samples, now, HIGH_MIN, lambda c: c >= HIGH):
         return acts
     cool = (now - timedelta(minutes=COOLDOWN_MIN)).isoformat()
-    for name in HOSTS[host]["allow"]:
-        if name in shed or name not in running or (st.get("restored") or {}).get(name, "") >= cool:
+    restored = st.get("restored") or {}
+    high = f"결계 부하 {samples[-1][1]:g}% ({HIGH_MIN}분째 {HIGH:g}% 이상)"
+    for name in cfg["allow"]:
+        if name in shed or name not in running or restored.get(name, "") >= cool:
             continue
         if running[name] < IDLE_CPU:
-            acts.append({"host": host, "do": "stop", "name": name,
-                         "why": f"결계 부하 {samples[-1][1]:g}% ({HIGH_MIN}분째 {HIGH:g}% 이상), 이 시설은 놀고 있음({running[name]:g}%)"})
+            acts.append({"host": host, "do": "stop", "name": name, "why": f"{high}, 이 시설은 놀고 있음({running[name]:g}%)"})
+    for kind, items in (("cpus", cfg.get("caps") or {}), ("unit", cfg.get("units") or []), ("nice", cfg.get("nice") or [])):
+        for name in items:
+            key = f"{kind}:{name}"
+            if key in slow or restored.get(key, "") >= cool:
+                continue
+            if kind == "cpus":
+                if name not in running or running[name] < CAP_MIN_CPU:
+                    continue
+                acts.append({"host": host, "do": "throttle", "name": name, "kind": kind, "cap": items[name],
+                             "why": f"{high}, 이 시설이 {running[name]:g}%를 쓰는 중 - {items[name]:g}코어로 제한"})
+            else:
+                acts.append({"host": host, "do": "throttle", "name": name, "kind": kind, "why": f"{high} - 우선순위 낮춤"})
     return acts
 
 
-def step(now: datetime | None = None, measurer=None, docker=None) -> list[dict]:
-    """[매분, 스레드에서] 재고 -> 판단 -> 실제로 내리고/올린다. 반환: 실제로 한 일."""
+def _throttle(host: str, a: dict) -> dict | None:
+    """늦추기/되돌리기 실행. 반환: 성공하면 {"orig": 원래 값} (되돌리기는 {}), 아니면(대상이 없거나 실패) None."""
+    name, kind = a["name"], a["kind"]
+    q = shlex.quote(name)
+    pat = shlex.quote(f"[{name[0]}]{name[1:]}")   # pgrep -f가 이 명령을 실행하는 셸 자신을 찾지 않게 ("[P]lex ...")
+    if DRY_RUN:
+        print(f"[결계 조절] (시험) {host} {a['do']} {kind} {name}")
+        return {"orig": None}
+    if a["do"] == "throttle":
+        if kind == "cpus":
+            orig = _run(host, ["docker", "inspect", "-f", "{{.HostConfig.NanoCpus}}", name])
+            if orig is None or _run(host, ["docker", "update", "--cpus", f"{a['cap']:g}", name]) is None:
+                return None
+            return {"orig": int(orig.strip() or 0)}
+        if kind == "unit":
+            orig = _sh(host, f"systemctl show -p CPUWeight --value {q}")
+            if _sh(host, f"systemctl set-property --runtime {q} CPUWeight={UNIT_WEIGHT}") is None:
+                return None
+            o = (orig or "").strip()
+            return {"orig": int(o) if o.isdigit() else None}
+        out = _sh(host, f"p=$(pgrep -f {pat}); if [ -n \"$p\" ]; then renice -n {NICE_LEVEL} -p $p >/dev/null && echo $p; fi")
+        return {"orig": 0} if out and out.strip() else None
+    if kind == "cpus":
+        cpus = (a.get("orig") or 0) / 1e9
+        return {} if _run(host, ["docker", "update", "--cpus", f"{cpus:g}", name]) is not None else None
+    if kind == "unit":
+        w = a.get("orig") or 100
+        return {} if _sh(host, f"systemctl set-property --runtime {q} CPUWeight={w}") is not None else None
+    _sh(host, f"p=$(pgrep -f {pat}); [ -n \"$p\" ] && renice -n 0 -p $p >/dev/null; true")
+    return {}
+
+
+def step(now: datetime | None = None, measurer=None, docker=None, throttler=None) -> list[dict]:
+    """[매분, 스레드에서] 재고 -> 판단 -> 실제로 내리고/올리고/늦추고/되돌린다. 반환: 실제로 한 일."""
     if not ENABLED:
         return []
     now = now or now_kst()
     readings = (measurer or measure)()
     docker = docker or _docker
+    throttler = throttler or _throttle
     data = _load()
     hosts = data.setdefault("hosts", {})
     done = []
@@ -210,17 +301,31 @@ def step(now: datetime | None = None, measurer=None, docker=None) -> list[dict]:
         if r.get("cpu") is not None:
             st["samples"] = (st.get("samples") or [])[-(KEEP_SAMPLES - 1):] + [[now.isoformat(timespec="seconds"), r["cpu"]]]
             st["last_cpu"], st["at"] = r["cpu"], now.isoformat(timespec="seconds")
+        stamp = now.isoformat(timespec="seconds")
         for a in decide(host, st, r.get("running"), now):
-            if not docker(host, a["do"], a["name"]):
-                continue
-            if a["do"] == "stop":
-                st.setdefault("shed", {})[a["name"]] = now.isoformat(timespec="seconds")
+            if a["do"] in ("stop", "start"):
+                if not docker(host, a["do"], a["name"]):
+                    continue
+                if a["do"] == "stop":
+                    st.setdefault("shed", {})[a["name"]] = stamp
+                else:
+                    (st.get("shed") or {}).pop(a["name"], None)
+                    st.setdefault("restored", {})[a["name"]] = stamp
             else:
-                (st.get("shed") or {}).pop(a["name"], None)
-                st.setdefault("restored", {})[a["name"]] = now.isoformat(timespec="seconds")
+                got = throttler(host, a)
+                if got is None:
+                    continue
+                key = f"{a['kind']}:{a['name']}"
+                if a["do"] == "throttle":
+                    st.setdefault("throttled", {})[key] = {"kind": a["kind"], "name": a["name"], "orig": got.get("orig"),
+                                                           "at": stamp}
+                else:
+                    (st.get("throttled") or {}).pop(key, None)
+                    st.setdefault("restored", {})[key] = stamp
             a["cpu"] = st.get("last_cpu")
             done.append(a)
-            print(f"[결계 조절] {host} {a['name']} {'내림' if a['do'] == 'stop' else '다시 올림'} - {a['why']}")
+            word = {"stop": "내림", "start": "다시 올림", "throttle": "늦춤", "unthrottle": "되돌림"}[a["do"]]
+            print(f"[결계 조절] {host} {a['name']} {word} - {a['why']}")
     if done:
         data["log"] = (data.get("log") or [])[-99:] + [{**a, "at": now.isoformat(timespec="minutes")} for a in done]
     _save(data)
@@ -228,26 +333,34 @@ def step(now: datetime | None = None, measurer=None, docker=None) -> list[dict]:
 
 
 # ===================================================================== 이야기 / 다른 모듈
+LABELS = {"bookoasis_assistant.service": "도서관 두루마리 운반 정령", "Plex Media Scanner": "환영극장 서고 정리 정령"}
+
+
 def _label(name: str) -> str:
     from .facilities import FACILITIES
-    return FACILITIES[name][0] if name in FACILITIES else name
+    return LABELS.get(name) or (FACILITIES[name][0] if name in FACILITIES else name)
 
 
 def announce(done: list[dict], now: datetime | None = None, post=None, inject=None) -> None:
     """[잠금 안에서] 한 일을 이야기로: 채널 한 줄 + 마을 사건 + 지은탁 기억."""
     from . import agents as ag, memory
+    from .josa import has_batchim, j
     now = now or now_kst()
     post = post or (lambda text: ag._post_as(NAME, text))
     inject = inject or ag.inject_event
     for a in done:
         label = _label(a["name"])
-        if a["do"] == "stop":
-            text = f"{ACTOR}이 결계 부하를 줄이려고 {label}의 불을 잠시 껐다 ({a['why']})."
-            title = f"{label} 잠시 소등 (결계 조절)"
-        else:
-            text = f"{ACTOR}이 {label}에 다시 불을 켰다 ({a['why']})."
-            title = f"{label} 다시 점등 (결계 조절)"
-        post(f"-# {NAME} · {now:%H:%M} · {a['host']} `{a['name']}` {'⏸ 내림' if a['do'] == 'stop' else '▶ 다시 올림'}\n{text}")
+        ro = label + ("으로" if has_batchim(label) and (ord(label[-1]) - 0xAC00) % 28 != 8 else "로")   # ㄹ 받침은 "로"
+        text, title, mark = {
+            "stop": (f"{j(ACTOR, '이')} 결계 부하를 줄이려고 {label}의 불을 잠시 껐다 ({a['why']}).",
+                     f"{label} 잠시 소등 (결계 조절)", "⏸ 내림"),
+            "start": (f"{j(ACTOR, '이')} {label}에 다시 불을 켰다 ({a['why']}).", f"{label} 다시 점등 (결계 조절)", "▶ 다시 올림"),
+            "throttle": (f"{j(ACTOR, '이')} 결계 부하를 줄이려고 {ro} 가는 마나 흐름을 좁혔다 ({a['why']}).",
+                         f"{label} 마나 흐름 제한 (결계 조절)", "🐢 늦춤"),
+            "unthrottle": (f"{j(ACTOR, '이')} {ro} 가는 마나 흐름을 원래대로 되돌렸다 ({a['why']}).",
+                           f"{label} 마나 흐름 복구 (결계 조절)", "↩ 되돌림"),
+        }[a["do"]]
+        post(f"-# {NAME} · {now:%H:%M} · {a['host']} `{a['name']}` {mark}\n{text}")
         try:
             inject([ag.world.TOWN], text, title)
         except Exception as e:  # noqa: BLE001
@@ -278,13 +391,17 @@ def max_cpu(now: datetime | None = None, fresh_min: int = 15) -> float | None:
 def summary(now: datetime | None = None) -> str:
     now = now or now_kst()
     data = _load()
-    lines = [f"💠 **결계 조절** - {HIGH:g}% 이상 {HIGH_MIN}분이면 놀고 있는 시설을 내리고, {LOW:g}% 미만 {LOW_MIN}분이면 다시 올림"
-             + (" (시험 모드)" if DRY_RUN else "")]
+    lines = [f"💠 **결계 조절** - {HIGH:g}% 이상 {HIGH_MIN}분이면 놀고 있는 시설은 내리고 바쁜 시설은 늦추고, "
+             f"{LOW:g}% 미만 {LOW_MIN}분이면 되돌림" + (" (시험 모드)" if DRY_RUN else "")]
+    word = {"stop": "내림", "start": "올림", "throttle": "늦춤", "unthrottle": "되돌림"}
     for host, cfg in HOSTS.items():
         st = (data.get("hosts") or {}).get(host) or {}
         cpu = st.get("last_cpu")
-        lines.append(f"• {host}: 부하 {f'{cpu:g}%' if cpu is not None else '모름'} · 내려도 되는 것 {', '.join(cfg['allow']) or '없음'}"
-                     + (f" · 지금 내려 둔 것 {', '.join(st['shed'])}" if st.get("shed") else ""))
+        slow = ", ".join(cfg["allow"] + [f"{n}(≤{c:g}코어)" for n, c in (cfg.get("caps") or {}).items()]
+                         + list(cfg.get("units") or []) + list(cfg.get("nice") or []))
+        lines.append(f"• {host}: 부하 {f'{cpu:g}%' if cpu is not None else '모름'} · 대상 {slow or '없음'}"
+                     + (f" · 지금 내려 둔 것 {', '.join(st['shed'])}" if st.get("shed") else "")
+                     + (f" · 지금 늦춘 것 {', '.join(t['name'] for t in st['throttled'].values())}" if st.get("throttled") else ""))
     for g in (data.get("log") or [])[-5:][::-1]:
-        lines.append(f"  - {g['at'][5:16].replace('T', ' ')} {g['host']} {g['name']} {'내림' if g['do'] == 'stop' else '올림'} ({g['why']})")
+        lines.append(f"  - {g['at'][5:16].replace('T', ' ')} {g['host']} {g['name']} {word.get(g['do'], g['do'])} ({g['why']})")
     return "\n".join(lines)

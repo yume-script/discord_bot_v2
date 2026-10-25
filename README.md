@@ -215,7 +215,11 @@ python app.py
   `ssh 192.168.0.31`(docker_bookoasis와 같은 접속)로 CPU와 `docker stats`를 잰다. 서버 CPU가 90% 이상으로 5분 이어지면, 그 서버의
   **허용 목록**에 있고 그 순간 거의 일 안 하는(컨테이너 CPU < 5%) 컨테이너를 `docker stop`으로 내리고, 60% 미만으로 15분 이어지면
   **직접 내린 것만** `docker start`로 다시 올린다(6시간 넘게 꺼져 있으면 부하와 상관없이 올림, 올린 뒤 30분은 다시 안 내림).
-  허용 목록 기본: etc `docker-warproxy`, plex01 `tautulli` (`PORING_LOADSHED_ETC` / `PORING_LOADSHED_PLEX01`, 쉼표로). 목록에 없는
+  허용 목록 기본: etc `docker-warproxy`, plex01 `tautulli` (`PORING_LOADSHED_ETC` / `PORING_LOADSHED_PLEX01`, 쉼표로).
+  **끄지 않고 늦추기**도 같은 기준으로 한다(부하가 내려가면 원래 값으로 되돌림): 바쁜 컨테이너(CPU 20% 이상)는 `docker update --cpus`로
+  상한(기본 plex01 `flaskfarm:1,bookoasis_mariadb:2` - `PORING_LOADSHED_PLEX01_CAP`), systemd 서비스는 `systemctl set-property
+  --runtime CPUWeight=20`(기본 plex01 `bookoasis_assistant.service` - `_UNITS`), 프로세스는 `renice 15`(기본 plex01
+  `Plex Media Scanner` - `_NICE`; etc도 `PORING_LOADSHED_ETC_CAP/_UNITS/_NICE`). Plex 재생(Plex Media Server/Transcoder)은 대상이 아니다. 목록에 없는
   컨테이너(Plex/bookoasis/litellm/vaultwarden…)는 절대 안 건드린다. 이야기로는 결계 마법사 지은탁이 그 감시탑 불을 잠시 끄고 다시
   켠다(💠 결계 조절 채널 한 줄 + 마을 사건), 감시탑 사고 알림(facilities)으로는 치지 않는다. 몬스터 침입 위험도의 결계 부하는 두
   서버 중 높은 쪽. `/포링푸드침입`에 지금 부하/내려 둔 것/최근 기록. 기준은 `PORING_LOADSHED_HIGH`(90)/`_HIGH_MIN`(5)/`_LOW`(60)/

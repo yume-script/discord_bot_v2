@@ -14,14 +14,19 @@ def test_parsers():
     assert loadshed.parse_stats("tautulli\t0.35%\nplex\t180.2%\nbad line\n") == {"tautulli": 0.35, "plex": 180.2}
 
 
-def _run_minutes(cpus, start=T0, running=None, docker_log=None):
-    """매분 한 번씩 step - cpus는 분마다 plex01 부하. 반환: 마지막 step에서 한 일까지 전부."""
+def _run_minutes(cpus, start=T0, running=None, docker_log=None, slow_log=None):
+    """매분 한 번씩 step - cpus는 분마다 plex01 부하. 반환: 한 일 전부. 늦추기는 slow_log에 (실제 명령은 안 부른다)."""
     done = []
+
+    def throttler(h, a):
+        if slow_log is not None:
+            slow_log.append((h, a["do"], a["kind"], a["name"], a.get("cap"), a.get("orig")))
+        return {"orig": 4_000_000_000 if a["kind"] == "cpus" else None} if a["do"] == "throttle" else {}
     for i, c in enumerate(cpus):
         now = start + timedelta(minutes=i)
         readings = {"etc": {"cpu": 10.0, "running": {"docker-warproxy": 0.1}},
                     "plex01": {"cpu": c, "running": running if running is not None else {"tautulli": 0.4, "plex": 150.0}}}
-        done += loadshed.step(now, measurer=lambda r=readings: r,
+        done += loadshed.step(now, measurer=lambda r=readings: r, throttler=throttler,
                               docker=lambda h, do, n: (docker_log.append((h, do, n)) if docker_log is not None else None) or True)
     return done
 
@@ -85,3 +90,44 @@ def test_announce_story_and_facilities_ignore_quiet(monkeypatch):
 def test_unsafe_names_are_dropped(monkeypatch):
     monkeypatch.setenv("X_TEST", "tautulli, bad;rm -rf /,ok-name")
     assert loadshed._names("X_TEST", "") == ["tautulli", "ok-name"]
+
+
+def test_throttles_busy_containers_unit_and_process_then_restores_originals():
+    slow = []
+    busy = {"tautulli": 0.4, "flaskfarm": 58.0, "bookoasis_mariadb": 100.3, "bookoasis": 0.1}
+    done = _run_minutes([95] * 6, running=busy, slow_log=slow)
+    assert ("plex01", "throttle", "cpus", "flaskfarm", 1.0, None) in slow
+    assert ("plex01", "throttle", "cpus", "bookoasis_mariadb", 2.0, None) in slow
+    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", None, None) in slow
+    assert ("plex01", "throttle", "nice", "Plex Media Scanner", None, None) in slow
+    assert not any(n == "bookoasis" for _, _, _, n, _, _ in slow)          # 목록에 없는 건 안 건드림
+    assert {d["do"] for d in done} == {"stop", "throttle"}
+    st = loadshed._load()["hosts"]["plex01"]["throttled"]
+    assert st["cpus:flaskfarm"]["orig"] == 4_000_000_000
+    slow.clear()
+    _run_minutes([40] * 17, start=T0 + timedelta(minutes=6), running=busy, slow_log=slow)
+    assert ("plex01", "unthrottle", "cpus", "flaskfarm", None, 4_000_000_000) in slow    # 원래 상한(4코어)으로 되돌림
+    assert len([x for x in slow if x[1] == "unthrottle"]) == 4 and not loadshed._load()["hosts"]["plex01"].get("throttled")
+    assert "늦춤" in loadshed.summary(T0 + timedelta(minutes=30)) or "되돌림" in loadshed.summary(T0 + timedelta(minutes=30))
+
+
+def test_quiet_container_is_not_capped():
+    slow = []
+    _run_minutes([95] * 6, running={"flaskfarm": 3.0, "bookoasis_mariadb": 1.0}, slow_log=slow)
+    assert not [x for x in slow if x[2] == "cpus"]                        # 거의 안 쓰는 건 상한을 안 건다
+
+
+def test_throttle_story():
+    posts = []
+    loadshed.announce([{"host": "plex01", "do": "throttle", "name": "flaskfarm", "kind": "cpus", "why": "x"},
+                       {"host": "plex01", "do": "unthrottle", "name": "Plex Media Scanner", "kind": "nice", "why": "y"}],
+                      T0, post=posts.append, inject=lambda *a: [])
+    assert "이야기 배급소으로" not in posts[0] and "마나 흐름을 좁혔다" in posts[0] and "🐢" in posts[0]
+    assert "환영극장 서고 정리 정령" in posts[1] and "되돌렸다" in posts[1]
+
+
+def test_process_and_cap_parsing(monkeypatch):
+    monkeypatch.setenv("X_CAP", "flaskfarm:1, bad;x:2, db:0, ok:1.5")
+    assert loadshed._caps("X_CAP", "") == {"flaskfarm": 1.0, "ok": 1.5}
+    monkeypatch.setenv("X_P", "Plex Media Scanner, rm -rf;/")
+    assert loadshed._procs("X_P", "") == ["Plex Media Scanner"]
