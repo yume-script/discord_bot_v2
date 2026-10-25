@@ -45,19 +45,19 @@ def test_prune_archives_but_keeps_permanent(monkeypatch):
 
 
 def test_events_and_actions_recorded():
-    chronicle.record_event("모임", "마을 이름 짓기 (1차)", "결론 없음", ["여화정"], decided=False)
-    chronicle.record_action("여화정", {"location": "촌장 회관", "activity": "민원 정리", "state": "일하는 중"})
+    chronicle.record_event("모임", "마을 이름 짓기 (1차)", "결론 없음", ["리그루드"], decided=False)
+    chronicle.record_action("리그루드", {"location": "촌장 회관", "activity": "민원 정리", "state": "일하는 중"})
     from poring_food.clock import now_kst
     today = now_kst().strftime("%Y-%m-%d")
     ev = store.events_on(today)
     assert ev[0]["title"] == "마을 이름 짓기 (1차)" and ev[0]["decided"] is False
-    assert store.actions_on(today)[0]["name"] == "여화정"
+    assert store.actions_on(today)[0]["name"] == "리그루드"
 
 
 def test_lookup_shows_events_and_projects():
     from poring_food import projects
     from poring_food.clock import now_kst
     chronicle.record_event("이사", "새 이웃 마현이", "이태원 클라쓰 사람들이 이사 옴", ["마현이"])
-    projects.create("골목 화단 만들기", "꽃길", ["a", "b"], "여화정", [], "마을", [], "모임")
+    projects.create("골목 화단 만들기", "꽃길", ["a", "b"], "리그루드", [], "마을", [], "모임")
     text = chronicle.lookup(now_kst().strftime("%Y-%m-%d"))
     assert "새 이웃 마현이" in text and "골목 화단 만들기" in text

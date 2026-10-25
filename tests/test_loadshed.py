@@ -73,10 +73,10 @@ def test_announce_story_and_facilities_ignore_quiet(monkeypatch):
     posts, sent = [], []
     loadshed.announce([{"host": "plex01", "do": "stop", "name": "tautulli", "why": "결계 부하 95%"}], T0,
                       post=posts.append, react=lambda d, title, key: sent.append((title, key)) or [])
-    assert "환영극장 관객 세는 수정구" in posts[0] and "지은탁" in posts[0]
+    assert "환영극장 관객 세는 수정구" in posts[0] and "슈나" in posts[0]
     assert sent[0][0] == "환영극장 관객 세는 수정구 잠시 소등 (결계 조절)"
-    assert sent[0][1][:2] == ["지은탁", "리정혁"] and any(n in sent[0][1] for n in ("소라", "오동백", "성덕선"))   # 극장 사람
-    assert any("불을 잠시 껐다" in m["text"] for m in memory.store.memories("지은탁"))
+    assert sent[0][1][:2] == ["슈나", "베니마루"] and any(n in sent[0][1] for n in ("소라", "일레이나", "크리스"))   # 극장 사람
+    assert any("불을 잠시 껐다" in m["text"] for m in memory.store.memories("슈나"))
     # 결계 조절로 끈 tautulli는 facilities가 "불 꺼짐" 사고로 알리지 않는다
     _run_minutes([95] * 6)
     plex = facilities.HOSTS and list(facilities.HOSTS)[1]
@@ -144,7 +144,7 @@ def test_react_now_reaches_everyone_quietly_and_key_people_react_now(fake_llm):
         return {"consider": "어쩌지", "matters": 7, "react": "가만히", "thought": "결계가 걱정된다"}
     fake_llm(llm)
     key = loadshed.key_people(["flaskfarm"])
-    got = agents.react_now("지은탁이 이야기 배급소로 가는 마나 흐름을 좁혔다.", "이야기 배급소 마나 흐름 제한 (결계 조절)", key)
+    got = agents.react_now("슈나가 이야기 배급소로 가는 마나 흐름을 좁혔다.", "이야기 배급소 마나 흐름 제한 (결계 조절)", key)
     awake_key = [n for n in key if not agents.is_asleep_now(n)]
     assert set(got) == set(awake_key)
     st = agents._load_state()

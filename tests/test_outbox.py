@@ -81,16 +81,16 @@ def test_scene_also_goes_to_agent_channel_per_speaker(monkeypatch):
     """연재 장면(예: 에린 로지스틱스 사무실)도 에이전트 대화 채널에 화자 이름으로 한 줄씩 올라간다."""
     from poring_food import main
     monkeypatch.setattr(outbox, "paced", lambda: True)
-    scene = {"discord": "🎬 **[에린 로지스틱스 사무실 · 10:00] 최택 × 리정혁**\n**최택**: \"보고서\"\n**리정혁**: \"네\"",
-             "kakao": "🎬 [에린 로지스틱스 사무실 · 10:00] 최택 × 리정혁\n최택: \"보고서\"\n리정혁: \"네\"",
+    scene = {"discord": "🎬 **[에린 로지스틱스 사무실 · 10:00] 고브타 × 베니마루**\n**고브타**: \"보고서\"\n**베니마루**: \"네\"",
+             "kakao": "🎬 [에린 로지스틱스 사무실 · 10:00] 고브타 × 베니마루\n고브타: \"보고서\"\n베니마루: \"네\"",
              "arc_title": "줄거리",
              "scene": {"location": "에린 로지스틱스 사무실", "narration": "조용한 오후.",
-                       "lines": [{"speaker": "최택", "line": "보고서"}, {"speaker": "리정혁", "line": "네", "inner": "또?"}]}}
+                       "lines": [{"speaker": "고브타", "line": "보고서"}, {"speaker": "베니마루", "line": "네", "inner": "또?"}]}}
     now = datetime(2026, 10, 12, 10, 3)
     main._send_scene(scene, now, random.Random(3))
     items = outbox.take_due(now + timedelta(hours=1), limit=50)
     agent = [it for it in items if it["kind"] == "agent"]
-    assert [it["name"] for it in agent] == ["최택", "리정혁", "마을 소식"]
+    assert [it["name"] for it in agent] == ["고브타", "베니마루", "마을 소식"]
     assert agent[0]["text"].startswith("-# 🎬 에린 로지스틱스 사무실 · 10:") and "📖 줄거리" in agent[0]["text"]
     assert agent[1]["text"].endswith('"네" *(속마음: 또?)*')
     assert agent[0]["due"] < agent[1]["due"] < agent[2]["due"]

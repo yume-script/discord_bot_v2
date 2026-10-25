@@ -21,13 +21,13 @@ def test_parse_kinds_only():
 def test_cleanup_pays_cleaner_and_posts(fake_llm, monkeypatch):
     monkeypatch.setattr(agents, "_group_channel", lambda g: 123)
     fake_llm(lambda system, user: {"text": "성벽 앞 싹 치웠어요~ 품삯은 받아요!"})
-    money = life.get("홍두식")["money"]
+    money = life.get("카즈마")["money"]
     now = datetime(2026, 10, 14, 15, 0)
     street_mail.handle({"kind": "trash", "count": 12}, now)
-    assert life.get("홍두식")["money"] == money + 2 * street_mail.WAGE_PER_BAG
+    assert life.get("카즈마")["money"] == money + 2 * street_mail.WAGE_PER_BAG
     with open(agents.GROUP_PATH, encoding="utf-8") as f:
         post = [json.loads(x) for x in f if x.strip()][-1]
-    assert post["name"] == "홍두식" and "🧹" in post["text"]
+    assert post["name"] == "카즈마" and "🧹" in post["text"]
     street_mail.handle({"kind": "mail", "count": 1}, now)
     street_mail.handle({"kind": "registered", "count": 1}, now)
     block = street_mail.prompt_block(now)

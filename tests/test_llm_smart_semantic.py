@@ -108,8 +108,8 @@ def test_persistent_429_stops_retrying(monkeypatch):
 
 
 def test_parse_agent_models():
-    assert llm.parse_agent_models("groq_free:소라, 김동식 ;other:조이서") == {
-        "소라": "groq_free", "김동식": "groq_free", "조이서": "other"}
+    assert llm.parse_agent_models("groq_free:소라, 위벨 ;other:메구밍") == {
+        "소라": "groq_free", "위벨": "groq_free", "메구밍": "other"}
     assert llm.parse_agent_models("") == {}
 
 

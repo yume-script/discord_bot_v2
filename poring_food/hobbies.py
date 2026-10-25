@@ -8,7 +8,7 @@
    - 장 마감 뒤(MOOD_HOUR시 이후 첫 회차) 오늘 평가손익으로 기분이 바뀌고, 크게 움직이면 기억/알림.
 2) 운세: 하루 한 번(아침) 인물들 띠의 운세를 네이버(봇의 /운세와 같은 방식)에서 받아 판단에 넣는다.
    띠는 agents.json "zodiac" 또는 이름으로 정한다. 아침에 몇 명(FORTUNE_POSTS_PER_DAY)은 /운세를 친 것처럼 채널에 올린다.
-3) 그림: 화가 인물(ARTISTS, 기본 박충섭/오윤)이 그리고 싶을 때 "drawing"(제목/영어 프롬프트)을 고르면 봇의 이미지 생성(/그림)으로
+3) 그림: 화가 인물(ARTISTS, 기본 쿠로베/마르실)이 그리고 싶을 때 "drawing"(제목/영어 프롬프트)을 고르면 봇의 이미지 생성(/그림)으로
    실제 그림을 올린다. 하루 DRAW_PER_DAY장, 한 사람 하루 1장. 생성은 오래 걸려서 봇이 예약함에서 꺼낼 때 한다(outbox "draw").
 4) 개미소리: 가게 직원(도서관/극장)이 속이 터질 때 "ant_voice"(짧은 외침)를 고르면 봇의 /개미소리 짤을 통신방에 올린다
    (outbox "ant"). 하루 ANT_PER_DAY장, 한 사람 하루 1장.
@@ -53,7 +53,7 @@ BIG_MOVE = 300_000
 ZODIAC = ["쥐", "소", "호랑이", "토끼", "용", "뱀", "말", "양", "원숭이", "닭", "개", "돼지"]
 FORTUNE_HOUR = 6
 FORTUNE_POSTS_PER_DAY = 3
-ARTISTS = [n.strip() for n in os.getenv("PORING_ARTISTS", "박충섭,오윤").split(",") if n.strip()]
+ARTISTS = [n.strip() for n in os.getenv("PORING_ARTISTS", "쿠로베,마르실").split(",") if n.strip()]
 DRAW_PER_DAY = int(os.getenv("PORING_DRAW_PER_DAY", "2"))
 ANT_PER_DAY = int(os.getenv("PORING_ANT_PER_DAY", "3"))
 OFFICE = worldcfg.OFFICES

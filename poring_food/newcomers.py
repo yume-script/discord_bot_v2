@@ -1,16 +1,16 @@
 """
-새 이웃 이사 오기 - 주 1회, 드라마 하나를 골라 그 인물 3~5명이 마을 배경 인물로 이사 온다.
+새 이웃 이사 오기 - 주 1회, 애니메이션 하나를 골라 그 인물 3~5명이 마을 배경 인물로 이사 온다.
 
-- 고르기: data/drama_pool.json에서 아직 안 쓴 드라마를 위에서부터 (다 쓰면 LLM이 마을극 하나를 직접 고른다).
-- 만들기: LLM이 그 드라마에서 우리 마을(오아시스 마을)에 어울리는 인물 3~5명을 드라마 성향대로 써 준다
+- 고르기: data/drama_pool.json에서 아직 안 쓴 작품을 위에서부터 (다 쓰면 LLM이 판타지 애니메이션 하나를 직접 고른다).
+- 만들기: LLM이 그 작품에서 우리 마을(오아시스 마을)에 어울리는 인물 3~5명을 작품 속 성향대로 써 준다
   (마을에서의 직업/겉모습/속마음/행동). 실존 배우와 이름이 같은 인물, 이미 있는 이름은 뺀다.
 - 반영: characters.load_roster()가 이 파일의 주민을 "오아시스 마을 / 새 이웃" 배경 인물로 읽는다 ->
   작가 장면/일지에 나오고, 하루 교체(rotation) 때 마을 에이전트로 나설 수 있다.
 - 상한: 마을 배경 인물이 MAX_TOWN_NPC명을 넘으면, 이사 온 사람 중 가장 먼저 온 사람(지금 에이전트가 아닌)이 이사 간다
   (조직도 파일에 적힌 원래 주민은 이사 가지 않는다). 기록/기억은 지우지 않는다.
-- 관리자: /포링푸드이웃 [드라마] 로 바로 이사 오게 할 수 있다.
+- 관리자: /포링푸드이웃 [작품] 로 바로 이사 오게 할 수 있다.
 
-저장: storage/poring_food/newcomers.json {"week", "used": [드라마], "residents": [...], "moved_out": [...]}
+저장: storage/poring_food/newcomers.json {"week", "used": [작품], "residents": [...], "moved_out": [...]}
 이 모듈은 characters/agents를 import하지 않는다 (characters가 이 모듈을 읽는다).
 """
 from __future__ import annotations
@@ -75,7 +75,7 @@ def _pick_drama(used: list[str]) -> dict:
 
 def move_in(existing: set[str], drama: str = "", now=None) -> dict:
     """
-    드라마 인물들을 이사 오게 한다. existing: 이미 쓰는 이름 전부(로스터/에이전트/reserve).
+    애니메이션 인물들을 이사 오게 한다. existing: 이미 쓰는 이름 전부(로스터/에이전트/reserve).
     반환: {"drama", "added": [주민...], "moved_out": [이름...], "reason"}
     """
     now = now or now_kst()
@@ -85,18 +85,18 @@ def move_in(existing: set[str], drama: str = "", now=None) -> dict:
     taken = set(existing) | {r["name"] for r in data.get("residents", [])} | {m["name"] for m in data.get("moved_out", [])}
     out = llm_json(
         "너는 마법 판타지 세계의 변경 마을('오아시스 마을' - 오아시스 마법도서관과 별빛 환영극장, 성벽 수비대가 있는 마을)의 "
-        "인물 설정 담당이다. 한국 드라마 인물을 이 마을로 이사 온 이웃으로 옮겨 온다. 드라마 속 성격/관계/말버릇을 살리되 "
-        "직업과 사는 곳은 이 판타지 마을에 맞게 바꾼다 (의사 -> 치유사, 경찰 -> 민병대원, 회사원 -> 상단 서기 같은 식).\n"
+        "인물 설정 담당이다. 일본 판타지 애니메이션 인물을 이 마을로 이사 온 이웃으로 옮겨 온다. 작품 속 성격/관계/말버릇/직업을 살리되 "
+        "사는 곳과 일은 이 마을에 맞게 정한다 (모험가 -> 길드 모험가, 상인 -> 시장 상인, 마법사 -> 마을 마법사 같은 식).\n"
         + worldcfg.WORLD_RULE,
-        (f"[드라마] {pick['title']}" + (f" ({pick['note']})" if pick.get("note") else "") if pick["title"] else
-         "[드라마] 마을 사람들이 나오는 현대 한국 드라마 하나를 직접 골라라 (아래 '이미 쓴 드라마'는 빼고)")
-        + f"\n[이미 쓴 드라마] {', '.join(used) or '없음'}"
+        (f"[작품] {pick['title']}" + (f" ({pick['note']})" if pick.get("note") else "") if pick["title"] else
+         "[작품] 마을 사람들이 나오는 일본 판타지 애니메이션 하나를 직접 골라라 (아래 '이미 쓴 작품'은 빼고)")
+        + f"\n[이미 쓴 작품] {', '.join(used) or '없음'}"
         + f"\n[이미 있는 이름 - 겹치면 안 됨] {', '.join(sorted(taken))[:3000]}\n\n"
-        "이 드라마에서 마을 이웃으로 어울리는 인물 3~5명을 골라라. 가족이나 친구 사이면 함께 이사 와도 좋다.\n"
-        "- 드라마 속 인물 이름 그대로(성+이름). 실존 배우 이름과 같은 인물, 위 목록에 있는 이름은 빼라.\n"
+        "이 작품에서 마을 이웃으로 어울리는 인물 3~5명을 골라라. 가족이나 친구 사이면 함께 이사 와도 좋다.\n"
+        "- 작품 속 인물 이름 그대로(한국어 정발 표기). 실존 인물과 같은 이름, 위 목록에 있는 이름은 빼라.\n"
         "- 실존 인물/정치/혐오 소재 금지.\n"
         "반드시 JSON으로만 응답:\n"
-        '{"drama": "드라마 제목", "people": [{"name": "이름", "rank": "마을에서의 판타지 직업/처지(짧게)", '
+        '{"drama": "작품 제목", "people": [{"name": "이름", "rank": "마을에서의 판타지 직업/처지(짧게)", '
         '"outer_persona": "겉으로 보이는 모습 한 줄", "inner_truth": "속마음/사연 한 줄", '
         '"key_behavior": "자주 하는 행동 2~3개 쉼표로"}]}',
         temperature=0.6, timeout=TIMEOUT_SEC, tag="새 이웃")

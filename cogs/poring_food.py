@@ -19,7 +19,7 @@
   · /포링푸드명단 [소속] - 지금 스스로 사는 인물들의 소속/자리/맡은 일/고정 여부/지금 하는 일, 최근 교체
   · /포링푸드침입 [지금] - 몬스터 침입 예보(위험도)와 최근 밤들, 지금=True면 바로 침입 (시험용)
   · /포링푸드골목 - 마을 방어 배치 판 그림 + 방어 기금/놓인 것과 상태/손봐야 할 것/최근 기록
-  · /포링푸드이웃 [드라마] - 드라마 인물들을 지금 바로 마을로 이사 오게 한다 (원래는 주 1회 자동)
+  · /포링푸드이웃 [작품] - 애니메이션 인물들을 지금 바로 마을로 이사 오게 한다 (원래는 주 1회 자동)
 """
 from __future__ import annotations
 
@@ -600,9 +600,9 @@ class PoringFood(commands.Cog):
         for page in pages[1:]:
             await interaction.followup.send(page, ephemeral=True)
 
-    @app_commands.command(name="포링푸드이웃", description="[관리자] 드라마 인물들을 지금 마을로 이사 오게 합니다 (원래 주 1회 자동)")
-    @app_commands.describe(드라마="드라마 제목 (비우면 후보 목록에서 아직 안 쓴 것)")
-    async def newcomers_now(self, interaction: Interaction, 드라마: str = ""):
+    @app_commands.command(name="포링푸드이웃", description="[관리자] 애니메이션 인물들을 지금 마을로 이사 오게 합니다 (원래 주 1회 자동)")
+    @app_commands.describe(작품="애니메이션 제목 (비우면 후보 목록에서 아직 안 쓴 것)")
+    async def newcomers_now(self, interaction: Interaction, 작품: str = ""):
         if not is_admin(interaction.user.id):
             await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
             return
@@ -613,7 +613,7 @@ class PoringFood(commands.Cog):
         from poring_food import agents
         async with self._lock:
             try:
-                res = await asyncio.to_thread(agents.move_in_newcomers, 드라마)
+                res = await asyncio.to_thread(agents.move_in_newcomers, 작품)
             except Exception:
                 log.exception("새 이웃 이사 실패")
                 await interaction.followup.send("⚠️ 이사 중 오류가 났어요. 로그를 확인해 주세요.", ephemeral=True)
