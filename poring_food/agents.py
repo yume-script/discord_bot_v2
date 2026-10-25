@@ -29,6 +29,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from . import (arcade, book_watch, characters, chronicle, decor, facilities, handover, hobbies, kpi, life, live, memory, milestones, newcomers, novelty,
+               raids,
                outbox, plex_watch, projects, rotation, news, runtime, signals, street_mail, townmap, villains, world, worldcfg)
 from .clock import now_kst
 from .josa import j
@@ -862,6 +863,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         facilities.prompt_block(),
         street_mail.prompt_block(now),
         decor.prompt_block(now),
+        raids.prompt_block(now),
         book_watch.prompt_block(agent.get("company", ""), now),
         hobbies.prompt_block(agent, now),
         novelty.worn_out(name, now),
@@ -2184,6 +2186,12 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         _handle_decor(decisions, by_name, data, now, hk, hour_triggers)
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 마을 방어 배치 처리 실패: {e}")
+    # 3.13) 몬스터 침입 - 밤 RAID_HOUR 회차에 한 번: 위험도가 문턱을 넘으면 침입 (방어 배치 판 + 수비대 + 사기 vs 몬스터)
+    try:
+        if raids.should_run(now):
+            raids.run(now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 몬스터 침입 처리 실패: {e}")
     # 3.15) 봇 명령어 - /주식 /그림 /개미소리 (판단에서 고른 사람) + 아침 /운세 몇 명 + 장 마감 뒤 주식 손익
     try:
         _handle_hobbies(decisions, by_name, data, now, hk, hour_triggers)
