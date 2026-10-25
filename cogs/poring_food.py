@@ -162,8 +162,9 @@ class PoringFood(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def load_guard(self) -> None:
-        """결계 조절(poring_food/loadshed.py): 서버 부하가 오래 높으면 놀고 있는 허용 컨테이너를 내리고, 내려가면 다시 올린다.
-        재기/내리기/올리기는 잠금 없이(자기 파일만 쓴다), 한 일이 있으면 회차와 같은 잠금 안에서 이야기로 알린다."""
+        """결계 조절(poring_food/loadshed.py) + 감시탑 바로 확인(facilities.quick), 매분.
+        재기/내리기/늦추기는 잠금 없이(자기 파일만 쓴다). 한 일이나 바뀐 컨테이너가 있으면 채널엔 바로 알리고,
+        인물 세계(마을 사건 + 관련 인물의 즉시 반응)는 회차와 같은 잠금 안에서 바로 이어서 반영한다."""
         from poring_food import loadshed
         if not loadshed.ENABLED:
             return
@@ -172,12 +173,32 @@ class PoringFood(commands.Cog):
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 결계 조절 실패")
             return
-        if done:
-            async with self._lock:
-                try:
-                    await asyncio.to_thread(loadshed.announce, done)
-                except Exception:  # noqa: BLE001
-                    log.exception("포링푸드 결계 조절 알림 실패")
+        # 사람이 직접 끄고 켠 컨테이너도 방금 잰 목록으로 바로 잡는다 (감시탑 - 원래는 매시 회차에만 봤다)
+        from poring_food import facilities
+        try:
+            changed = await asyncio.to_thread(lambda: facilities.quick(loadshed.running_by_server()))
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 감시탑 바로 확인 실패")
+            changed = []
+        if not done and not changed:
+            return
+        # 1) 채널엔 바로 (잠금 없이 - 회차가 도는 중이어도 기다리지 않는다)
+        try:
+            if done:
+                await asyncio.to_thread(loadshed.notify, done)
+            if changed:
+                await asyncio.to_thread(facilities.notify, changed)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 결계 조절/감시탑 알림 실패")
+        # 2) 인물 세계엔 잠금 안에서 바로 이어서 (마을 사건 + 관련 인물이 다음 회차를 기다리지 않고 지금 반응)
+        async with self._lock:
+            try:
+                if done:
+                    await asyncio.to_thread(loadshed.reflect, done)
+                if changed:
+                    await asyncio.to_thread(facilities.react, changed)
+            except Exception:  # noqa: BLE001
+                log.exception("포링푸드 결계 조절/감시탑 세계 반영 실패")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:

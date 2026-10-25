@@ -72,8 +72,10 @@ def test_announce_story_and_facilities_ignore_quiet(monkeypatch):
     from poring_food import facilities, memory
     posts, sent = [], []
     loadshed.announce([{"host": "plex01", "do": "stop", "name": "tautulli", "why": "결계 부하 95%"}], T0,
-                      post=posts.append, inject=lambda t, d, title: sent.append(title) or [])
-    assert "환영극장 관객 세는 수정구" in posts[0] and "지은탁" in posts[0] and sent == ["환영극장 관객 세는 수정구 잠시 소등 (결계 조절)"]
+                      post=posts.append, react=lambda d, title, key: sent.append((title, key)) or [])
+    assert "환영극장 관객 세는 수정구" in posts[0] and "지은탁" in posts[0]
+    assert sent[0][0] == "환영극장 관객 세는 수정구 잠시 소등 (결계 조절)"
+    assert sent[0][1][:2] == ["지은탁", "리정혁"] and any(n in sent[0][1] for n in ("소라", "오동백", "성덕선"))   # 극장 사람
     assert any("불을 잠시 껐다" in m["text"] for m in memory.store.memories("지은탁"))
     # 결계 조절로 끈 tautulli는 facilities가 "불 꺼짐" 사고로 알리지 않는다
     _run_minutes([95] * 6)
@@ -121,7 +123,7 @@ def test_throttle_story():
     posts = []
     loadshed.announce([{"host": "plex01", "do": "throttle", "name": "flaskfarm", "kind": "cpus", "why": "x"},
                        {"host": "plex01", "do": "unthrottle", "name": "Plex Media Scanner", "kind": "nice", "why": "y"}],
-                      T0, post=posts.append, inject=lambda *a: [])
+                      T0, post=posts.append, react=lambda *a: [])
     assert "이야기 배급소으로" not in posts[0] and "마나 흐름을 좁혔다" in posts[0] and "🐢" in posts[0]
     assert "환영극장 서고 정리 정령" in posts[1] and "되돌렸다" in posts[1]
 
@@ -131,3 +133,49 @@ def test_process_and_cap_parsing(monkeypatch):
     assert loadshed._caps("X_CAP", "") == {"flaskfarm": 1.0, "ok": 1.5}
     monkeypatch.setenv("X_P", "Plex Media Scanner, rm -rf;/")
     assert loadshed._procs("X_P", "") == ["Plex Media Scanner"]
+
+
+def test_react_now_reaches_everyone_quietly_and_key_people_react_now(fake_llm):
+    from poring_food import agents
+    calls = []
+
+    def llm(system, user):
+        calls.append(system[:20])
+        return {"consider": "어쩌지", "matters": 7, "react": "가만히", "thought": "결계가 걱정된다"}
+    fake_llm(llm)
+    key = loadshed.key_people(["flaskfarm"])
+    got = agents.react_now("지은탁이 이야기 배급소로 가는 마나 흐름을 좁혔다.", "이야기 배급소 마나 흐름 제한 (결계 조절)", key)
+    awake_key = [n for n in key if not agents.is_asleep_now(n)]
+    assert set(got) == set(awake_key)
+    st = agents._load_state()
+    someone_else = next(a["name"] for a in agents.load_agents() if a["name"] not in key)
+    inbox = st[someone_else]["inbox"]
+    assert inbox and inbox[-1].get("quiet") and not inbox[-1].get("urgent")      # 다른 사람은 조용히 안다
+    assert len(calls) >= len(awake_key)
+
+
+def test_facilities_quick_catches_manual_stop_and_start():
+    from poring_food import facilities
+    server = list(facilities.HOSTS)[1]
+    facilities.check(T0, lambda: {server: [{"name": "flaskfarm", "up": True, "started": "a"},
+                                           {"name": "tautulli", "up": True, "started": "a"}]}, inject=lambda *a: [])
+    assert facilities.quick({server: ["tautulli"]}, T0 + timedelta(minutes=1))[0]["title"] == "환영극장 이야기 배급소 불 꺼짐"
+    assert facilities.quick({server: ["tautulli"]}, T0 + timedelta(minutes=2)) == []        # 같은 일은 한 번만
+    posts, reacted = [], []
+    ev = facilities.quick({server: ["tautulli", "flaskfarm"]}, T0 + timedelta(minutes=3))
+    assert ev[0]["kind"] == "up"
+    facilities.notify(ev, T0, post=posts.append)
+    facilities.react(ev, react_now=lambda d, title, key, targets=None: reacted.append((title, targets)) or [])
+    assert "`flaskfarm` ▶ 켜짐" in posts[0] and reacted == [("환영극장 이야기 배급소 다시 불 켜짐", ["별빛 환영극장"])]
+    # 매시 조회가 같은 상태를 보면 또 알리지 않는다
+    sent = []
+    facilities.check(T0 + timedelta(hours=1), lambda: {server: [{"name": "flaskfarm", "up": True, "started": "a"},
+                                                              {"name": "tautulli", "up": True, "started": "a"}]},
+                     inject=lambda *a: sent.append(a) or [])
+    assert sent == []
+
+
+def test_running_by_server_after_step():
+    _run_minutes([20])
+    got = loadshed.running_by_server(T0 + timedelta(seconds=30))
+    assert got[loadshed.HOSTS["plex01"]["docker_mcp"]] == ["plex", "tautulli"]

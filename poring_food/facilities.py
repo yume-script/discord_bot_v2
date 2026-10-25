@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime
 
 from . import runtime, worldcfg
@@ -26,6 +27,7 @@ from .config import STATE_DIR
 
 ENABLED = os.getenv("PORING_FACILITIES", "1") not in ("0", "false", "False", "")
 FACILITIES_PATH = os.path.join(STATE_DIR, "facilities.json")
+_FILE_LOCK = threading.Lock()   # 매시 check()와 매분 quick()이 같은 파일을 고친다
 TIMEOUT_SEC = 60
 TOWN = "마을"   # world.TOWN (순환 import 피하려고 값만)
 
@@ -176,9 +178,10 @@ def check(now: datetime | None = None, fetcher=None, inject=None) -> list[dict]:
     seen = (fetcher or fetch)()
     if not seen:
         return []
-    prev = _load()
-    state, events = diff(prev, seen, now)
-    _save(state)
+    with _FILE_LOCK:
+        prev = _load()
+        state, events = diff(prev, seen, now)
+        _save(state)
     if not prev.get("containers"):
         print(f"[설비] 처음 조회 - 기준만 기록 ({sum(len(v) for v in seen.values())}개 컨테이너)")
         return []
@@ -198,6 +201,80 @@ def check(now: datetime | None = None, fetcher=None, inject=None) -> list[dict]:
             chronicle.update_thread(e["resolves"], e["detail"], resolved=True, resolution=e["detail"])
         print(f"[설비] {e['title']} -> {', '.join(e['targets'])} ({len(got or [])}명)")
     return events
+
+
+def quick(running: dict[str, list[str]], now: datetime | None = None) -> list[dict]:
+    """[매분 - 결계 조절이 잰 도는 컨테이너 목록으로] 표에 있는 컨테이너가 꺼지거나 켜진 것을 바로 잡는다 (사람이 직접
+    docker stop/start 한 것도). running = {서버 키: [도는 이름]}. 결계 조절이 일부러 끄고 켠 것은 뺀다.
+    상태를 고쳐 두므로 매시 check()가 같은 일을 또 알리지 않는다. 반환: 사건 (down/up)."""
+    from . import loadshed
+    if not ENABLED or not running:
+        return []
+    now = now or now_kst()
+    with _FILE_LOCK:
+        return _quick(running, now, loadshed.quiet_names(now))
+
+
+def _quick(running: dict, now: datetime, quiet: set) -> list[dict]:
+    data = _load()
+    containers = data.get("containers") or {}
+    if not containers:
+        return []   # 아직 매시 조회로 기준을 안 잡았다
+    down_since = data.setdefault("down_since", {})
+    events = []
+    for name, c in containers.items():
+        if name not in FACILITIES or c.get("server") not in running:
+            continue
+        up = name in running[c["server"]]
+        if up == bool(c.get("up")):
+            continue
+        c["up"] = up
+        if name in quiet:
+            if up:
+                down_since.pop(name, None)
+            continue
+        label, target, effect = FACILITIES[name]
+        building = HOSTS.get(c["server"], c["server"])
+        if not up:
+            down_since[name] = now.isoformat(timespec="minutes")
+            events.append({"kind": "down", "name": name, "title": f"{label} 불 꺼짐",
+                           "detail": f"{building} {label}의 불이 갑자기 꺼졌다 - {effect}.", "targets": [target]})
+        else:
+            since = down_since.pop(name, "")
+            events.append({"kind": "up", "name": name, "title": f"{label} 다시 불 켜짐",
+                           "detail": f"{label}에 다시 불이 켜졌다" + (f" ({since[11:16]}부터 꺼져 있었다)." if since else "."),
+                           "targets": [target], "resolves": f"{label} 불 꺼짐"})
+    if events:
+        _save(data)
+    return events
+
+
+def notify(events: list[dict], now: datetime | None = None, post=None) -> None:
+    """[잡은 즉시, 잠금 없이] 채널에 바로 알린다 (실제 컨테이너 이름 + 이야기 한 줄)."""
+    now = now or now_kst()
+    if post is None:
+        from .agents import _post_as
+        post = lambda text: _post_as("🛰️ 감시탑", text)   # noqa: E731
+    for e in events:
+        server = next((c.get("server", "") for n, c in (_load().get("containers") or {}).items() if n == e["name"]), "")
+        post(f"-# 🛰️ 감시탑 · {now:%H:%M} · {HOSTS.get(server, server)} `{e['name']}` "
+             f"{'⏹ 꺼짐' if e['kind'] == 'down' else '▶ 켜짐'}\n{e['detail']}")
+
+
+def react(events: list[dict], react_now=None) -> None:
+    """[잠금 안에서] quick이 잡은 일을 인물 세계에 바로 반영 (관련 인물이 지금 반응)."""
+    from . import chronicle, loadshed
+    if react_now is None:
+        from .agents import react_now
+    for e in events:
+        try:
+            react_now(e["detail"], e["title"], loadshed.key_people([e["name"]]), targets=e["targets"])
+        except Exception as ex:  # noqa: BLE001
+            print(f"[설비] 바로 반영 실패 ({e['title']}): {ex}")
+            continue
+        if e.get("resolves"):
+            chronicle.update_thread(e["resolves"], e["detail"], resolved=True, resolution=e["detail"])
+        print(f"[설비] (바로) {e['title']} -> {', '.join(e['targets'])}")
 
 
 def prompt_block() -> str:
