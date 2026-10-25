@@ -211,6 +211,16 @@ python app.py
   많이 낸 MVP +15, 돕는 사람은 절반, 치유사는 다친 사람 1명당 10, 방어 시설을 세우거나 고친 사람은 8. 다음 레벨까지 80 x 지금 레벨,
   레벨당 침입 때 힘 +8%. Lv.5 숙련 / Lv.10 정예 / Lv.20 영웅 / Lv.30 전설 칭호. 판단 때 [내 전투 레벨]을 보고, `/포링푸드명단`에
   `Lv.N`이 붙는다. 시뮬레이션(60일, 평온한 서버): 시설 없으면 대부분 고전, 보통이면 격퇴, 튼튼하면 격퇴/대승, 주력은 Lv.6~8.
+- **결계 조절 - 실제 부하 줄이기** (`poring_food/loadshed.py`, 봇 `load_guard` 매분): 봇 서버(etc)는 `/proc/stat`, Plex 서버(plex01)는
+  `ssh 192.168.0.31`(docker_bookoasis와 같은 접속)로 CPU와 `docker stats`를 잰다. 서버 CPU가 90% 이상으로 5분 이어지면, 그 서버의
+  **허용 목록**에 있고 그 순간 거의 일 안 하는(컨테이너 CPU < 5%) 컨테이너를 `docker stop`으로 내리고, 60% 미만으로 15분 이어지면
+  **직접 내린 것만** `docker start`로 다시 올린다(6시간 넘게 꺼져 있으면 부하와 상관없이 올림, 올린 뒤 30분은 다시 안 내림).
+  허용 목록 기본: etc `docker-warproxy`, plex01 `tautulli` (`PORING_LOADSHED_ETC` / `PORING_LOADSHED_PLEX01`, 쉼표로). 목록에 없는
+  컨테이너(Plex/bookoasis/litellm/vaultwarden…)는 절대 안 건드린다. 이야기로는 결계 마법사 지은탁이 그 감시탑 불을 잠시 끄고 다시
+  켠다(💠 결계 조절 채널 한 줄 + 마을 사건), 감시탑 사고 알림(facilities)으로는 치지 않는다. 몬스터 침입 위험도의 결계 부하는 두
+  서버 중 높은 쪽. `/포링푸드침입`에 지금 부하/내려 둔 것/최근 기록. 기준은 `PORING_LOADSHED_HIGH`(90)/`_HIGH_MIN`(5)/`_LOW`(60)/
+  `_LOW_MIN`(15)/`_IDLE_CPU`(5)/`_MAX_OFF_HOURS`(6), 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
+  (tautulli를 내리면 그동안 환영극 알림/관객 실적은 멈춘다.)
 - **성벽 잔해 치우기/전령 우편함** (`poring_food/street_mail.py`): 메일 관리 Apps Script가 📣│알림방(`PORING_MAIL_CHANNEL_ID`)에 올리는
   웹훅 알림을 봇(아메하나)이 읽어 마을 일로 바꾼다(스크립트는 그대로). "N개의 메일을 휴지통으로" → 홍두식이 성벽 아래 몬스터 잔해
   N/5수레를 치우고 품삯(수레당 2천 원) + 마을 통신방 🧹 한마디(30개 넘으면 "성벽 대청소" 마을 사건). 트래픽 소진 → 통신석 중계탑

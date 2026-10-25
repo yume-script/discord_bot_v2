@@ -3,7 +3,7 @@
 
 - 언제: 매일 밤 RAID_HOUR(기본 22시) 회차에 한 번 (agents.tick -> agents._handle_raid). 하루 한 번만.
 - 위험도(0~100, danger): 실제 수치로 정한다 - 지어내지 않는다.
-  · 결계 부하 = 서버 CPU % (signals facility_numbers "cpu")
+  · 결계 부하 = 서버 CPU % (signals facility_numbers "cpu"와 loadshed가 잰 plex01 중 높은 쪽)
   · 결계 균열 = 멈춘 서비스 수("down") / 최근 재가동(가동 1일 미만)
   · 불 꺼진 감시탑 = facilities.py가 기록한 멈춘 컨테이너 수
   · 날씨 = 비/눈(발소리가 묻힌다), 한파 - 기상청 실측
@@ -84,9 +84,12 @@ def _save(data: dict) -> None:
 # ===================================================================== 위험도
 def gather(now: datetime | None = None) -> dict:
     """위험도 계산에 쓰는 실제 수치를 모은다 (못 받은 건 빠진다)."""
-    from . import facilities, kpi, signals
+    from . import facilities, kpi, loadshed, signals
     now = now or now_kst()
-    fac = signals.live_value("facility_numbers") or {}
+    fac = dict(signals.live_value("facility_numbers") or {})
+    both = loadshed.max_cpu(now)    # 봇 서버(etc)와 Plex 서버(plex01) 중 높은 쪽
+    if both is not None and (fac.get("cpu") is None or both > fac["cpu"]):
+        fac["cpu"] = both
     towers = len([n for n in (facilities._load().get("down_since") or {}) if n in facilities.FACILITIES])
     return {"cpu": fac.get("cpu"), "down": int(fac.get("down") or 0), "uptime_days": fac.get("uptime_days"),
             "towers_down": towers, "weather": kpi._weather_kind(signals.weather_text()), "date": now.strftime("%Y-%m-%d")}
