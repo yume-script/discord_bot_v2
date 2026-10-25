@@ -10,7 +10,7 @@
 - 재는 법(봇 서버 etc에서): etc = /proc/stat 직접 + `docker stats`, plex01 = `ssh <host>`로 같은 것 (docker_bookoasis MCP가
   쓰는 SSH 접속 그대로). 내리기/올리기는 `docker stop` / `docker start`. 못 재면(SSH/도커 실패) 아무것도 안 한다.
 
-이야기: 결계 마법사 지은탁(ACTOR)이 결계 부하를 줄이려고 그 감시탑(facilities.FACILITIES 이름)의 불을 잠시 끄고, 부하가 내려가면
+이야기: 결계 마법사 슈나(ACTOR)이 결계 부하를 줄이려고 그 감시탑(facilities.FACILITIES 이름)의 불을 잠시 끄고, 부하가 내려가면
 다시 켠다 - 채널 한 줄 + 마을 사건. facilities.py는 이 기능이 끈 컨테이너를 "불 꺼짐" 사고로 치지 않는다 (quiet_names).
 raids.py 위험도의 결계 부하는 두 서버 중 높은 쪽(max_cpu)을 쓴다.
 봇(cogs/poring_food.py load_guard)이 CHECK_SEC(60초)마다 step()을 부르고, 한 일이 있으면 잠금 안에서 announce().
@@ -43,7 +43,7 @@ MAX_OFF_HOURS = float(os.getenv("PORING_LOADSHED_MAX_OFF_HOURS", "6"))
 COOLDOWN_MIN = 30
 KEEP_SAMPLES = 40
 TIMEOUT = 25
-ACTOR = "지은탁"
+ACTOR = "슈나"
 NAME = "💠 결계 조절"
 LOADSHED_PATH = os.path.join(STATE_DIR, "loadshed.json")
 
@@ -375,12 +375,12 @@ OWNERS = {"bookoasis_assistant.service": "BOOK", "Plex Media Scanner": "CINEMA"}
 
 
 def key_people(names: list[str], agents: list[dict] | None = None, per_company: int = 2) -> list[str]:
-    """바로 반응할 사람: 지은탁(한 사람) + 수비대장 리정혁 + 그 시설 기관 사람 몇 명."""
+    """바로 반응할 사람: 슈나(한 사람) + 수비대장 베니마루 + 그 시설 기관 사람 몇 명."""
     from . import worldcfg
     from .agents import load_agents
     from .facilities import FACILITIES
     agents = agents if agents is not None else load_agents()
-    out = [ACTOR, "리정혁"]
+    out = [ACTOR, "베니마루"]
     for name in names:
         company = FACILITIES[name][1] if name in FACILITIES else getattr(worldcfg, OWNERS.get(name, ""), "")
         if company in worldcfg.OFFICES:
@@ -389,7 +389,7 @@ def key_people(names: list[str], agents: list[dict] | None = None, per_company: 
 
 
 def reflect(done: list[dict], react=None) -> list[str]:
-    """[잠금 안에서, notify 바로 뒤] 인물 세계에 바로 반영: 마을 사건 + 관련 인물이 지금 반응 + 지은탁 기억."""
+    """[잠금 안에서, notify 바로 뒤] 인물 세계에 바로 반영: 마을 사건 + 관련 인물이 지금 반응 + 슈나 기억."""
     from . import agents as ag, memory
     react = react or ag.react_now
     reacted = []

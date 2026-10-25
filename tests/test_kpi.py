@@ -13,22 +13,22 @@ def test_assign_first_holders_then_handover():
     posts, changes = kpi.assign(_agents(), roster)
     assert not changes  # 처음 배정은 인수인계가 아니다
     assert [p["id"] for p in posts["애순이"]] == ["books"]
-    assert [p["id"] for p in posts["성덕선"]] == ["sales"]
-    assert [p["id"] for p in posts["리정혁"]] == ["facility_stability"]
+    assert [p["id"] for p in posts["크리스"]] == ["sales"]
+    assert [p["id"] for p in posts["베니마루"]] == ["facility_stability"]
     assert [p["id"] for p in posts["소라"]] == ["streams"]
-    # 성덕선이 쉬러 가면 같은 별빛 환영극장 매표·홍보의 조이서가 매표를 맡는다
-    posts, changes = kpi.assign(_agents(without=("성덕선",)), roster)
-    assert [(p["id"], o, n) for p, o, n in changes] == [("sales", "성덕선", "조이서")]
-    assert "sales" in [p["id"] for p in posts["조이서"]]
-    assert kpi.posts_of("조이서")[0]["id"] == "sales"
-    # 성덕선이 돌아와도 지금 담당자(조이서)가 계속 맡는다
+    # 크리스가 쉬러 가면 같은 별빛 환영극장 매표·홍보의 메구밍이 매표를 맡는다
+    posts, changes = kpi.assign(_agents(without=("크리스",)), roster)
+    assert [(p["id"], o, n) for p, o, n in changes] == [("sales", "크리스", "메구밍")]
+    assert "sales" in [p["id"] for p in posts["메구밍"]]
+    assert kpi.posts_of("메구밍")[0]["id"] == "sales"
+    # 크리스가 돌아와도 지금 담당자(메구밍)가 계속 맡는다
     _, changes = kpi.assign(_agents(), roster)
     assert not changes
 
 
 def test_rotation_no_longer_fixes_duty_holders():
     from poring_food import rotation
-    kwon = next(a for a in agents.load_agents() if a["name"] == "김동식")
+    kwon = next(a for a in agents.load_agents() if a["name"] == "위벨")
     assert not rotation._fixed(kwon)
 
 
@@ -43,13 +43,13 @@ def test_record_scores(monkeypatch):
     kpi.record(now)
     rows = kpi._load()["daily"]["2026-10-07"]
     assert rows["books"]["score"] == 200 and rows["books"]["holder"] == "애순이"
-    assert rows["sales"]["score"] == 50 and rows["sales"]["holder"] == "성덕선"
+    assert rows["sales"]["score"] == 50 and rows["sales"]["holder"] == "크리스"
     assert rows["facility_disk"]["score"] == 80
     assert rows["facility_stability"]["score"] == 30  # 멈춘 서비스 1개 + 재가동
     assert rows["streams"]["holder"] == "소라"
-    block = kpi.prompt_block("황용식", kpi.posts_of("황용식"))
+    block = kpi.prompt_block("소우에이", kpi.posts_of("소우에이"))
     assert "창고 적재율 70%" in block
-    assert rows["orders"]["holder"] == "최수연" and "score" in rows["orders"]
+    assert rows["orders"]["holder"] == "칸네" and "score" in rows["orders"]
 
 
 def test_desk_virtual_inquiries_and_vip(monkeypatch):
@@ -104,13 +104,13 @@ def test_weekly_ranking_and_rewards(fake_llm, monkeypatch):
     agent_list = _agents()
     roster = characters.load_roster()
     kpi.assign(agent_list, roster)
-    _seed_week({"애순이": ("books", 150), "김동식": ("books_adult", 90), "최수연": ("orders", 120),
-                "성덕선": ("sales", 100)})
+    _seed_week({"애순이": ("books", 150), "위벨": ("books_adult", 90), "칸네": ("orders", 120),
+                "크리스": ("sales", 100)})
     sent = []
     monkeypatch.setattr(agents.runtime, "send_as", lambda acc, name, text, *a, **k: sent.append((name, text)))
     monkeypatch.setattr(agents.runtime, "has_agent_sender", lambda: True)
     monkeypatch.setattr(agents, "_group_channel", lambda g: 1)
-    fake_llm(lambda system, user: {"text": "지난주 1등 애순이! 김동식 씨는 분발."} if "도서관 통신방" in user else {})
+    fake_llm(lambda system, user: {"text": "지난주 1등 애순이! 위벨 씨는 분발."} if "도서관 통신방" in user else {})
     money = life.get("애순이")["money"]
     data = {}
     monday = datetime(2026, 10, 12, 9, 30)
@@ -119,8 +119,8 @@ def test_weekly_ranking_and_rewards(fake_llm, monkeypatch):
     assert not kpi.weekly_due(monday)
     assert life.get("애순이")["money"] == money + kpi.WEEKLY_BONUS
     assert any("3명 중 1등" in m["text"] for m in data["애순이"]["inbox"])
-    assert any("3명 중 3등" in m["text"] for m in data["김동식"]["inbox"])
-    assert any("실적 100점" in m["text"] for m in data["성덕선"]["inbox"])  # 극장은 혼자라 본인에게만
+    assert any("3명 중 3등" in m["text"] for m in data["위벨"]["inbox"])
+    assert any("실적 100점" in m["text"] for m in data["크리스"]["inbox"])  # 극장은 혼자라 본인에게만
     assert sent and sent[0][0] == "애순이" and "애순이" in sent[0][1]   # 도서관 사장이 도서관 통신방에 발표
     # 같은 주에 다시 돌아도 또 발표하지 않는다
     agents._kpi_reviews(agent_list, roster, {}, monday.replace(hour=11))
@@ -134,7 +134,7 @@ def test_monthly_title_is_permanent(monkeypatch):
     kpi.assign(agent_list, roster)
     data = kpi._load()
     data["daily"] = {"2026-09-10": {"books": {"holder": "애순이", "score": 180, "company": kpi.BOOK},
-                                    "books_adult": {"holder": "김동식", "score": 80, "company": kpi.BOOK}}}
+                                    "books_adult": {"holder": "위벨", "score": 80, "company": kpi.BOOK}}}
     kpi._save(data)
     monkeypatch.setattr(agents, "_group_channel", lambda g: 0)
     agents._kpi_reviews(agent_list, roster, {}, datetime(2026, 10, 1, 10))
@@ -147,10 +147,10 @@ def test_weather_trade():
     rain = "기온 18°C, 흐림, 비 (1mm), 습도 80% (기상청 실측 예보)"
     hot = "기온 33°C, 맑음, 습도 50% → 폭염 - 현장 더위 비상 (기상청 실측 예보)"
     assert kpi.weather_trade("카페", rain)["pct"] == 15
-    assert kpi.weather_trade("선술집", rain)["pct"] == 25
+    assert kpi.weather_trade("길드 주점", rain)["pct"] == 25
     assert kpi.weather_trade("카페", hot)["pct"] == 20  # "비상"을 비로 읽지 않는다
-    assert kpi.weather_trade("선술집", hot)["pct"] == -20
-    assert kpi.weather_trade("선술집", "기온 15°C, 맑음")["pct"] == 0
+    assert kpi.weather_trade("길드 주점", hot)["pct"] == -20
+    assert kpi.weather_trade("길드 주점", "기온 15°C, 맑음")["pct"] == 0
     assert kpi.weather_trade("", rain) is None
     assert kpi.weather_trade("카페", "") is None
 

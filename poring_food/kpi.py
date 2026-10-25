@@ -4,17 +4,17 @@
 | 자리(담당)            | 소속 / 부서                       | 실제 수치 (MCP)                                | 처음 담당 |
 |----------------------|----------------------------------|-----------------------------------------------|----------|
 | 마법서 입고            | 오아시스 마법도서관 운영             | 북오아시스 일반/웹툰 서재 오늘 입고 권 수         | 애순이    |
-| 금서고 입고            | 오아시스 마법도서관 금서고           | 북오아시스 성인/화보 서재 오늘 입고 권 수         | 김동식    |
-| 대출 문의 처리          | 오아시스 마법도서관 대출 창구        | 가상 손님 문의 처리율 + 실제 봇 대화(VIP 문의)  | 최수연    |
-| 새 환영극 입고          | 별빛 환영극장 환영 연출팀            | Plex 오늘 신규 등록 영상 수                     | 오동백    |
-| 관객(매표)             | 별빛 환영극장 매표·홍보              | Tautulli 오늘 재생 수                          | 성덕선    |
+| 금서고 입고            | 오아시스 마법도서관 금서고           | 북오아시스 성인/화보 서재 오늘 입고 권 수         | 위벨    |
+| 대출 문의 처리          | 오아시스 마법도서관 대출 창구        | 가상 손님 문의 처리율 + 실제 봇 대화(VIP 문의)  | 칸네    |
+| 새 환영극 입고          | 별빛 환영극장 환영 연출팀            | Plex 오늘 신규 등록 영상 수                     | 일레이나    |
+| 관객(매표)             | 별빛 환영극장 매표·홍보              | Tautulli 오늘 재생 수                          | 크리스    |
 | 지금 관객              | 별빛 환영극장 로비 찻집              | Tautulli 지금 시청 중인 스트림 수                | 소라      |
-| 결계 부하              | 오아시스 마을 성벽 수비대            | server_status 서버(머신) 전체 CPU %             | 지은탁    |
-| 보급 창고 적재율        | 오아시스 마을 성벽 수비대            | server_status 로컬 디스크 전체 사용률 (낮을수록)  | 황용식    |
-| 성벽 안전              | 오아시스 마을 성벽 수비대            | server_status 연속 가동일 / 멈춘 서비스 수       | 리정혁    |
-| 수비대 주문 처리        | 오아시스 마을 성벽 수비대            | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)         | 최택      |
-| 마나 소모              | 오아시스 마을 성벽 수비대            | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)       | 동그라미  |
-| 주점 내기 판 매출       | 오아시스 마을 (마을 가게)            | 음유 주점 내기 판 - 손님(인물)들이 잃은 돈 - 딴 돈 | 오윤      |
+| 결계 부하              | 오아시스 마을 성벽 수비대            | server_status 서버(머신) 전체 CPU %             | 슈나    |
+| 보급 창고 적재율        | 오아시스 마을 성벽 수비대            | server_status 로컬 디스크 전체 사용률 (낮을수록)  | 소우에이    |
+| 성벽 안전              | 오아시스 마을 성벽 수비대            | server_status 연속 가동일 / 멈춘 서비스 수       | 베니마루    |
+| 수비대 주문 처리        | 오아시스 마을 성벽 수비대            | LiteLLM 오늘 요청 수 (못 받으면 봇 집계)         | 고브타      |
+| 마나 소모              | 오아시스 마을 성벽 수비대            | LiteLLM 오늘 토큰 (평소보다 적을수록 좋다)       | 리리나  |
+| 주점 내기 판 매출       | 오아시스 마을 (마을 가게)            | 길드 주점 내기 판 - 손님(인물)들이 잃은 돈 - 딴 돈 | 자인      |
 
 - 담당은 사람이 아니라 자리에 붙는다: 담당자가 교체(rotation.py)로 쉬러 가면 같은 소속·부서의 다른 에이전트가
   인수인계받는다 (처음 담당자가 있으면 그 사람 먼저). 부서에 에이전트가 없으면 그동안 공석.
@@ -32,7 +32,7 @@
   쌓여 다음 시간/다음 날로 넘어간다 (밤에 온 문의는 아침에 밀려 있다). 실제 사람이 봇에게 보낸 메시지는
   VIP 문의 - 봇이 바로 응대했으니 처리된 것으로 치고, 1건을 일반 문의 PORING_DESK_VIP_WEIGHT건 실적으로 가산한다.
   점수 = (오늘 처리 + VIP x 가중치) / 오늘 들어온 문의 x 100 (다 처리하면 100, 밀린 걸 털거나 VIP가 있으면 그 이상).
-- 날씨 장사(weather_trade): 기상청 날씨로 카페/선술집 손님이 오늘 얼마나 달라질지 (agents.json "trade").
+- 날씨 장사(weather_trade): 기상청 날씨로 카페/길드 주점 손님이 오늘 얼마나 달라질지 (agents.json "trade").
 
 저장: storage/poring_food/kpi.json {"holders", "daily": {날짜: {자리: 기록}}, "weekly_done", "monthly_done",
 "titles", "history", "desk"} - daily는 최근 70일만, 나머지는 지우지 않는다.
@@ -77,25 +77,25 @@ _DESK_WEATHER = {"snow": (1.3, "눈 - 못 나오는 손님들 통신석 대출/�
 POSTS = [
     {"id": "books", "company": BOOK, "dept": "운영", "first": "애순이", "kind": "count", "metric": "books",
      "line": "마법서 입고", "verb": "입고", "unit": "권", "source": "북오아시스 일반/웹툰 서재 오늘 입고 권 수"},
-    {"id": "books_adult", "company": BOOK, "dept": "금서고", "first": "김동식", "kind": "count", "metric": "books_adult",
+    {"id": "books_adult", "company": BOOK, "dept": "금서고", "first": "위벨", "kind": "count", "metric": "books_adult",
      "line": "금서고 입고", "verb": "입고", "unit": "권", "source": "북오아시스 성인/화보 서재 오늘 입고 권 수"},
-    {"id": "orders", "company": BOOK, "dept": "대출 창구", "first": "최수연", "kind": "desk", "metric": "orders",
+    {"id": "orders", "company": BOOK, "dept": "대출 창구", "first": "칸네", "kind": "desk", "metric": "orders",
      "line": "대출 문의 처리", "verb": "문의", "unit": "건", "source": "도서관 대출 창구 문의 (실제 봇 대화는 VIP 문의)"},
-    {"id": "plex", "company": CINEMA, "dept": "환영 연출팀", "first": "오동백", "kind": "count", "metric": "plex",
+    {"id": "plex", "company": CINEMA, "dept": "환영 연출팀", "first": "일레이나", "kind": "count", "metric": "plex",
      "line": "새 환영극 입고", "verb": "입고", "unit": "편", "source": "Plex 오늘 신규 등록 영상 수"},
-    {"id": "sales", "company": CINEMA, "dept": "매표·홍보", "first": "성덕선", "kind": "count", "metric": "sales",
+    {"id": "sales", "company": CINEMA, "dept": "매표·홍보", "first": "크리스", "kind": "count", "metric": "sales",
      "line": "관객(매표)", "verb": "매표", "unit": "장", "source": "Tautulli 오늘 재생 수"},
     {"id": "streams", "company": CINEMA, "dept": "로비 찻집", "first": "소라", "kind": "level", "metric": "streams",
      "line": "지금 관객", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수 (상영관이 차면 로비 찻집도 바쁘다)"},
-    {"id": "facility_cpu", "company": STREET, "dept": "성벽 수비대", "first": "지은탁", "kind": "level", "metric": "cpu",
+    {"id": "facility_cpu", "company": STREET, "dept": "성벽 수비대", "first": "슈나", "kind": "level", "metric": "cpu",
      "line": "결계 부하", "unit": "%", "source": "server_status 서버 전체 CPU 사용률"},
-    {"id": "facility_disk", "company": STREET, "dept": "성벽 수비대", "first": "황용식", "kind": "disk", "metric": "disk",
+    {"id": "facility_disk", "company": STREET, "dept": "성벽 수비대", "first": "소우에이", "kind": "disk", "metric": "disk",
      "line": "보급 창고 적재율", "unit": "%", "source": "server_status 서버 로컬 디스크 전체 사용률"},
-    {"id": "facility_stability", "company": STREET, "dept": "성벽 수비대", "first": "리정혁", "kind": "stability",
+    {"id": "facility_stability", "company": STREET, "dept": "성벽 수비대", "first": "베니마루", "kind": "stability",
      "metric": "stability", "line": "성벽 안전", "unit": "점", "source": "server_status 연속 가동일 / 멈춘 서비스"},
-    {"id": "llm_requests", "company": STREET, "dept": "성벽 수비대", "first": "최택", "kind": "count", "metric": "llm_requests",
+    {"id": "llm_requests", "company": STREET, "dept": "성벽 수비대", "first": "고브타", "kind": "count", "metric": "llm_requests",
      "line": "수비대 주문 처리", "verb": "처리", "unit": "건", "source": "LiteLLM 오늘 요청 수 (프록시 전체, 못 받으면 봇 집계)"},
-    {"id": "llm_cost", "company": STREET, "dept": "성벽 수비대", "first": "동그라미", "kind": "cost", "metric": "llm_tokens",
+    {"id": "llm_cost", "company": STREET, "dept": "성벽 수비대", "first": "리리나", "kind": "cost", "metric": "llm_tokens",
      "line": "마나 소모", "unit": "토큰", "source": "LiteLLM 오늘 사용 토큰 (평소보다 적을수록 좋음)"},
     {"id": "arcade", "company": STREET, "dept": "마을 가게", "first": arcade.MANAGER, "kind": "arcade",
      "metric": "arcade", "line": "주점 내기 판 매출", "unit": "원", "source": f"{arcade.PLACE} 내기 판 - 손님들이 봇 미니게임에서 잃은 돈 - 딴 돈"},
@@ -423,10 +423,10 @@ def prompt_block(name: str, posts: list[dict]) -> str:
 
 def weather_trade(trade: str, weather: str | None = None) -> dict | None:
     """
-    카페/선술집의 오늘 날씨 장사. {"pct": 손님 증감 %, "why": 이유} 또는 None (날씨 모름/해당 없음).
+    카페/길드 주점의 오늘 날씨 장사. {"pct": 손님 증감 %, "why": 이유} 또는 None (날씨 모름/해당 없음).
     날씨는 기상청 실측 한 줄 ("기온 18°C, 맑음, 비 (1mm), ...").
     """
-    if trade not in ("카페", "선술집"):
+    if trade not in ("카페", "길드 주점"):
         return None
     weather = signals.weather_text() if weather is None else weather
     if not weather:
@@ -438,7 +438,7 @@ def weather_trade(trade: str, weather: str | None = None) -> dict | None:
     if kind == "rain":
         return {"pct": 15 if cafe else 25, "why": "비 오는 날 - " + ("따뜻한 약초차 들고 비 피하는 손님" if cafe else "비 오는 날엔 전에 곡주")}
     if kind == "hot":
-        return {"pct": 20 if cafe else -20, "why": "더운 날 - " + ("얼음 박하차 주문 폭주" if cafe else "더워서 선술집은 한산")}
+        return {"pct": 20 if cafe else -20, "why": "더운 날 - " + ("얼음 박하차 주문 폭주" if cafe else "더워서 길드 주점은 한산")}
     if kind == "cold":
         return {"pct": 10 if cafe else 15, "why": "추운 날 - " + ("몸 녹이러 들어오는 손님" if cafe else "따끈한 국물 찾는 손님")}
     return {"pct": 0, "why": "무난한 날씨 - 평소 장사"}

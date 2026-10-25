@@ -1,4 +1,4 @@
-"""한국어 조사 붙이기 - 이름 끝 받침에 따라 이/가, 와/과, 랑/이랑, 은/는, 을/를을 고른다 ("성덕선가" -> "성덕선이")."""
+"""한국어 조사 붙이기 - 이름 끝 받침에 따라 이/가, 와/과, 랑/이랑, 은/는, 을/를을 고른다 ("크리스가" -> "크리스가")."""
 from __future__ import annotations
 
 PAIRS = {"이": ("이", "가"), "가": ("이", "가"), "와": ("과", "와"), "과": ("과", "와"), "랑": ("이랑", "랑"),
@@ -13,6 +13,6 @@ def has_batchim(word: str) -> bool:
 
 
 def j(word: str, particle: str) -> str:
-    """j("성덕선", "가") -> "성덕선이", j("소라", "와") -> "소라와"."""
+    """j("크리스", "가") -> "크리스가", j("소라", "와") -> "소라와"."""
     with_b, without_b = PAIRS.get(particle, (particle, particle))
     return word + (with_b if has_batchim(word) else without_b)

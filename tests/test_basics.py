@@ -8,11 +8,11 @@ from poring_food.josa import j
 
 
 def test_josa():
-    assert j("성덕선", "가") == "성덕선이"
+    assert j("크리스", "가") == "크리스가"
     assert j("소라", "가") == "소라가"
-    assert j("이지안", "와") == "이지안과"
+    assert j("페른", "와") == "페른과"
     assert j("애순이", "와") == "애순이와"
-    assert j("동그라미", "랑") == "동그라미랑"
+    assert j("리리나", "랑") == "리리나랑"
 
 
 def test_similar_topics():
@@ -23,7 +23,7 @@ def test_similar_topics():
 
 def test_place_label_groups():
     assert agents._place_label("회사 1층 찻집 오후세시") == "☕ 찻집 오후세시"
-    assert agents._place_label("선술집") == "🏮 선술집 단밤"
+    assert agents._place_label("길드 주점") == "🍺 길드 주점"
     assert agents._place_label("자취방에서 쉬는 중") == "🏠 집"
 
 
@@ -46,7 +46,7 @@ def test_child_schedule(monkeypatch):
 
 
 def test_company_people_are_office_even_with_tricky_words():
-    c = {"id": "x", "name": "구동매", "rank": "부장", "dept": "서가팀", "company": "오아시스 마법도서관",
+    c = {"id": "x", "name": "마르실", "rank": "부장", "dept": "서가팀", "company": "오아시스 마법도서관",
          "outer_persona": "", "inner_truth": "화가 나서가 아니라 손가락이 굵어서", "key_behavior": ""}
     assert characters.life_type(c)[0] == "office"
 

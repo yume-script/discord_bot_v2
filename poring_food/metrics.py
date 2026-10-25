@@ -8,7 +8,7 @@
 |                     | (서재별 전체 권 수 - 어제 마지막 전체 권 수)     | bookoasis get_library_stats         |
 |  └ 담당 라인         | books=도서관 일반/웹툰 서가(애순이), books_adult=금서고, plex=극장 필름 |                                     |
 | 판매량(별빛 환영극장 상영) | 오늘 Plex 재생 수, 지금 시청 중인 수(객석 손님)  | tautulli plays_by_date / activity   |
-| 주문·고객 문의        | 오늘 사람이 봇에게 보낸 메시지 수 - 최수연 실적은 | 대화 로그 DB (예전 "생산량")         |
+| 주문·고객 문의        | 오늘 사람이 봇에게 보낸 메시지 수 - 칸네 실적은 | 대화 로그 DB (예전 "생산량")         |
 |                     | 가상 손님 문의(kpi.py desk), 이건 VIP 문의로만 가산 |                                     |
 | 연산 처리 / 관리비    | 오늘 LLM 요청 수 / 토큰                       | llm_usage get_llm_usage (LiteLLM     |
 |                     |                                              | 프록시 전체, 못 받으면 봇 직접 집계)  |

@@ -3,11 +3,12 @@
 
 - 매시 판단(agents._decide)에서 개인시간에 하고 싶으면 "game"을 고른다 (게임, 건 돈, 선택). LLM 호출은 늘지 않는다.
 - 판정/배당/일일 횟수 제한은 사람과 똑같이 봇의 게임 엔진(core/game_engine.py)을 그대로 쓴다.
-  방은 ROOM(가상 세계 전용, 사람들 머니와 섞이지 않는다), 유저는 인물 이름.
+  방은 ROOM(가상 세계 전용, 사람들 머니와 섞이지 않는다), 유저는 인물 이름의 고유 키(_uid - 머니 파일 이름이
+  영문/숫자만 남기고 바꿔서, 한글 이름 그대로면 글자 수가 같은 인물끼리 파일이 겹친다).
 - 돈은 이야기 속 돈(life.py money): 하기 전에 게임 머니를 그 사람 돈으로 맞추고, 끝나면 바뀐 만큼 이야기 속 돈에 반영한다.
 - 건 돈은 가진 돈의 MAX_BET_RATIO 이하, MAX_BET 이하로 자른다. 한 사람 하루 MAX_PLAYS_PER_DAY판.
 - 결과: 인물이 친 명령과 오락실 결과를 에이전트 채널에 올리고(사람이 하듯), 기분이 바뀌고, 크게 따거나 잃으면 기억에 남는다.
-- 주인: 오락기는 골목 음유 주점(PLACE)에 있고 주인은 MANAGER(기본 오윤 - 실적 자리 "오락기 매출", 교체되면 인수인계받은 사람).
+- 주인: 오락기는 길드 주점(PLACE)에 있고 주인은 MANAGER(기본 자인 - 실적 자리 "오락기 매출", 교체되면 인수인계받은 사람).
   손님이 한 판 할 때마다 주인이 자기 말투로 한마디(LLM 1회/판, agents._arcade_comment), 너무 잃는 손님은 오늘 그만 받을 수 있고
   (cut_off), 크게 딴 손님이 나오면 마을 통신방에 알린다. 손님들이 잃은 돈이 가게 매출 = 주인 실적(kpi.py "arcade").
 저장: storage/poring_food/arcade.json {"days": {날짜: {"plays", "revenue", "by": {이름: 손익}}}, "cutoff": {날짜: [이름]}} - 14일
@@ -31,8 +32,8 @@ MAX_BET_RATIO = 0.1
 MIN_BET = 1000
 MAX_PLAYS_PER_DAY = int(os.getenv("PORING_ARCADE_MAX_PER_DAY", "3"))
 BIG = 200_000            # 이만큼 넘게 따거나 잃으면 오래 기억한다
-MANAGER = os.getenv("PORING_ARCADE_MANAGER", "오윤")
-PLACE = os.getenv("PORING_ARCADE_PLACE", "음유 주점")
+MANAGER = os.getenv("PORING_ARCADE_MANAGER", "자인")
+PLACE = os.getenv("PORING_ARCADE_PLACE", "길드 주점")
 ARCADE_PATH = os.path.join(STATE_DIR, "arcade.json")
 KEEP_DAYS = 14
 
@@ -135,10 +136,15 @@ def _engine():
     return game_engine
 
 
+def _uid(name: str) -> str:
+    """머니 파일용 인물 키 (영문/숫자만) - "위벨"과 "소라"가 같은 파일("__")이 되지 않게."""
+    return "pf_" + name.encode("utf-8").hex()
+
+
 def plays_today(name: str) -> int:
     try:
         ms = _engine().money_system
-        return sum(ms.get_daily_count(ROOM, name, key) for _, _, key in GAMES.values())
+        return sum(ms.get_daily_count(ROOM, _uid(name), key) for _, _, key in GAMES.values())
     except Exception:  # noqa: BLE001
         return 0
 
@@ -160,8 +166,8 @@ def play(name: str, game: dict, now: datetime | None = None) -> dict | None:
         return None
     eng = _engine()
     func, choices, _ = GAMES[game["name"]]
-    eng.money_system.set_balance(ROOM, name, money, "포링푸드 이야기 속 돈과 맞춤")
-    args = (ROOM, name, game["choice"], bet) if choices else (ROOM, name, bet)
+    eng.money_system.set_balance(ROOM, _uid(name), money, "포링푸드 이야기 속 돈과 맞춤")
+    args = (ROOM, _uid(name), game["choice"], bet) if choices else (ROOM, _uid(name), bet)
     result = getattr(eng, func)(*args)
     change = _change(result)
     if change is None:  # 일일 제한/잔액 부족 등으로 못 함

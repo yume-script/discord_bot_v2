@@ -8,7 +8,7 @@
 - 새로 읽은 기록(마지막으로 읽은 시각이나 쪽수가 지난번과 다른 책)이 있으면 ANNOUNCER(기본 애순이)가 자기 말투로
   마을 통신방에 한마디 (LLM 1회, 실패하면 정해진 문장). 처음 조회는 기준만 기록한다.
 - 실제 읽은 사람 계정은 이야기에 넣지 않는다 ("손님"). 성인 서재(BOOKOASIS_ADULT_DB_TYPES)는 제목 없이
-  "금서고에 손님"으로만 - 금서고 담당 김동식이 마을이 아니라 도서관 통신방에 알린다.
+  "금서고에 손님"으로만 - 금서고 담당 위벨이 마을이 아니라 도서관 통신방에 알린다.
 - 같은 작품(시리즈 단위)은 SAME_TITLE_HOURS 안에 다시 알리지 않는다 (한 권 읽는 동안 쪽수가 계속 바뀌어도 한 번).
   한 시간에 MAX_PER_HOUR개까지, 알리는 사람이 자는 시간엔 기록만.
 - 인물들은 판단 때 [요즘 오아시스 마법도서관 손님이 읽은 책]을 본다 (얘깃거리로, 추가 LLM 없음).
@@ -28,7 +28,7 @@ from .config import BOOKOASIS_ADULT_DB_TYPES, BOOKOASIS_ENABLED, BOOKOASIS_MCP_S
 ENABLED = BOOKOASIS_ENABLED and os.getenv("PORING_BOOK_WATCH", "1") not in ("0", "false", "False", "")
 POLL_SEC = int(os.getenv("PORING_BOOK_WATCH_SEC", "600"))
 ANNOUNCER = os.getenv("PORING_BOOK_WATCH_ANNOUNCER", "애순이")
-ADULT_ANNOUNCER = os.getenv("PORING_BOOK_WATCH_ADULT_ANNOUNCER", "김동식")
+ADULT_ANNOUNCER = os.getenv("PORING_BOOK_WATCH_ADULT_ANNOUNCER", "위벨")
 PLACE = "오아시스 마법도서관"
 MAX_PER_HOUR = int(os.getenv("PORING_BOOK_WATCH_MAX_PER_HOUR", "3"))
 SAME_TITLE_HOURS = 3
@@ -148,7 +148,7 @@ def process(rows: list[dict], now: datetime | None = None) -> list[dict]:
             if any(a.get("work") == item["work"] and a["at"] >= recent for a in announced) or \
                     any(d["work"] == item["work"] for d in done):
                 continue  # 같은 작품을 방금 알렸다 (읽는 동안 쪽수가 계속 바뀐다)
-            # 일반 서가는 애순이가 마을 통신방에, 금서고는 김동식이 도서관 통신방에 (마을에 떠들 일은 아니라서)
+            # 일반 서가는 애순이가 마을 통신방에, 금서고는 위벨이 도서관 통신방에 (마을에 떠들 일은 아니라서)
             agent = by_name.get(ADULT_ANNOUNCER if item["adult"] else ANNOUNCER) or by_name.get(ANNOUNCER)
             group = ag._shop_group(agent.get("company", "")) if agent and item["adult"] else ag.TOWN_GROUP
             rec = {"at": now.isoformat(timespec="minutes"), "work": item["work"], "title": item["title"],

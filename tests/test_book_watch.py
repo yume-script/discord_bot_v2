@@ -48,7 +48,7 @@ def test_adult_shelf_hidden_and_inside_shop_only(fake_llm, monkeypatch):
     got = book_watch.process([_row(9, "비밀 화보집", "2026-10-14 20:55:00", db="adult", pages=40)], now)
     assert got == [{"work": "adult|비밀 화보집", "title": ""}]
     p = _posts()[-1]
-    assert p["name"] == "김동식" and p["group"] == "도서관 통신방" and "비밀 화보집" not in p["text"]
+    assert p["name"] == "위벨" and p["group"] == "도서관 통신방" and "비밀 화보집" not in p["text"]
     assert book_watch.prompt_block("오아시스 마을", now) == ""              # 마을 사람은 모른다
     block = book_watch.prompt_block("오아시스 마법도서관", now)
     assert "금서고 책 한 권" in block and "비밀 화보집" not in block

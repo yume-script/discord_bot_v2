@@ -8,7 +8,7 @@
 - 기본 모델이 429(분당 한도)면 PORING_LLM_RETRY_SEC초 쉬고 한 번만 더 부른다 - 매시 회차에 호출이 몰려
   분당 한도에 걸린 판단이 그냥 "평소 루틴"으로 떨어지지 않게.
 - 인물 전용 모델(PORING_AGENT_MODELS, agent=이름): 정해 둔 인물의 판단/대화/모임 발언/투표는 그 모델로
-  (예: "groq_free:소라,김동식,..." - 다른 두뇌라 말투와 판단이 다른 사람들과 확실히 달라지고, 기본 모델 하루 한도도
+  (예: "groq_free:소라,위벨,..." - 다른 두뇌라 말투와 판단이 다른 사람들과 확실히 달라지고, 기본 모델 하루 한도도
   아낀다). 추론 모델이면 생각 토큰을 줄이게 reasoning_effort(PORING_AGENT_MODEL_REASONING, 기본 low)를 붙인다.
   실패하면 그 호출만 기본 모델로 다시 부르고, 429(분당 토큰 한도)면 AGENT_MODEL_COOLDOWN_SEC 동안은 바로 기본 모델로.
 - 요청은 모두 ai/llm_usage.py가 센다 (출처 "포링푸드", 상위 모델은 "포링푸드(상위)", 인물 전용은 "포링푸드(모델이름)").
@@ -97,7 +97,7 @@ def _count(table: dict, key: str) -> None:
 
 
 def parse_agent_models(raw: str) -> dict[str, str]:
-    """"groq_free:소라,김동식; other:조이서" -> {"소라": "groq_free", "김동식": "groq_free", "조이서": "other"}."""
+    """"groq_free:소라,위벨; other:메구밍" -> {"소라": "groq_free", "위벨": "groq_free", "메구밍": "other"}."""
     out: dict[str, str] = {}
     for part in (raw or "").split(";"):
         model, sep, names = part.partition(":")
@@ -109,7 +109,7 @@ def parse_agent_models(raw: str) -> dict[str, str]:
     return out
 
 
-AGENT_MODELS = parse_agent_models(os.getenv("PORING_AGENT_MODELS", "groq_free:소라,김동식,조이서,오상식,이지안,오동백,권민우,최수연,정명석,리정혁"))
+AGENT_MODELS = parse_agent_models(os.getenv("PORING_AGENT_MODELS", "groq_free:소라,위벨,메구밍,슈타르크,페른,일레이나,덴켄,칸네,세나,베니마루"))
 
 
 def agent_model(name: str) -> str:

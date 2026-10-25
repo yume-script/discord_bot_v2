@@ -28,7 +28,7 @@ def test_parse_and_bet_caps(money_dir):
 
 def test_daily_limit(money_dir, monkeypatch):
     random.seed(1)
-    name = "김동식"
+    name = "위벨"
     plays = [arcade.play(name, {"name": "주사위", "bet": 5000, "choice": ""}) for _ in range(arcade.MAX_PLAYS_PER_DAY + 2)]
     assert sum(1 for p in plays if p) == arcade.MAX_PLAYS_PER_DAY
     assert arcade.prompt_rule(name) == ""                     # 오늘 다 했으면 판단 프롬프트에서 빠진다
@@ -50,7 +50,7 @@ def test_handle_arcade_posts_command_result_and_manager_comment(money_dir, monke
     by_name = {a["name"]: a for a in agents.load_agents()}
     now = datetime(2026, 10, 12, 20, 3)
     decisions = {"소라": {"state": "개인시간", "game": {"name": "가위바위보", "bet": 3000, "choice": "보"}},
-                 "김동식": {"state": "일하는 중", "game": {"name": "슬롯머신", "bet": 3000, "choice": ""}}}
+                 "위벨": {"state": "일하는 중", "game": {"name": "슬롯머신", "bet": 3000, "choice": ""}}}
     data, triggers = {}, {}
     agents._handle_arcade(decisions, by_name, data, now, "2026-10-12 20", triggers)
     items = outbox.take_due(now + timedelta(hours=1), limit=20)
@@ -59,7 +59,7 @@ def test_handle_arcade_posts_command_result_and_manager_comment(money_dir, monke
     assert texts[1][0] == agents.ARCADE_NAME and "변동:" in texts[1][1]
     assert texts[2][0] == arcade.MANAGER and texts[2][1].endswith(f"{arcade.MANAGER} → 소라\n오늘은 여기까지.")
     assert len(texts) == 3                                    # 3천 원짜리 판은 대박이 아니라 통신방엔 안 올린다
-    assert not any(n == "김동식" for n, _ in texts)           # 일하는 중이면 안 한다
+    assert not any(n == "위벨" for n, _ in texts)           # 일하는 중이면 안 한다
     assert any(arcade.PLACE in m["text"] for m in data["소라"]["inbox"])
     assert arcade.is_cut_off("소라", now) and arcade.prompt_rule("소라", now) == ""   # 주인이 오늘은 그만 받는다
     assert arcade.play("소라", {"name": "주사위", "bet": 3000, "choice": ""}, now) is None

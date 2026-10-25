@@ -6,9 +6,9 @@ Apps Script는 고치지 않는다. 메일 제목/미리보기/인증 코드는 
 
 | 알림방 메시지                                   | 오아시스 마을                                                    |
 |------------------------------------------------|-----------------------------------------------------------------|
-| ...메일 정리.GAS: 🗑️ N개의 메일을 휴지통으로     | 🧹 홍두식이 성벽 아래 몬스터 잔해 N수레를 치움 (품삯, 많으면 "성벽 대청소") |
+| ...메일 정리.GAS: 🗑️ N개의 메일을 휴지통으로     | 🧹 카즈마가 성벽 아래 몬스터 잔해 N수레를 치움 (품삯, 많으면 "성벽 대청소") |
 | 알림대기: 일일 기본 제공량을 모두 사용            | 수비대: 통신석 중계탑 마나가 바닥남 (마을 사건)                     |
-| 알림대기: 예약 작업이 정상적으로 완료             | 지하 보급 창고 정리 끝 (수비대 황용식에게)                          |
+| 알림대기: 예약 작업이 정상적으로 완료             | 지하 보급 창고 정리 끝 (수비대 소우에이에게)                          |
 | 알림대기: Google Takeout                       | 성문 전령 초소에 큰 짐 상자 도착                                    |
 | 알림대기: 서버 다운 알림                         | 이웃 마을 결계가 무너졌다는 소식 (마을 사건)                         |
 | 알림대기: 이메일 인증 코드 / 새 메일 도착          | 마을 전령 우편함에 봉인 편지/편지 한 통 (개수만 센다)                 |
@@ -31,7 +31,7 @@ from .config import STATE_DIR
 
 ENABLED = os.getenv("PORING_STREET_MAIL", "1") not in ("0", "false", "False", "")
 CHANNEL_ID = int(os.getenv("PORING_MAIL_CHANNEL_ID", "591180628842774554") or 0)
-CLEANER = os.getenv("PORING_STREET_CLEANER", "홍두식")
+CLEANER = os.getenv("PORING_STREET_CLEANER", "카즈마")
 WAGE_PER_BAG = 2000          # 잔해 한 수레 품삯 (이야기 속 돈)
 BAG_SIZE = 5                 # 메일 5개 = 잔해 한 수레
 BIG_CLEANUP = 30             # 이만큼 넘게 치우면 "성벽 대청소" 마을 사건
@@ -121,11 +121,11 @@ def handle(ev: dict, now: datetime | None = None) -> str:
             ag.inject_event([ag.world.TOWN], "이웃 마을 결계가 무너졌다는 소식이 마을에 돌았다.", "이웃 마을 결계 붕괴")
             out = "이웃 마을 결계 붕괴"
         elif kind == "nas":
-            ag.deliver("황용식", "지하 보급 창고 정리 작업이 예정대로 끝났다.", "업무", quiet=True)
-            out = "지하 창고 정리 끝 (황용식)"
+            ag.deliver("소우에이", "지하 보급 창고 정리 작업이 예정대로 끝났다.", "업무", quiet=True)
+            out = "지하 창고 정리 끝 (소우에이)"
         elif kind == "takeout":
             ag.deliver(CLEANER, "성문 전령 초소에 큰 짐 상자가 하나 도착했다 - 누가 날라 줘야 한다.", "소식", quiet=True)
-            out = "전령 초소 큰 짐 (홍두식)"
+            out = "전령 초소 큰 짐 (카즈마)"
     _save(data)
     if out:
         print(f"[성벽 청소] {out}")

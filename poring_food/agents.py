@@ -88,7 +88,7 @@ GROUP_RECENT = 10
 GOSSIP_MAX_RECIPIENTS = 2
 GOSSIP_P_SAME_PLACE = 0.6     # 직접 만난 대화를 같은 곳에 있던 사람이 엿들음
 GOSSIP_P_COLLEAGUE = 0.25     # 같은 회사 동료에게 말이 돎
-GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/선술집 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
+GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/길드 주점 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
 GOSSIP_P_OTHER = 0.05
 # 담당 업무(kpi.py 자리) - 실제 서비스 수치가 그 자리 담당자의 실적이다
 DUTY_BIG_RATIO = 2.0      # 오늘 입고가 평소 하루 평균의 이만큼 이상이면 회사 사건 (하루 한 번)
@@ -143,7 +143,7 @@ def _names_ever_used() -> set[str]:
 
 
 def move_in_newcomers(drama: str = "") -> dict:
-    """[주 1회 / 관리자] 드라마 인물들이 마을로 이사 온다. 채널/연대기/모두의 받은편지함(깨우지 않음)에 알린다.
+    """[주 1회 / 관리자] 애니메이션 인물들이 마을로 이사 온다. 채널/연대기/모두의 받은편지함(깨우지 않음)에 알린다.
     마을 배경 인물이 상한을 넘으면 먼저 온 새 이웃이 이사 간다. 반환: newcomers.move_in 결과 + moved_out."""
     try:
         with open(AGENTS_PATH, "r", encoding="utf-8") as f:
@@ -522,7 +522,7 @@ ARCADE_NAME = f"🎰 {arcade.PLACE}"
 
 
 def _arcade_manager(by_name: dict, player: str, now) -> dict | None:
-    """지금 가게를 보고 있는 오락기 주인 (실적 자리 담당 - 처음엔 오윤). 손님 본인이거나 자는 중이면 None."""
+    """지금 가게를 보고 있는 오락기 주인 (실적 자리 담당 - 처음엔 자인). 손님 본인이거나 자는 중이면 None."""
     name = kpi.holder("arcade") or arcade.MANAGER
     m = by_name.get(name)
     if not m or name == player or _asleep(m, now.hour):
@@ -537,7 +537,7 @@ def _arcade_comment(manager: dict, player: str, r: dict, now) -> dict | None:
     sign = "+" if r["change"] >= 0 else ""
     user = (
         "\n\n".join(b for b in (
-            f"[지금] {now.strftime('%H:%M')}, 내 가게(골목 음유 주점) 구석의 내기 판 앞.",
+            f"[지금] {now.strftime('%H:%M')}, 내 가게(길드 주점) 구석의 내기 판 앞.",
             life.prompt_block(manager["name"]),
             memory.prompt_block(manager["name"], [player], k=3),
         ) if b) + "\n\n"
@@ -1471,7 +1471,7 @@ def role_tag(name: str, roster: list[dict] | None = None) -> str:
     if not c:
         return ""
     company = c.get("company", "")
-    dept = re.sub(r"\s*\(.*?\)", "", c.get("dept", "")).strip()   # '새 이웃 (드라마 제목)' -> '새 이웃'
+    dept = re.sub(r"\s*\(.*?\)", "", c.get("dept", "")).strip()   # '새 이웃 (작품 제목)' -> '새 이웃'
     job = c.get("job") or c.get("rank", "")
     parts = [_SHOP_SHORT.get(company, worldcfg.short(company)), "" if dept and dept in job else dept, job]
     out = " ".join(dict.fromkeys(x for x in parts if x))
@@ -1480,7 +1480,7 @@ def role_tag(name: str, roster: list[dict] | None = None) -> str:
 
 def _talk_header(how: str, place: str, t: datetime, speaker: str, listener: str) -> str:
     """대화 한 마디의 출처 (말한 사람이 뭐 하는 사람인지 앞에):
-    (마을 골목 이웃들 법무관) 🔮 통신석 · 14:36 · 윤윤제 → 양관식 / (극장 로비 찻집 연금술사) 📍 찻집 오후세시 · 11:14 · 소라 → 홍두식."""
+    (마을 이웃집 엑시스교 수녀) 🔮 통신석 · 14:36 · 세실리 → 카이진 / (극장 로비 찻집 연금술사) 📍 찻집 오후세시 · 11:14 · 소라 → 카즈마."""
     role = role_tag(speaker)
     return (f"-# {role + ' ' if role else ''}{'🔮 통신석' if how == '통신석' else '📍 ' + place} · "
             f"{t.strftime('%H:%M')} · {speaker} → {listener}")
@@ -2038,7 +2038,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         chronicle.tick()
     except Exception as e:  # noqa: BLE001
         print(f"[경고] 연대기 요약 실패: {e}")
-    # 0.4) 새 이웃 - 주 1회(월요일 아침) 드라마 인물들이 마을로 이사 온다
+    # 0.4) 새 이웃 - 주 1회(월요일 아침) 애니메이션 인물들이 마을로 이사 온다
     try:
         if newcomers.due(now):
             res = move_in_newcomers()
@@ -2267,10 +2267,10 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
 
 _LAST_FRESH: dict = {}
 _PLACES = [  # 장소 이름이 제각각이라 묶어서 보여 준다 (앞에 있는 게 먼저)
-    (("오후세시", "찻집"), "☕ 찻집 오후세시"), (("단밤", "선술집"), "🏮 선술집 단밤"), (("훈련장", "수련장"), "⚔️ 훈련장"),
-    (("잡화점", "편의점"), "🏪 마을 잡화점"), (("주막 남숙", "주막"), "🥟 주막 남숙"), (("치유", "치과", "신전"), "✨ 치유원"),
-    (("촌장 회관",), "🏛️ 촌장 회관"), (("시장", "반찬가게", "생선가게", "어물전"), "🧺 시장"), (("횟집",), "🐟 횟집"),
-    (("음유 주점", "LP"), "🎸 음유 주점"), (("대장간",), "⚒️ 대장간"), (("글방", "학원"), "📜 글방"),
+    (("오후세시", "찻집"), "☕ 찻집 오후세시"), (("길드 주점", "주점", "길드 주점", "모험가 길드", "길드"), "🍺 길드 주점"),
+    (("훈련장", "수련장"), "⚔️ 훈련장"), (("잡화점", "편의점"), "🏪 마을 잡화점"), (("치유", "치과", "신전"), "✨ 치유원"),
+    (("촌장 회관",), "🏛️ 촌장 회관"), (("시장", "반찬가게", "생선가게", "어물전", "무기점"), "🧺 시장"),
+    (("대장간",), "⚒️ 대장간"), (("글방", "학원"), "📜 글방"),
     (("성벽", "수비대", "초소", "망루", "감시탑", "성문"), "🛡️ 성벽 수비대"), (("결계",), "💠 결계석"),
     (("숲",), "🌲 숲 가장자리"), (("공원", "산책", "강가", "샘터"), "🌳 샘터·산책"),
     (("도서관", "서가", "금서고", "수선실"), "📚 오아시스 마법도서관"), (("극장", "상영관", "영사실", "매표"), "🔮 별빛 환영극장"),

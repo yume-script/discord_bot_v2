@@ -22,11 +22,11 @@ def test_resolve_outcomes_by_ratio():
     rnd = random.Random(1)
     items = [{"item": "결계석", "cond": 100}, {"item": "감시탑", "cond": 100}, {"item": "목책", "cond": 0}]
     assert raids.structures_power(items) == 12 + 9                   # 망가진 목책은 0
-    strong = [{"name": "리정혁", "power": 70, "asleep": False}, {"name": "홍두식", "power": 60, "asleep": False}]
+    strong = [{"name": "베니마루", "power": 70, "asleep": False}, {"name": "카즈마", "power": 60, "asleep": False}]
     r = raids.resolve(20, [], items, strong, 10, rnd)
     assert r["outcome"] == "대승" and r["loot"] > 0 and not r["injured"]
-    r = raids.resolve(95, ["x"], [], [{"name": "최택", "power": 2, "asleep": True}], 0, random.Random(2))
-    assert r["outcome"] == "성벽 돌파" and r["injured"] == ["최택"] and r["broken"] >= 3
+    r = raids.resolve(95, ["x"], [], [{"name": "고브타", "power": 2, "asleep": True}], 0, random.Random(2))
+    assert r["outcome"] == "성벽 돌파" and r["injured"] == ["고브타"] and r["broken"] >= 3
 
 
 def test_quiet_night_only_when_threshold_raised(monkeypatch):
@@ -43,10 +43,10 @@ def test_quiet_night_only_when_threshold_raised(monkeypatch):
 
 def test_raid_damages_board_pays_loot_and_remembers(monkeypatch, fake_llm):
     from poring_food import life, memory
-    fake_llm(lambda system, user: {"story": "오크들이 서쪽 성문을 두드렸다. 리정혁이 막아섰다.", "summary": "오크 격퇴"})
+    fake_llm(lambda system, user: {"story": "오크들이 서쪽 성문을 두드렸다. 베니마루가 막아섰다.", "summary": "오크 격퇴"})
     monkeypatch.setattr(raids, "gather", lambda now=None: {"date": "x"})
     monkeypatch.setattr(raids, "danger", lambda x: (55, ["결계 부하 90%"]))
-    decor.act("리정혁", {"do": "place", "item": "목책", "near": "서쪽 성문"}, datetime(2026, 10, 25, 15))
+    decor.act("베니마루", {"do": "place", "item": "목책", "near": "서쪽 성문"}, datetime(2026, 10, 25, 15))
     fund = decor._state()["fund"]
     sent, posts = [], []
     rec = raids.run(NIGHT, post=posts.append, inject=lambda t, d, title: sent.append(title) or [])
@@ -83,22 +83,22 @@ def test_every_night_by_default(monkeypatch):
 
 def test_levels_gain_titles_and_power():
     from poring_food import levels
-    assert levels.level("홍두식") == 1 and levels.multiplier("홍두식") == 1
-    ups = levels.gain({"홍두식": levels.need(1) + levels.need(2) + 5}, battle=True, mvp="홍두식")
-    assert ups == [{"name": "홍두식", "from": 1, "to": 3, "title": ""}]
-    assert levels.get("홍두식") == {"level": 3, "xp": 5, "battles": 1, "mvp": 1, "best": ""}
-    assert levels.multiplier("홍두식") > 1 and "Lv.3" in levels.prompt_block("홍두식")
-    ups = levels.gain({"홍두식": sum(levels.need(lv) for lv in range(3, 5))})
-    assert ups[0]["to"] == 5 and ups[0]["title"] == "숙련" and levels.tag("홍두식") == "Lv.5 숙련"
+    assert levels.level("카즈마") == 1 and levels.multiplier("카즈마") == 1
+    ups = levels.gain({"카즈마": levels.need(1) + levels.need(2) + 5}, battle=True, mvp="카즈마")
+    assert ups == [{"name": "카즈마", "from": 1, "to": 3, "title": ""}]
+    assert levels.get("카즈마") == {"level": 3, "xp": 5, "battles": 1, "mvp": 1, "best": ""}
+    assert levels.multiplier("카즈마") > 1 and "Lv.3" in levels.prompt_block("카즈마")
+    ups = levels.gain({"카즈마": sum(levels.need(lv) for lv in range(3, 5))})
+    assert ups[0]["to"] == 5 and ups[0]["title"] == "숙련" and levels.tag("카즈마") == "Lv.5 숙련"
     assert levels.prompt_block("애순이") == ""                          # 아직 싸운 적 없음
 
 
 def test_defenders_include_awake_helpers_and_scale_with_level():
     from poring_food import agents, characters, levels
-    ag = [{"name": "리정혁", "sleep": [23, 6]}, {"name": "최택", "sleep": [23, 7]}, {"name": "동그라미", "sleep": [21, 7]}]
+    ag = [{"name": "베니마루", "sleep": [23, 6]}, {"name": "고브타", "sleep": [23, 7]}, {"name": "리리나", "sleep": [21, 7]}]
     f = {d["name"]: d for d in raids.defenders(ag, characters.load_roster(), 22, lambda n: 1.0)}
-    assert not f["리정혁"]["support"] and f["최택"]["support"] and "동그라미" not in f   # 자는 비전투원은 안 나옴
-    before = f["리정혁"]["power"]
-    levels.gain({"리정혁": levels.need(1)})
+    assert not f["베니마루"]["support"] and f["고브타"]["support"] and "리리나" not in f   # 자는 비전투원은 안 나옴
+    before = f["베니마루"]["power"]
+    levels.gain({"베니마루": levels.need(1)})
     assert raids.defenders(ag, characters.load_roster(), 22, lambda n: 1.0)[0]["power"] > before
     _ = agents

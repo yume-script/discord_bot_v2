@@ -103,7 +103,7 @@ def _profile_for(member: dict, data: dict) -> dict:
         "이 사람의 프로필을 써라. 반드시 JSON으로만 응답:\n"
         '{"profile": "나이대, 하는 일, 겉과 속, 요즘 고민 2~3문장", "routine": "평일/주말 하루 일과 한두 문장", '
         '"speech": "말투 한 문장 - 존댓말/반말, 사투리 여부, 따옴표로 입버릇 1~2개", "sleep": [잠드는 시각 0~23, 일어나는 시각 0~23], '
-        '"hangouts": ["찻집 오후세시/선술집 단밤/수비대 훈련장/마을 잡화점 중 0~2곳"]}',
+        '"hangouts": ["찻집 오후세시/길드 주점/수비대 훈련장/마을 잡화점 중 0~2곳"]}',
         temperature=0.7, timeout=TIMEOUT_SEC, tag=f"교체 프로필 {member['name']}")
     out = out if isinstance(out, dict) else {}
     sleep = out.get("sleep") if isinstance(out.get("sleep"), list) and len(out.get("sleep")) == 2 else [0, 7]
@@ -111,7 +111,7 @@ def _profile_for(member: dict, data: dict) -> dict:
         sleep = [int(sleep[0]) % 24, int(sleep[1]) % 24]
     except (TypeError, ValueError):
         sleep = [0, 7]
-    places = {"찻집 오후세시", "선술집 단밤", "수비대 훈련장", "마을 잡화점"}
+    places = {"찻집 오후세시", "길드 주점", "수비대 훈련장", "마을 잡화점"}
     entry = {
         "name": member["name"], "company": member.get("company", ""), "sleep": sleep,
         "avatar_url": f"https://api.dicebear.com/9.x/notionists/png?seed=rot{sum(map(ord, member['name']))}",
