@@ -327,7 +327,14 @@ def refresh() -> None:
         k: {d: n for d, n in v.items() if d >= past[-1]} for k, v in history.items()
     }
 
-    # 판매: Tautulli
+    # 판매: Tautulli (꺼져 있으면 Plex에 바로 - plex_api)
+    if "tautulli" not in fetched:
+        from . import plex_api
+        plays = plex_api.plays_by_date(AVG_DAYS + 1) if plex_api.enabled() else None
+        live = plex_api.sessions() if plays is not None else None
+        if plays is not None and live is not None:
+            fetched["tautulli"] = {"plays": plays, "streams": sum(1 for s in live if s.get("state") != "paused")}
+            print("[통계] Tautulli 대신 Plex에서 바로 재생 수를 받음")
     if "tautulli" in fetched:
         t = fetched["tautulli"]
         data["sales"] = {"today": t["plays"].get(today, 0), "avg": _avg(t["plays"], today),
