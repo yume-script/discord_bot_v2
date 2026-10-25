@@ -79,10 +79,11 @@ def _procs(env: str, default: str) -> list[str]:
 #  units: 우선순위를 낮춰도 되는 systemd 서비스 - systemctl set-property --runtime CPUWeight=UNIT_WEIGHT
 #  nice:  우선순위를 낮춰도 되는 프로세스 이름 - renice NICE_LEVEL (그때 떠 있는 것만)
 HOSTS = {
-    "etc": {"ssh": "", "allow": _names("PORING_LOADSHED_ETC", "docker-warproxy"),
+    "etc": {"ssh": "", "docker_mcp": os.getenv("PORING_DOCKER_ETC_MCP_SERVER", "docker_local"), "allow": _names("PORING_LOADSHED_ETC", "docker-warproxy"),
             "caps": _caps("PORING_LOADSHED_ETC_CAP", ""), "units": _names("PORING_LOADSHED_ETC_UNITS", ""),
             "nice": _procs("PORING_LOADSHED_ETC_NICE", "")},
     "plex01": {"ssh": os.getenv("PORING_LOADSHED_PLEX_SSH", "192.168.0.31"),
+               "docker_mcp": os.getenv("PORING_DOCKER_PLEX_MCP_SERVER", "docker_bookoasis"),
                "allow": _names("PORING_LOADSHED_PLEX01", "tautulli"),
                "caps": _caps("PORING_LOADSHED_PLEX01_CAP", "flaskfarm:1,bookoasis_mariadb:2"),
                "units": _names("PORING_LOADSHED_PLEX01_UNITS", "bookoasis_assistant.service"),
@@ -301,6 +302,8 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         if r.get("cpu") is not None:
             st["samples"] = (st.get("samples") or [])[-(KEEP_SAMPLES - 1):] + [[now.isoformat(timespec="seconds"), r["cpu"]]]
             st["last_cpu"], st["at"] = r["cpu"], now.isoformat(timespec="seconds")
+        if r.get("running") is not None:   # 매분 도는 컨테이너 목록 - facilities.quick이 사람이 끄고 켠 것도 바로 잡는다
+            st["running"], st["running_at"] = sorted(r["running"]), now.isoformat(timespec="seconds")
         stamp = now.isoformat(timespec="seconds")
         for a in decide(host, st, r.get("running"), now):
             if a["do"] in ("stop", "start"):
@@ -341,31 +344,69 @@ def _label(name: str) -> str:
     return LABELS.get(name) or (FACILITIES[name][0] if name in FACILITIES else name)
 
 
-def announce(done: list[dict], now: datetime | None = None, post=None, inject=None) -> None:
-    """[잠금 안에서] 한 일을 이야기로: 채널 한 줄 + 마을 사건 + 지은탁 기억."""
-    from . import agents as ag, memory
+def _story(a: dict) -> tuple[str, str, str]:
+    """한 일 하나 -> (이야기 글, 사건 제목, 표시)."""
     from .josa import has_batchim, j
+    label = _label(a["name"])
+    ro = label + ("으로" if has_batchim(label) and (ord(label[-1]) - 0xAC00) % 28 != 8 else "로")   # ㄹ 받침은 "로"
+    return {
+        "stop": (f"{j(ACTOR, '이')} 결계 부하를 줄이려고 {label}의 불을 잠시 껐다 ({a['why']}).",
+                 f"{label} 잠시 소등 (결계 조절)", "⏸ 내림"),
+        "start": (f"{j(ACTOR, '이')} {label}에 다시 불을 켰다 ({a['why']}).", f"{label} 다시 점등 (결계 조절)", "▶ 다시 올림"),
+        "throttle": (f"{j(ACTOR, '이')} 결계 부하를 줄이려고 {ro} 가는 마나 흐름을 좁혔다 ({a['why']}).",
+                     f"{label} 마나 흐름 제한 (결계 조절)", "🐢 늦춤"),
+        "unthrottle": (f"{j(ACTOR, '이')} {ro} 가는 마나 흐름을 원래대로 되돌렸다 ({a['why']}).",
+                       f"{label} 마나 흐름 복구 (결계 조절)", "↩ 되돌림"),
+    }[a["do"]]
+
+
+def notify(done: list[dict], now: datetime | None = None, post=None) -> None:
+    """[한 즉시, 잠금 없이] 채널에 바로 알린다 - 실제로 무엇을 했는지(서버/대상/동작/이유) + 이야기 한 줄."""
+    from . import agents as ag
     now = now or now_kst()
     post = post or (lambda text: ag._post_as(NAME, text))
-    inject = inject or ag.inject_event
     for a in done:
-        label = _label(a["name"])
-        ro = label + ("으로" if has_batchim(label) and (ord(label[-1]) - 0xAC00) % 28 != 8 else "로")   # ㄹ 받침은 "로"
-        text, title, mark = {
-            "stop": (f"{j(ACTOR, '이')} 결계 부하를 줄이려고 {label}의 불을 잠시 껐다 ({a['why']}).",
-                     f"{label} 잠시 소등 (결계 조절)", "⏸ 내림"),
-            "start": (f"{j(ACTOR, '이')} {label}에 다시 불을 켰다 ({a['why']}).", f"{label} 다시 점등 (결계 조절)", "▶ 다시 올림"),
-            "throttle": (f"{j(ACTOR, '이')} 결계 부하를 줄이려고 {ro} 가는 마나 흐름을 좁혔다 ({a['why']}).",
-                         f"{label} 마나 흐름 제한 (결계 조절)", "🐢 늦춤"),
-            "unthrottle": (f"{j(ACTOR, '이')} {ro} 가는 마나 흐름을 원래대로 되돌렸다 ({a['why']}).",
-                           f"{label} 마나 흐름 복구 (결계 조절)", "↩ 되돌림"),
-        }[a["do"]]
+        text, _, mark = _story(a)
         post(f"-# {NAME} · {now:%H:%M} · {a['host']} `{a['name']}` {mark}\n{text}")
+
+
+# 시설 -> 그 일을 바로 겪는 기관 (그 기관 사람 몇 명이 지금 반응한다)
+OWNERS = {"bookoasis_assistant.service": "BOOK", "Plex Media Scanner": "CINEMA"}
+
+
+def key_people(names: list[str], agents: list[dict] | None = None, per_company: int = 2) -> list[str]:
+    """바로 반응할 사람: 지은탁(한 사람) + 수비대장 리정혁 + 그 시설 기관 사람 몇 명."""
+    from . import worldcfg
+    from .agents import load_agents
+    from .facilities import FACILITIES
+    agents = agents if agents is not None else load_agents()
+    out = [ACTOR, "리정혁"]
+    for name in names:
+        company = FACILITIES[name][1] if name in FACILITIES else getattr(worldcfg, OWNERS.get(name, ""), "")
+        if company in worldcfg.OFFICES:
+            out += [a["name"] for a in agents if a.get("company") == company][:per_company]
+    return list(dict.fromkeys(out))
+
+
+def reflect(done: list[dict], react=None) -> list[str]:
+    """[잠금 안에서, notify 바로 뒤] 인물 세계에 바로 반영: 마을 사건 + 관련 인물이 지금 반응 + 지은탁 기억."""
+    from . import agents as ag, memory
+    react = react or ag.react_now
+    reacted = []
+    for a in done:
+        text, title, _ = _story(a)
         try:
-            inject([ag.world.TOWN], text, title)
+            reacted += react(text, title, key_people([a["name"]]))
         except Exception as e:  # noqa: BLE001
-            print(f"[결계 조절] 마을 사건 전달 실패: {e}")
+            print(f"[결계 조절] 세계 반영 실패: {e}")
         memory.remember(ACTOR, text, 5, [], "결계")
+    return reacted
+
+
+def announce(done: list[dict], now: datetime | None = None, post=None, react=None) -> None:
+    """notify + reflect (테스트/단독 실행용 - 봇은 둘을 나눠 부른다: 알림은 바로, 반영은 잠금 안에서)."""
+    notify(done, now, post)
+    reflect(done, react)
 
 
 def quiet_names(now: datetime | None = None, minutes: int = 90) -> set[str]:
@@ -405,3 +446,14 @@ def summary(now: datetime | None = None) -> str:
     for g in (data.get("log") or [])[-5:][::-1]:
         lines.append(f"  - {g['at'][5:16].replace('T', ' ')} {g['host']} {g['name']} {word.get(g['do'], g['do'])} ({g['why']})")
     return "\n".join(lines)
+
+
+def running_by_server(now: datetime | None = None, fresh_sec: int = 150) -> dict[str, list[str]]:
+    """방금 잰 도는 컨테이너 목록 {facilities 서버 키(docker MCP 이름): [이름]} (오래됐거나 못 쟀으면 빠진다)."""
+    now = now or now_kst()
+    since = (now - timedelta(seconds=fresh_sec)).isoformat(timespec="seconds")
+    out = {}
+    for host, st in (_load().get("hosts") or {}).items():
+        if host in HOSTS and st.get("running_at", "") >= since and st.get("running") is not None:
+            out[HOSTS[host]["docker_mcp"]] = list(st["running"])
+    return out

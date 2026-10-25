@@ -261,6 +261,39 @@ def inject_event(target_list: list[str], detail: str, title: str = "") -> list[s
     return [name for name, _, _ in out]
 
 
+def react_now(detail: str, title: str, key: list[str], targets: list[str] | None = None, kind: str = "설비") -> list[str]:
+    """[실제 서버에 일이 생긴 순간, 잠금 안에서] 세상에 바로 알리고 관련 인물이 그 자리에서 반응하게 한다.
+    - 세계 사건으로 기록(world.inject, 연대기) + 대상 범위 사람 모두의 받은편지함 (조용히 - 다음 판단 때 본다)
+    - key(관련 인물) 중 깨어 있는 사람은 다음 회차를 기다리지 않고 지금 반응한다 (파급 라운드 - 1인 LLM 1회,
+      연락/통신방 글/계획 변경이 실시간 대화로 이어진다). 반환: 지금 반응을 고민한 사람."""
+    agents = load_agents()
+    by_name = {a["name"]: a for a in agents}
+    now = now_kst()
+    hk = _hour_key(now)
+    out = world.inject(title, detail, targets or [world.TOWN], agents, characters.load_roster(), kind=kind)
+    data = _load_state()
+    for name, text, k in out:
+        _push_inbox(data, name, text, k, quiet=name not in key)
+    triggers: dict = {}
+    for n in key:
+        if n in by_name and not _asleep(by_name[n], now.hour):
+            _add_trigger(triggers, n, f"방금 일어난 일: {detail}", f"{kind}:{title}")
+    if triggers:
+        convo = data.setdefault("_convos", {})
+        gc = data.setdefault("_group", {})
+        if gc.get("date") != now.strftime("%Y-%m-%d"):
+            gc.clear()
+            gc.update({"date": now.strftime("%Y-%m-%d"), "counts": {}})
+        try:
+            talked = _ripple_state(data, hk)["talked"]
+            _ripple(triggers, by_name, agents, data, now, hk, talked, convo, gc.setdefault("counts", {}))
+        except Exception as e:  # noqa: BLE001
+            print(f"[경고] 바로 반응 실패: {e}")
+    _save_state(data)
+    print(f"[에이전트] 바로 반영: {title} -> {len(out)}명에게 전달, 지금 반응 {', '.join(triggers) or '없음'}")
+    return list(triggers)
+
+
 def target_names() -> list[str]:
     return world.targets(load_agents(), characters.load_roster())
 
