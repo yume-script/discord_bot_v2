@@ -73,6 +73,7 @@ class PoringFood(commands.Cog):
             self.live_runner.start()
             self.plex_watch.start()
             self.book_watch.start()
+            self.load_guard.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -87,6 +88,7 @@ class PoringFood(commands.Cog):
         self.live_runner.cancel()
         self.plex_watch.cancel()
         self.book_watch.cancel()
+        self.load_guard.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -155,6 +157,25 @@ class PoringFood(commands.Cog):
                 await asyncio.to_thread(plex_watch.process, sessions)
             except Exception:  # noqa: BLE001
                 log.exception("포링푸드 상영 알림 실패")
+
+    @tasks.loop(seconds=60)
+    async def load_guard(self) -> None:
+        """결계 조절(poring_food/loadshed.py): 서버 부하가 오래 높으면 놀고 있는 허용 컨테이너를 내리고, 내려가면 다시 올린다.
+        재기/내리기/올리기는 잠금 없이(자기 파일만 쓴다), 한 일이 있으면 회차와 같은 잠금 안에서 이야기로 알린다."""
+        from poring_food import loadshed
+        if not loadshed.ENABLED:
+            return
+        try:
+            done = await asyncio.to_thread(loadshed.step)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 결계 조절 실패")
+            return
+        if done:
+            async with self._lock:
+                try:
+                    await asyncio.to_thread(loadshed.announce, done)
+                except Exception:  # noqa: BLE001
+                    log.exception("포링푸드 결계 조절 알림 실패")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -540,8 +561,9 @@ class PoringFood(commands.Cog):
                     await asyncio.to_thread(raids.run, None, True)
                 except Exception:  # noqa: BLE001
                     log.exception("포링푸드 침입 실행 실패")
-        text = await asyncio.to_thread(raids.summary)
-        await interaction.followup.send(text, ephemeral=True)
+        from poring_food import loadshed
+        text = await asyncio.to_thread(lambda: raids.summary() + "\n\n" + loadshed.summary())
+        await interaction.followup.send(text[:1990], ephemeral=True)
 
     @app_commands.command(name="포링푸드명단", description="[관리자] 지금 스스로 사는 인물들의 소속/자리/맡은 일/지금 하는 일을 봅니다")
     @app_commands.describe(소속="도서관 / 극장 / 마을 (비우면 전부)")

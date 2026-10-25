@@ -184,8 +184,11 @@ def check(now: datetime | None = None, fetcher=None, inject=None) -> list[dict]:
         return []
     if inject is None:
         from .agents import inject_event as inject
-    from . import chronicle
+    from . import chronicle, loadshed
+    quiet = loadshed.quiet_names(now)   # 결계 조절(부하 줄이기)로 일부러 끄고 켠 것은 사고가 아니다
     for e in events:
+        if e.get("name") in quiet:
+            continue
         try:
             got = inject(e["targets"], e["detail"], e["title"])
         except Exception as ex:  # noqa: BLE001 - 사건 하나가 실패해도 나머지는 간다
