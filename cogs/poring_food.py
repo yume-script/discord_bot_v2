@@ -17,6 +17,7 @@
   · /포링푸드모임 주제 [참가자] [장소] [발언수] - 여러 에이전트가 한자리에 모여 돌아가며 말하고 결론을 낸다
   · /포링푸드연대기 [날짜] - 그날 세계에서 있었던 일(하루 요약/원본 사건)과 진행 중인 일을 본다
   · /포링푸드명단 [소속] - 지금 스스로 사는 인물들의 소속/자리/맡은 일/고정 여부/지금 하는 일, 최근 교체
+  · /포링푸드침입 [지금] - 몬스터 침입 예보(위험도)와 최근 밤들, 지금=True면 바로 침입 (시험용)
   · /포링푸드골목 - 마을 방어 배치 판 그림 + 방어 기금/놓인 것과 상태/손봐야 할 것/최근 기록
   · /포링푸드이웃 [드라마] - 드라마 인물들을 지금 바로 마을로 이사 오게 한다 (원래는 주 1회 자동)
 """
@@ -524,6 +525,23 @@ class PoringFood(commands.Cog):
             await interaction.followup.send(text, file=discord.File(path), ephemeral=True)
         else:
             await interaction.followup.send(text + "\n-# (판 그림은 글꼴/Pillow가 없어서 못 그렸어요)", ephemeral=True)
+
+    @app_commands.command(name="포링푸드침입", description="[관리자] 몬스터 침입 - 오늘 밤 숲의 기척(위험도)과 최근 밤들 (지금 침입시키기도 가능)")
+    @app_commands.describe(지금="True면 위험도와 상관없이 지금 바로 몬스터가 쳐들어온다 (시험용)")
+    async def raid_view(self, interaction: Interaction, 지금: bool = False):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        from poring_food import raids
+        if 지금:
+            async with self._lock:  # 회차/실시간 대화와 상태 파일이 겹치지 않게
+                try:
+                    await asyncio.to_thread(raids.run, None, True)
+                except Exception:  # noqa: BLE001
+                    log.exception("포링푸드 침입 실행 실패")
+        text = await asyncio.to_thread(raids.summary)
+        await interaction.followup.send(text, ephemeral=True)
 
     @app_commands.command(name="포링푸드명단", description="[관리자] 지금 스스로 사는 인물들의 소속/자리/맡은 일/지금 하는 일을 봅니다")
     @app_commands.describe(소속="도서관 / 극장 / 마을 (비우면 전부)")

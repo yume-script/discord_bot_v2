@@ -10,7 +10,7 @@
   · 자리는 LLM이 좌표를 고르지 않는다 - "어디 근처"(랜드마크 이름)만 고르면 가장 가까운 빈칸에 놓는다.
 - 돈은 "방어 기금"(마을 회의비가 매일 DAILY_FUND씩 쌓임)에서 나간다. 모자라면 못 한다.
 - 매일 상태가 줄고(함정/횃불/약초밭은 빨리), 비 오는 날은 약초밭/가시덤불이 살아난다. 상태가 나빠지면 마을 사건 한 번,
-  0이 되면 "망가짐" - 수리하거나 치울 때까지 그대로. (2단계: 밤마다 몬스터 침입 때 이 판이 방어력이 된다)
+  0이 되면 "망가짐" - 수리하거나 치울 때까지 그대로. 밤마다 몬스터 침입(raids.py) 때 이 판이 방어력이 되고 부서진다.
 - 인물들은 판단 때 [마을 방어 배치]를 본다 (어디가 약한지/무슨 얘기를 할지 얘깃거리, 망가진 건 민원거리).
 - 그림: 매일 저녁 RENDER_HOUR 회차에 판 그림(PNG)을 대화 채널에 올린다 (바뀐 게 있는 날만, townmap 글꼴).
 저장: storage/poring_food/decor.json {"fund", "fund_day", "items": [...], "log": [...], "acts": {날짜: {이름: 횟수}},
@@ -305,6 +305,33 @@ def act(name: str, d: dict, now: datetime | None = None) -> dict | None:
     _save(data)
     print(f"[{TITLE}] {name}: {text} (기금 -{cost + wage:,}원, 남은 {data['fund']:,}원)")
     return {"text": text, "cost": cost, "wage": wage, "item": item, "near": near, "do": do, "fund": data["fund"]}
+
+
+def damage(count: int, amount: int, rnd, now: datetime | None = None) -> list[str]:
+    """[몬스터 침입] 시설 count개의 상태를 amount만큼 깎는다 (서쪽 성문/마을 길에 가까운 것부터 잘 맞는다).
+    반환: 부서진 것 ["어디 근처 무엇"]."""
+    now = now or now_kst()
+    data = _state()
+    alive = [i for i in data["items"] if i["cond"] > 0]
+    if not alive or count <= 0:
+        return []
+    gate = LANDMARKS["서쪽 성문"]
+    alive.sort(key=lambda i: (abs(i["x"] - gate[0]) + min(abs(i["y"] - y) for y in ROAD_Y)) + rnd.random() * 6)
+    hit = []
+    for it in alive[:count]:
+        it["cond"] = max(0, it["cond"] - amount)
+        hit.append(f"{it['near']} 근처 {it['item']}")
+    data["changed_day"] = now.strftime("%Y-%m-%d")
+    _save(data)
+    return hit
+
+
+def add_fund(amount: int) -> int:
+    """[몬스터 침입] 전리품(마석 판 돈)을 방어 기금에. 반환: 남은 기금."""
+    data = _state()
+    data["fund"] += int(amount)
+    _save(data)
+    return data["fund"]
 
 
 def prompt_block(now: datetime | None = None) -> str:
