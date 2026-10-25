@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from . import (arcade, book_watch, characters, chronicle, decor, facilities, handover, hobbies, kpi, life, live, memory, milestones, newcomers, novelty,
-               raids,
+               levels, raids,
                outbox, plex_watch, projects, rotation, news, runtime, signals, street_mail, townmap, villains, world, worldcfg)
 from .clock import now_kst
 from .josa import j
@@ -586,6 +586,8 @@ def _handle_decor(decisions: dict, by_name: dict, data: dict, now, hk: str, trig
               + f"\n-# {money}", at=t)
         if r["wage"]:
             life.give_money(name, r["wage"], f"방어 시설 품삯 ({r['item']})")
+        if r["do"] in ("place", "repair"):
+            levels.gain({name: levels.DECOR_XP})
         memory.remember(name, f"마을 방어 배치: {r['text']}", 5, [], "방어")
         chronicle.record_event("방어", f"{name}: {r['text']}", money, [name])
         novelty.note("사건", f"마을 방어 배치 {r['text']}", [name], at=t)
@@ -695,7 +697,7 @@ def staff_overview(company_filter: str = "") -> list[str]:
         jobs = [p["line"] for p in kpi.posts_of(a["name"])]
         if a["name"] in hobbies.ARTISTS:
             jobs.append("화가(/그림)")
-        line = f"• **{a['name']}**" + (f" - {seat}" if seat else "") + (f" {' '.join(tags)}" if tags else "")
+        line = f"• **{a['name']}** `{levels.tag(a['name'])}`" + (f" - {seat}" if seat else "") + (f" {' '.join(tags)}" if tags else "")
         if jobs:
             line += f"\n  　맡은 일: {', '.join(jobs)}"
         n = (h.get("notes") or {}).get(a["name"])
@@ -864,6 +866,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         street_mail.prompt_block(now),
         decor.prompt_block(now),
         raids.prompt_block(now),
+        levels.prompt_block(name),
         book_watch.prompt_block(agent.get("company", ""), now),
         hobbies.prompt_block(agent, now),
         novelty.worn_out(name, now),
