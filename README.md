@@ -224,8 +224,14 @@ python app.py
   - 조치: 1단계~ 놀고 있는 희생 가능 컨테이너 정지(기본 etc `docker-warproxy`, `PORING_LOADSHED_ETC`/`_PLEX01`, ttl 6시간),
     3단계~ 짐꾼 `bookoasis_assistant.service` CPUWeight 30(4단계 15, `PORING_LOADSHED_PLEX01_UNITS`, ttl 2시간), 3단계~ rclone 업로드만
     `5M:off` 제한(`PORING_LOADSHED_RCLONE_RC=http://<호스트>:5276`이 있을 때). 4단계나 95% 초과면 채널에 ⚠️. 복구는 조치의 역순.
-  - `PORING_LOADSHED_STAGE_SSH`(예: `root@zeeps`)가 있으면 매분 그 호스트 `/run/village/stage`에 단계를 쓴다 - 가이드 6.3의
-    `village-gate.sh`(ExecCondition)로 방역/정비 타이머가 스스로 건너뛴다.
+  - **방역관(ClamAV, 호스트 zeeps)**: 봇은 호스트에 셸을 받지 않는다. `scripts/zeeps/install.sh`를 호스트에서 root로 한 번 실행하면
+    1) `village-gate.sh`(가이드 6.3)와 `village-ctl.sh` 설치, 2) ClamAV·정비 타이머에 드롭인(`/etc/systemd/system/<unit>.d/village.conf`,
+    원본 유닛은 그대로): `ExecCondition=village-gate.sh <최대 단계>`(risk-scan 1, deep-scan/freshclam/feed-update/malware-watch 2,
+    apt-daily 1, pve-daily-update/dpkg-db-backup 2) + 상시 상한(스캔은 CPUWeight 10·CPUQuota 60%·MemoryHigh 1500M·MemoryMax 2200M·
+    RuntimeMaxSec). 봇 공개키는 `command="/usr/local/sbin/village-ctl.sh",no-pty,...`로 묶어 `probe`/`stage N`/`status`만 된다.
+    etc `.env`에 `PORING_LOADSHED_ZEEPS_SSH=root@<zeeps>`를 넣으면 매분 호스트 부하도 재고(`probe`) 지금 단계를 보낸다(`stage N`):
+    1단계~ 방역관 CPUQuota 25%·CPUWeight 5, 2단계~ 돌고 있는 정기 스캔(risk/deep) 중단(다음 타이머 때 게이트가 다시 판단),
+    0단계면 60%로. 실시간 감시(malware-watch)는 멈추지 않는다. 봇이 멈춰 단계 파일이 10분 넘게 안 바뀌면 게이트가 호스트 PSI로 직접 판단.
   - 단계 변화와 조치는 💠 결계 조절 채널 한 줄 + 마을 사건(슈나·베니마루·애순이가 바로 반응). 감시탑 사고 알림으로는 치지 않는다.
     몬스터 침입 위험도는 가장 높은 지수. `/포링푸드침입`에 지금 단계/지수/조치. 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
 - **바로 전파** (`agents.react_now`, 봇 `load_guard` 매분): 결계 조절이 컨테이너를 내리거나/늦추거나 되돌린 순간, 그리고 표에 있는

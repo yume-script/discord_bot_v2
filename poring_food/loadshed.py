@@ -27,8 +27,10 @@
 - 3단계~: 짐꾼 bookoasis_assistant.service CPUWeight 30, 4단계면 15 (끄지 않음). ttl SLOW_TTL_H.
           rclone 업로드만 대역폭 제한(PORING_LOADSHED_RCLONE_RC가 있을 때, rate=5M:off - 읽기/재생은 안 막는다).
 - 4단계 또는 지수 95% 초과: 채널에 ⚠️ 경고.
-- PORING_LOADSHED_STAGE_SSH가 있으면 매분 그 호스트의 /run/village/stage에 지금 단계를 쓴다 (가이드 6.3 게이트 -
-  호스트의 방역/정비 타이머가 ExecCondition으로 읽고 스스로 건너뛴다).
+- 방역관(ClamAV, 호스트 zeeps): PORING_LOADSHED_ZEEPS_SSH가 있으면 매분 호스트의 scripts/zeeps/village-ctl.sh에 "stage N"을 보낸다
+  (봇 키는 authorized_keys command=로 이 스크립트에 묶여 probe/stage/status 말고는 못 한다). 호스트는
+  /run/village/stage를 쓰고(가이드 6.3 게이트 - 방역/정비 타이머가 ExecCondition으로 읽고 스스로 건너뜀),
+  1단계~ 방역관 CPUQuota 25%, 2단계~ 돌고 있는 정기 스캔(risk/deep) 중단, 0단계면 60%로. 실시간 감시(malware-watch)는 유지.
 
 이야기: 결계 무녀 슈나(ACTOR)가 결계 경보 단계를 올리고 내리며, 짐 나르는 정령의 마나 흐름을 좁히고 성문 초소 불을 잠시 끈다.
 facilities.py는 이 기능이 끈 컨테이너를 "불 꺼짐" 사고로 치지 않는다 (quiet_names). raids 위험도는 max_cpu()(가장 높은 지수).
@@ -121,7 +123,7 @@ HOSTS = {
                "rclone": _url("PORING_LOADSHED_RCLONE_RC")},
 }
 ZEEPS_SSH = os.getenv("PORING_LOADSHED_ZEEPS_SSH", "").strip()      # 호스트(zeeps) 지수도 같이 볼 때 (읽기만)
-STAGE_SSH = os.getenv("PORING_LOADSHED_STAGE_SSH", "").strip()      # /run/village/stage를 쓸 호스트
+STAGE_SSH = os.getenv("PORING_LOADSHED_STAGE_SSH", ZEEPS_SSH).strip()   # village-ctl.sh가 있는 호스트 (기본 = ZEEPS_SSH)
 STOP_STAGE = 1
 SLOW_STAGE = 3
 
@@ -273,7 +275,8 @@ def measure() -> dict:
         stats = _run(host, ["docker", "stats", "--no-stream", "--format", "'{{.Name}}\t{{.CPUPerc}}'"]
                      if HOSTS[host]["ssh"] else ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}"])
         out[host] = {"probe": probe, "running": parse_stats(stats) if stats is not None else None}
-    out["_zeeps"] = parse_probe(_sh("zeeps", _PROBE) or "") if ZEEPS_SSH else None
+    # 호스트는 village-ctl.sh(강제 명령) 뒤에 있다 - 셸 대신 "probe"만 보낸다
+    out["_zeeps"] = parse_probe(_run("zeeps", ["probe"]) or "") if ZEEPS_SSH else None
     out["_playing"] = _playing()
     return out
 
@@ -427,19 +430,44 @@ def _throttle(host: str, a: dict) -> dict | None:
     return {} if _sh(host, f"systemctl set-property --runtime {q} CPUWeight={w}") is not None else None
 
 
-def _write_stage(stage: int) -> None:
-    """가이드 6.3 게이트: 호스트 /run/village/stage에 단계 숫자 (호스트 타이머가 ExecCondition으로 읽는다)."""
+CLAM_LABEL = "방역관의 정화 의식(ClamAV)"
+
+
+def parse_ctl(out: str, stage: int) -> list[dict]:
+    """village-ctl.sh "stage N" 출력 -> 한 일 [{"host": "zeeps", ...}] (바뀐 것만 나온다)."""
+    done, quota = [], ""
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == "stopped":
+            done.append({"host": "zeeps", "do": "stop", "name": parts[1],
+                         "why": f"결계 경보 {stage}단계 - 정기 스캔은 다음 타이머 때 다시 (실시간 감시는 유지)"})
+        elif len(parts) >= 3 and parts[0] == "quota":
+            quota = parts[2]
+    if quota:
+        slow = quota != "60%"
+        done.append({"host": "zeeps", "do": "throttle" if slow else "unthrottle", "name": "clamav", "kind": "quota",
+                     "why": f"결계 경보 {stage}단계 - 방역관 CPU {quota}로"})
+    return done
+
+
+def _write_stage(stage: int) -> list[dict]:
+    """[매분] 가이드 6.3 게이트 + 방역관 조절: 호스트 village-ctl.sh에 "stage N" (호스트 타이머가 ExecCondition으로 읽는다).
+    반환: 호스트에서 실제로 바뀐 것 (방역관 CPU 제한/정기 스캔 중단)."""
     if not STAGE_SSH or DRY_RUN:
-        return
+        return []
     try:
-        subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", STAGE_SSH,
-                        f"mkdir -p /run/village && echo {int(stage)} > /run/village/stage"],
-                       capture_output=True, text=True, timeout=TIMEOUT)
+        p = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", STAGE_SSH, f"stage {int(stage)}"],
+                           capture_output=True, text=True, timeout=TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as e:
-        print(f"[결계 조절] 단계 파일 쓰기 실패: {e!r}"[:200])
+        print(f"[결계 조절] 호스트 단계 전달 실패: {e!r}"[:200])
+        return []
+    if p.returncode != 0:
+        print(f"[결계 조절] 호스트 단계 전달 실패({p.returncode}): {p.stderr.strip()[:120]}")
+        return []
+    return parse_ctl(p.stdout, stage)
 
 
-def step(now: datetime | None = None, measurer=None, docker=None, throttler=None) -> list[dict]:
+def step(now: datetime | None = None, measurer=None, docker=None, throttler=None, stage_writer=None) -> list[dict]:
     """[매분, 스레드에서] 재고 -> 단계 -> 실제로 내리고/올리고/늦추고/되돌린다. 반환: 실제로 한 일 (단계 변화 포함)."""
     if not ENABLED:
         return []
@@ -508,7 +536,11 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             done.append(a)
             word = {"stop": "내림", "start": "다시 올림", "throttle": "늦춤", "unthrottle": "되돌림"}[a["do"]]
             print(f"[결계 조절] {host} {a['name']} {word} - {a['why']}")
-    _write_stage(max((int(st.get("stage", 0)) for h, st in hosts.items() if h in HOSTS), default=0))
+    top = max((int(st.get("stage", 0)) for h, st in hosts.items() if h in HOSTS), default=0)
+    for a in (stage_writer or _write_stage)(top):
+        a["cpu"] = (zeeps or {}).get("index")
+        done.append(a)
+        print(f"[결계 조절] zeeps {a['name']} {'늦춤' if a['do'] == 'throttle' else '되돌림' if a['do'] == 'unthrottle' else '중단'} - {a['why']}")
     if done:
         data["log"] = (data.get("log") or [])[-99:] + [{**a, "at": now.isoformat(timespec="minutes")} for a in done]
     _save(data)
@@ -516,7 +548,8 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
 
 
 # ===================================================================== 이야기 / 다른 모듈
-LABELS = {"bookoasis_assistant.service": "도서관 두루마리 운반 정령", "upload": "왕도로 가는 두루마리 짐마차"}
+LABELS = {"bookoasis_assistant.service": "도서관 두루마리 운반 정령", "upload": "왕도로 가는 두루마리 짐마차",
+          "clamav": CLAM_LABEL, "clamav-risk-scan.service": "방역관의 매시 정화 의식", "clamav-deep-scan.service": "방역관의 새벽 대정화 의식"}
 STAGE_NAMES = {0: "평시", 1: "경계", 2: "방어", 3: "짐꾼 늦춤", 4: "짐꾼 최소"}
 
 
