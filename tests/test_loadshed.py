@@ -256,3 +256,23 @@ def test_clamav_on_host_follows_stage_through_village_ctl():
     assert [d["name"] for d in done if d["host"] == "zeeps"] == ["clamav"]
     loadshed.notify([d for d in done if d["host"] == "zeeps"], T0, post=posts.append)
     assert "방역관의 정화 의식(ClamAV)" in posts[0] and "🐢" in posts[0]
+
+
+def test_cpu_is_averaged_over_the_minute_not_one_second():
+    store = {}
+    a = "cpu  1000 0 1000 8000 0 0 0 0 0 0"
+    one_sec = {"index": 99.0, "busy": 99.0, "mem": 40.0, "psi": {"io": 2.0}, "raw": a}
+    assert loadshed.smooth(one_sec, store, "2026-10-28T08:00:00", "2026-10-28T07:55:00")["index"] == 99.0   # 처음엔 그대로
+    b = "cpu  1300 0 1300 13400 0 0 0 0 0 0"                                  # 지난 1분: 600 바쁨 / 6000
+    got = loadshed.smooth({**one_sec, "raw": b}, store, "2026-10-28T08:01:00", "2026-10-28T07:56:00")
+    assert got["busy"] == 10.0 and got["index"] == 40.0                      # 1분 평균 10% -> 지수는 메모리 40%
+    assert loadshed.smooth({**one_sec, "raw": a}, {"raw": b, "raw_at": "2026-10-28T07:00:00"},
+                           "2026-10-28T08:02:00", "2026-10-28T07:57:00")["index"] == 99.0      # 지난 값이 너무 오래됨
+
+
+def test_single_spikes_do_not_keep_stage_four_for_hours():
+    _run([95] * 4)
+    assert _stage() == 4
+    noisy = [45, 60, 99, 50, 47, 62, 99, 48, 55, 46] * 4                    # 평균 61%인데 가끔 99%가 튐 (예전엔 몇 시간 갇힘)
+    _run(noisy, start=T0 + timedelta(minutes=4), psi={"cpu": 29.0})
+    assert _stage() <= 2

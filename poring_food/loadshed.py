@@ -238,7 +238,23 @@ def parse_probe(out: str) -> dict | None:
             psi[kind] = parse_psi(rest)
     io = psi.get("io")
     index = max(v for v in (busy, mem, io) if v is not None)
-    return {"cpu": cpu_from(stats[0], stats[1]), "busy": busy, "mem": mem, "psi": psi, "index": round(index, 1)}
+    return {"cpu": cpu_from(stats[0], stats[1]), "busy": busy, "mem": mem, "psi": psi, "index": round(index, 1),
+            "raw": stats[1]}
+
+
+def smooth(probe: dict | None, store: dict, stamp: str, since: str) -> dict | None:
+    """CPU를 1초 순간값 대신 '지난 측정부터 지금까지'(보통 1분) 평균으로 바꾼다 - 1초짜리는 44%와 99%를 오가서
+    단계가 출렁이고 못 내려왔다. store에 마지막 /proc/stat 줄을 둔다. 지난 줄이 since보다 오래됐으면 1초 값 그대로."""
+    if not probe or not probe.get("raw"):
+        return probe
+    prev, prev_at = store.get("raw"), store.get("raw_at", "")
+    store["raw"], store["raw_at"] = probe["raw"], stamp
+    busy = busy_from(prev, probe["raw"]) if prev and prev_at >= since else None
+    if busy is None:
+        return probe
+    io = (probe.get("psi") or {}).get("io")
+    index = max(v for v in (busy, probe.get("mem"), io) if v is not None)
+    return {**probe, "busy": busy, "cpu": cpu_from(prev, probe["raw"]), "index": round(index, 1)}
 
 
 def parse_stats(out: str) -> dict[str, float]:
@@ -315,11 +331,14 @@ def next_stage(samples: list, current: int, changed_at: str, playing: bool, now:
         covered = any(s[0] <= (now - timedelta(minutes=DOWN_MIN - 1)).isoformat() for s in samples)
         # PSI 경보는 "한 단계 더"일 뿐이다 - 경보가 계속 있어도(예: 다른 작업이 CPU를 붙잡고 있음) 지수+1이 지금보다 낮으면 내려간다
         # (예전엔 경보가 한 번이라도 있으면 못 내려가서, 4단계에 갇힌 채 짐꾼이 계속 묶여 있었다)
-        calm = covered and len(window) >= DOWN_MIN * 0.6 and all(
-            s[1] < floor and stage_of(s[1], playing) + (1 if len(s) > 2 and s[2] else 0) < current for s in window)
+        # 내릴 때도 10분 평균으로 본다 (한 번 튄 값 때문에 몇 시간씩 못 내려오지 않게). 경보는 절반 넘게 울렸을 때만 +1.
+        avg10 = sum(s[1] for s in window) / len(window) if window else 999.0
+        alarmed = sum(1 for s in window if len(s) > 2 and s[2]) * 2 > len(window)
+        calm = covered and len(window) >= DOWN_MIN * 0.6 and avg10 < floor and \
+            stage_of(avg10, playing) + (1 if alarmed else 0) < current
         long_enough = not changed_at or changed_at <= since10
         if calm and long_enough:
-            return current - 1, f"{DOWN_MIN}분째 {floor:g}% 아래"
+            return current - 1, f"{DOWN_MIN}분 평균 {avg10:.0f}% (기준 {floor:g}% 아래)"
     return current, ""
 
 
@@ -477,14 +496,16 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     throttler = throttler or _throttle
     data = _load()
     hosts = data.setdefault("hosts", {})
-    zeeps = readings.get("_zeeps") or None
+    stamp0 = now.isoformat(timespec="seconds")
+    since_raw = (now - timedelta(minutes=5)).isoformat(timespec="seconds")
+    zeeps = smooth(readings.get("_zeeps") or None, data.setdefault("zeeps", {}), stamp0, since_raw)
     playing = readings.get("_playing")
     done = []
     stamp = now.isoformat(timespec="seconds")
     for host in HOSTS:
         r = readings.get(host) or {}
         st = hosts.setdefault(host, {})
-        probe = r.get("probe")
+        probe = smooth(r.get("probe"), st, stamp, since_raw)
         if probe is None and r.get("cpu") is not None:      # 예전 모양 (cpu만) - 지수로 그대로 쓴다
             probe = {"index": r["cpu"], "cpu": r["cpu"], "psi": {}}
         if probe is not None:
