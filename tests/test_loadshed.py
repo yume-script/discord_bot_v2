@@ -84,10 +84,10 @@ def test_spike_jumps_to_top_and_short_blip_is_only_watched():
 
 
 def test_playback_lowers_thresholds_and_psi_escalates():
-    _run([77] * 3, etc=10)
-    assert _stage() == 0                                                     # 80% 아래는 평시 (자료 등록을 최대한)
-    _run([77] * 3, start=T0 + timedelta(minutes=10), etc=10, playing=2)
-    assert _stage() == 1                                                     # 재생 중이면 기준 -5%p (80 -> 75)
+    _run([67] * 3, etc=10)
+    assert _stage() == 0                                                     # 재생 없음: 70% 아래는 평시
+    _run([67] * 3, start=T0 + timedelta(minutes=10), etc=10, playing=2)
+    assert _stage() == 1                                                     # 재생 중: 65%부터 1단계
     loadshed._save({})
     _run([30] * 3, etc=10, psi={"io": 15.0})
     assert _stage() == 1                                                     # 지수는 낮아도 실제 지연(PSI)이면 한 단계
@@ -256,6 +256,15 @@ def test_clamav_on_host_follows_stage_through_village_ctl():
     assert [d["name"] for d in done if d["host"] == "zeeps"] == ["clamav"]
     loadshed.notify([d for d in done if d["host"] == "zeeps"], T0, post=posts.append)
     assert "방역관의 정화 의식(ClamAV)" in posts[0] and "🐢" in posts[0]
+
+
+def test_carrier_keeps_working_at_88_when_nobody_watches_but_yields_while_watching():
+    slow = []
+    _run([88] * 20, slow_log=slow)
+    assert _stage() == 3 and not [x for x in slow if x[1] == "throttle"]     # 아무도 안 보면 88%여도 짐꾼은 그대로
+    loadshed._save({})
+    _run([88] * 20, playing=1, slow_log=slow)
+    assert _stage() == 4 and ("plex01", "throttle", "unit", "bookoasis_assistant.service", 30, None) in slow   # 보는 중이면 양보
 
 
 def test_cpu_is_averaged_over_the_minute_not_one_second():
