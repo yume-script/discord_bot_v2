@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from poring_food.clock import now_kst
 from poring_food import agents, arcade, life, outbox
 
 
@@ -73,6 +74,6 @@ def test_arcade_kpi_post_for_manager(money_dir):
     assert kpi.holder("arcade") == arcade.MANAGER
     x = kpi.reading(kpi.POST_BY_ID["arcade"])
     assert x["score"] == 80 and "내기 판 0판" in x["text"]      # 손님 없으면 한산
-    arcade._record("소라", -50000, datetime.now())
+    arcade._record("소라", -50000, now_kst())   # KST 날짜로 (kpi가 KST 오늘을 읽는다)
     x = kpi.reading(kpi.POST_BY_ID["arcade"])
     assert x["score"] == 110 and "+50,000원" in x["text"]

@@ -24,7 +24,7 @@
 
 단계별 조치 (STAGE_PLAN, .env로 바꿈 - 보호 목록은 못 넘는다):
 - 1단계~: 놀고 있는(CPU < IDLE_CPU %) 희생 가능 컨테이너 정지 - 기본 etc docker-warproxy. ttl STOP_TTL_H.
-- 3단계~: 짐꾼 bookoasis_assistant.service CPUWeight 20, 4단계면 5 (끄지 않음). ttl SLOW_TTL_H.
+- 3단계~: 짐꾼 bookoasis_assistant.service CPUWeight 30, 4단계면 15 (끄지 않음). ttl SLOW_TTL_H.
           rclone 업로드만 대역폭 제한(PORING_LOADSHED_RCLONE_RC가 있을 때, rate=5M:off - 읽기/재생은 안 막는다).
 - 4단계 또는 지수 95% 초과: 채널에 ⚠️ 경고.
 - PORING_LOADSHED_STAGE_SSH가 있으면 매분 그 호스트의 /run/village/stage에 지금 단계를 쓴다 (가이드 6.3 게이트 -
@@ -68,7 +68,7 @@ TIMEOUT = 25
 ACTOR = "슈나"
 NAME = "💠 결계 조절"
 LOADSHED_PATH = os.path.join(STATE_DIR, "loadshed.json")
-UNIT_WEIGHT = {3: 20, 4: 5}                 # 짐꾼 CPUWeight (기본 100) - 끄지 않고 늦춘다
+UNIT_WEIGHT = {3: 30, 4: 15}                # 짐꾼 CPUWeight (기본 100) - 끄지 않고 늦춘다 (자료 등록이 3순위 목표라 너무 굶기지 않게)
 RCLONE_RATE = os.getenv("PORING_LOADSHED_RCLONE_RATE", "5M:off")   # 업로드:다운로드 - 다운로드(재생)는 off(제한 없음)
 
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")   # 컨테이너/서비스 이름 (명령에 들어가서 검사)
@@ -310,7 +310,10 @@ def next_stage(samples: list, current: int, changed_at: str, playing: bool, now:
         since10 = (now - timedelta(minutes=DOWN_MIN)).isoformat()
         window = [s for s in samples if s[0] >= since10]
         covered = any(s[0] <= (now - timedelta(minutes=DOWN_MIN - 1)).isoformat() for s in samples)
-        calm = covered and len(window) >= DOWN_MIN * 0.6 and all(s[1] < floor and not (len(s) > 2 and s[2]) for s in window)
+        # PSI 경보는 "한 단계 더"일 뿐이다 - 경보가 계속 있어도(예: 다른 작업이 CPU를 붙잡고 있음) 지수+1이 지금보다 낮으면 내려간다
+        # (예전엔 경보가 한 번이라도 있으면 못 내려가서, 4단계에 갇힌 채 짐꾼이 계속 묶여 있었다)
+        calm = covered and len(window) >= DOWN_MIN * 0.6 and all(
+            s[1] < floor and stage_of(s[1], playing) + (1 if len(s) > 2 and s[2] else 0) < current for s in window)
         long_enough = not changed_at or changed_at <= since10
         if calm and long_enough:
             return current - 1, f"{DOWN_MIN}분째 {floor:g}% 아래"

@@ -66,11 +66,11 @@ def test_stage_climbs_one_step_every_five_minutes_and_slows_carrier_not_stops():
     stages = [(d["host"], d["to"]) for d in done if d["do"] == "stage" and d["host"] == "plex01"]
     assert stages == [("plex01", 1), ("plex01", 2), ("plex01", 3)]           # 한 번에 한 단계씩
     assert ("etc", "stop", "docker-warproxy") in docker                       # 1단계: 놀고 있는 희생 가능 시설
-    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", 20, None) in slow    # 3단계: 짐꾼은 끄지 않고 늦춤
+    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", 30, None) in slow    # 3단계: 짐꾼은 끄지 않고 늦춤
     assert not [x for x in docker if x[1] == "stop" and x[2] != "docker-warproxy"]           # 시청 경로는 그대로
     slow.clear()
     _run([95] * 3, start=T0 + timedelta(minutes=13), slow_log=slow)
-    assert _stage() == 4 and ("plex01", "throttle", "unit", "bookoasis_assistant.service", 5, None) in slow
+    assert _stage() == 4 and ("plex01", "throttle", "unit", "bookoasis_assistant.service", 15, None) in slow
     assert loadshed._load()["hosts"]["plex01"]["throttled"]["unit:bookoasis_assistant.service"]["orig"] == 100
     assert loadshed.stage(T0 + timedelta(minutes=16)) == 4 and loadshed.max_cpu(T0 + timedelta(minutes=16)) == 95
 
@@ -221,3 +221,13 @@ def test_old_version_samples_do_not_trigger_stage_after_upgrade():
     done = _run([30])
     assert not [d for d in done if d["do"] == "stage"] and _stage() == 0     # 옛 전체 CPU 기록으로 4단계가 되지 않는다
     assert loadshed._load()["hosts"]["plex01"]["samples"] == [[T0.isoformat(timespec="seconds"), 30, False]]
+
+
+def test_steady_psi_alarm_does_not_trap_stage_at_four():
+    slow = []
+    _run([95] * 4, slow_log=slow)
+    assert _stage() == 4
+    slow.clear()
+    _run([35] * 40, start=T0 + timedelta(minutes=4), psi={"cpu": 25.0}, slow_log=slow)
+    assert _stage() == 1                                                     # 지수 35% + PSI 경보 = 1단계까지는 내려온다
+    assert ("plex01", "unthrottle", "unit", "bookoasis_assistant.service", None, 100) in slow   # 짐꾼은 원래 속도로
