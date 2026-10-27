@@ -1,11 +1,11 @@
 """
-결계 조절(부하 줄이기) - 「집스마을 서버 관리 가이드 v1.0」의 단계 방식 (0~5단계, 80%부터).
+결계 조절(부하 줄이기) - 「집스마을 서버 관리 가이드 v1.0」의 단계 방식 (0~5단계, 재생 여부에 따라 기준 두 벌).
 
 목표 위계 (절대 바뀌지 않는다):
  1) 영상 재생(Plex/YM_PLAYER/SHYNI)과 책·웹툰 열람(북오아시스)이 끊기거나 느려지지 않는다 - 절대 목표.
  2) 부하 지수를 95% 아래로 - 1번을 지키는 안전선.
  3) 자료(웹툰/책)를 최대한 많이 DB에 올린다 - 1·2번이 허락하는 만큼만. 그래서 짐꾼(bookoasis_assistant)은 끄지 않고
-    4단계(92%)부터 늦추기만 한다(진행 중인 회차는 끝까지 올라가게).
+    4단계(재생 없음 93%, 재생 중 85%)부터 늦추기만 한다(진행 중인 회차는 끝까지 올라가게).
 
 안전장치:
 - PROTECTED(티어 S 시청 경로 + 금고/통신망)는 설정에 적혀 있어도 절대 안 건드린다 - 도구 자체를 안 만든다.
@@ -17,10 +17,11 @@
 부하 지수 = max(CPU us+sy+irq+steal (nice 제외 - nice된 작업은 바로 양보하므로), 메모리 사용 %, I/O 압박 PSI some avg10).
 - 서버별로 매분 잰다: etc = 이 서버 /proc, plex01 = `ssh <host>`. PORING_LOADSHED_ZEEPS_SSH가 있으면 호스트(zeeps)도 재서
   두 서버 지수에 같이 반영한다(호스트 부하는 모든 CT에 걸리므로).
-- 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만): 80/84/88/92/96% 이상 = 1~5단계 (PORING_LOADSHED_STAGES).
-  자료 등록(3순위)을 최대한 살리려고 80% 아래는 아무것도 안 한다 - 그 아래는 재생에 영향이 없는 평시.
-  재생 중(Plex 세션이 있음)이면 기준을 5%p 낮춘다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
-- 한 번에 한 단계씩 올리고(5분 간격), 5분 평균이 96%(재생 중 91%) 이상이면 바로 5단계.
+- 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만). 기준은 재생 여부로 두 벌:
+  재생 없음 70/75/80/93/96% = 1~5단계 (PORING_LOADSHED_STAGES) - 아무도 안 볼 땐 짐꾼을 93%까지 그대로 둔다,
+  재생 중   65/70/75/85/90% = 1~5단계 (PORING_LOADSHED_STAGES_PLAY) - 볼 때는 시청이 먼저라 더 일찍 양보.
+  재생 여부는 Plex 세션으로 본다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
+- 한 번에 한 단계씩 올리고(5분 간격), 5분 평균이 5단계 기준(96%, 재생 중 90%) 이상이면 바로 5단계.
 - 내릴 때는 10분 평균이 지금 단계 기준보다 3%p 낮아야 한 단계 내린다 (히스테리시스).
 
 단계별 조치 (STAGE_PLAN, .env로 바꿈 - 보호 목록은 못 넘는다):
@@ -55,9 +56,14 @@ from .config import STATE_DIR
 ENABLED = os.getenv("PORING_LOADSHED", "1") not in ("0", "false", "False", "")
 DRY_RUN = os.getenv("PORING_LOADSHED_DRY", "0") not in ("0", "false", "False", "")   # 1이면 하는 척만 (로그만)
 CHECK_SEC = 60
-STAGES = sorted(float(x) for x in os.getenv("PORING_LOADSHED_STAGES", "80,84,88,92,96").split(",") if x.strip())  # 1~N단계 시작 지수
+def _levels(env: str, default: str) -> list[float]:
+    vals = sorted(float(x) for x in os.getenv(env, default).split(",") if x.strip())
+    return vals if len(vals) == 5 else sorted(float(x) for x in default.split(","))
+
+
+STAGES = _levels("PORING_LOADSHED_STAGES", "70,75,80,93,96")            # 재생 없을 때 1~5단계 시작 지수
+STAGES_PLAY = _levels("PORING_LOADSHED_STAGES_PLAY", "65,70,75,85,90")  # 재생 중일 때
 TOP = len(STAGES)
-PLAY_ADJ = 5.0                              # 재생 중이면 기준을 이만큼 낮춘다
 DOWN_GAP = 3.0                              # 내릴 때 기준보다 이만큼 더 낮아야 (단계 간격이 4%p라)
 UP_EVERY_MIN = 5                            # 한 단계 올린 뒤 다음 단계까지 (조치 효과 검증 시간)
 DOWN_MIN = 10                               # 낮은 값이 이만큼 이어져야 한 단계 내림
@@ -127,7 +133,7 @@ HOSTS = {
 ZEEPS_SSH = os.getenv("PORING_LOADSHED_ZEEPS_SSH", "").strip()      # 호스트(zeeps) 지수도 같이 볼 때 (읽기만)
 STAGE_SSH = os.getenv("PORING_LOADSHED_STAGE_SSH", ZEEPS_SSH).strip()   # village-ctl.sh가 있는 호스트 (기본 = ZEEPS_SSH)
 STOP_STAGE = 1
-SLOW_STAGE = 4                  # 짐꾼(자료 등록)은 92%부터만 늦춘다
+SLOW_STAGE = 4                  # 짐꾼(자료 등록)은 4단계(재생 없음 93% / 재생 중 85%)부터만 늦춘다
 
 
 def _load() -> dict:
@@ -305,9 +311,12 @@ def psi_alarm(psi: dict | None) -> bool:
     return (psi.get("cpu") or 0) > 10 or (psi.get("io") or 0) > 10 or (psi.get("memory") or 0) > 1
 
 
+def levels(playing: bool) -> list[float]:
+    return STAGES_PLAY if playing else STAGES
+
+
 def stage_of(value: float, playing: bool) -> int:
-    adj = PLAY_ADJ if playing else 0.0
-    return sum(1 for t in STAGES if value >= t - adj)
+    return sum(1 for t in levels(playing) if value >= t)
 
 
 def next_stage(samples: list, current: int, changed_at: str, playing: bool, now: datetime) -> tuple[int, str]:
@@ -319,15 +328,15 @@ def next_stage(samples: list, current: int, changed_at: str, playing: bool, now:
     avg = sum(s[1] for s in recent) / len(recent)
     alarm = bool(recent[-1][2]) if len(recent[-1]) > 2 else False
     target = min(TOP, stage_of(avg, playing) + (1 if alarm else 0))
-    adj = PLAY_ADJ if playing else 0.0
-    tag = f"5분 평균 {avg:.0f}%" + (f" · 재생 중이라 기준 -{PLAY_ADJ:g}%p" if playing else "") + (" · 지연(PSI) 감지" if alarm else "")
+    lv = levels(playing)
+    tag = f"5분 평균 {avg:.0f}%" + (" · 재생 중 기준" if playing else "") + (" · 지연(PSI) 감지" if alarm else "")
     waited = not changed_at or changed_at <= (now - timedelta(minutes=UP_EVERY_MIN)).isoformat()
     if target > current:
-        if avg >= STAGES[-1] - adj:
+        if avg >= lv[-1]:
             return TOP, tag + f" - 급등이라 바로 {TOP}단계"
         return (current + 1, tag) if waited else (current, "")
     if target < current and current > 0:
-        floor = STAGES[current - 1] - adj - DOWN_GAP
+        floor = lv[current - 1] - DOWN_GAP
         since10 = (now - timedelta(minutes=DOWN_MIN)).isoformat()
         window = [s for s in samples if s[0] >= since10]
         covered = any(s[0] <= (now - timedelta(minutes=DOWN_MIN - 1)).isoformat() for s in samples)
@@ -686,8 +695,8 @@ def stage(now: datetime | None = None, fresh_min: int = 15) -> int:
 def summary(now: datetime | None = None) -> str:
     now = now or now_kst()
     data = _load()
-    lines = [f"💠 **결계 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 {'/'.join(f'{t:g}' for t in STAGES)}% = 1~{TOP}단계, "
-             f"재생 중 -{PLAY_ADJ:g}%p) - 시청 경로(북오아시스·Plex·YM_PLAYER·SHYNI·flaskfarm)는 절대 안 건드림"
+    lines = [f"💠 **결계 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 재생 없음 {'/'.join(f'{t:g}' for t in STAGES)}% · "
+             f"재생 중 {'/'.join(f'{t:g}' for t in STAGES_PLAY)}% = 1~{TOP}단계) - 시청 경로(북오아시스·Plex·YM_PLAYER·SHYNI·flaskfarm)는 절대 안 건드림"
              + (" (시험 모드)" if DRY_RUN else "")]
     word = {"stop": "내림", "start": "올림", "throttle": "늦춤", "unthrottle": "되돌림", "stage": "단계"}
     for host, cfg in HOSTS.items():
