@@ -213,3 +213,11 @@ def test_running_by_server_after_step():
     _run([20])
     got = loadshed.running_by_server(T0 + timedelta(seconds=30))
     assert got[loadshed.HOSTS["plex01"]["docker_mcp"]] == ["bookoasis", "bookoasis_mariadb", "flaskfarm"]
+
+
+def test_old_version_samples_do_not_trigger_stage_after_upgrade():
+    old = [[(T0 - timedelta(minutes=m)).isoformat(timespec="seconds"), 95.0] for m in range(5, 0, -1)]
+    loadshed._save({"hosts": {"plex01": {"samples": old}, "etc": {"samples": old}}})
+    done = _run([30])
+    assert not [d for d in done if d["do"] == "stage"] and _stage() == 0     # 옛 전체 CPU 기록으로 4단계가 되지 않는다
+    assert loadshed._load()["hosts"]["plex01"]["samples"] == [[T0.isoformat(timespec="seconds"), 30, False]]
