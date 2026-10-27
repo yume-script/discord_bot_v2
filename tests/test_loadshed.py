@@ -1,4 +1,4 @@
-"""결계 조절: 부하가 오래 높으면 놀고 있는 허용 컨테이너만 내리고, 내려가면 직접 내린 것만 다시 올린다."""
+"""결계 조절: 단계(0~4) - 시청 경로는 절대 안 건드리고, 희생 가능한 것부터 쉬게 했다가 역순으로 되돌린다."""
 from datetime import datetime, timedelta
 
 from poring_food import loadshed
@@ -6,133 +6,167 @@ from poring_food import loadshed
 T0 = datetime(2026, 10, 25, 20, 0)
 
 
+def _probe(index, psi=None):
+    return {"index": index, "cpu": index, "busy": index, "mem": 30.0, "psi": psi or {}}
+
+
 def test_parsers():
-    a = "cpu  100 0 100 800 0 0 0 0 0 0"
-    b = "cpu  190 0 190 820 0 0 0 0 0 0"
-    assert loadshed.cpu_from(a, b) == 90.0                       # 200틱 중 쉰 건 20틱
-    assert loadshed.cpu_from(a, a) is None and loadshed.cpu_from("x", b) is None
+    a = "cpu  100 50 100 800 0 0 0 0 0 0"
+    b = "cpu  190 100 190 820 0 0 0 0 0 0"
+    assert loadshed.cpu_from(a, b) == 92.0                        # 전체 (nice 포함)
+    assert loadshed.busy_from(a, b) == 72.0                       # 지수용 - nice(50틱)는 안 센다
+    assert loadshed.cpu_from(a, a) is None and loadshed.busy_from("x", b) is None
     assert loadshed.parse_stats("tautulli\t0.35%\nplex\t180.2%\nbad line\n") == {"tautulli": 0.35, "plex": 180.2}
+    out = (f"{a}\n{b}\nMemTotal: 1000 kB\nMemAvailable: 200 kB\n"
+           "psi_cpu some avg10=12.50 avg60=1 avg300=0 total=1\npsi_io some avg10=3.00 avg60=0 avg300=0 total=1\npsi_memory \n")
+    p = loadshed.parse_probe(out)
+    assert p["mem"] == 80.0 and p["busy"] == 72.0 and p["index"] == 80.0       # 지수 = max(CPU, 메모리, I/O)
+    assert p["psi"]["cpu"] == 12.5 and p["psi"]["memory"] is None and loadshed.psi_alarm(p["psi"])
+    assert loadshed.parse_probe("garbage") is None
 
 
-def _run_minutes(cpus, start=T0, running=None, docker_log=None, slow_log=None):
-    """매분 한 번씩 step - cpus는 분마다 plex01 부하. 반환: 한 일 전부. 늦추기는 slow_log에 (실제 명령은 안 부른다)."""
+def test_watching_path_is_never_touched(monkeypatch):
+    monkeypatch.setenv("X_TEST", "tautulli, bad;rm -rf /,ok-name, bookoasis_mariadb, flaskfarm, Plex, shyni, vaultwarden")
+    assert loadshed._names("X_TEST", "") == ["tautulli", "ok-name"]
+    for n in ("bookoasis", "bookoasis_redis", "plexmediaserver.service", "Plex Media Scanner", "rclone-gds2",
+              "litellm-proxy", "YM_PLAYER", "flaskfarm"):
+        assert loadshed.protected(n), n
+    assert not loadshed.protected("bookoasis_assistant.service") and not loadshed.protected("docker-warproxy")
+    assert loadshed._docker("plex01", "stop", "bookoasis_mariadb") is False
+    assert loadshed._throttle("plex01", {"do": "throttle", "name": "flaskfarm", "kind": "cpus"}) is None
+    assert all(not loadshed.protected(n) for cfg in loadshed.HOSTS.values() for n in cfg["stop"] + cfg["units"])
+
+
+def _run(indexes, start=T0, etc=None, playing=None, psi=None, running=None, docker_log=None, slow_log=None):
+    """매분 한 번씩 step - indexes는 분마다 plex01 지수 (etc는 etc 값, 없으면 같은 값). 반환: 한 일 전부."""
     done = []
 
     def throttler(h, a):
         if slow_log is not None:
-            slow_log.append((h, a["do"], a["kind"], a["name"], a.get("cap"), a.get("orig")))
-        return {"orig": 4_000_000_000 if a["kind"] == "cpus" else None} if a["do"] == "throttle" else {}
-    for i, c in enumerate(cpus):
+            slow_log.append((h, a["do"], a["kind"], a["name"], a.get("weight"), a.get("orig")))
+        return {"orig": 100} if a["do"] == "throttle" else {}
+    for i, c in enumerate(indexes):
         now = start + timedelta(minutes=i)
-        readings = {"etc": {"cpu": 10.0, "running": {"docker-warproxy": 0.1}},
-                    "plex01": {"cpu": c, "running": running if running is not None else {"tautulli": 0.4, "plex": 150.0}}}
+        readings = {"etc": {"probe": _probe(c if etc is None else etc), "running": {"docker-warproxy": 0.1, "litellm-proxy": 1.0}},
+                    "plex01": {"probe": _probe(c, psi), "running": running if running is not None
+                               else {"bookoasis_mariadb": 0.5, "flaskfarm": 3.0, "bookoasis": 1.0}},
+                    "_playing": playing}
         done += loadshed.step(now, measurer=lambda r=readings: r, throttler=throttler,
                               docker=lambda h, do, n: (docker_log.append((h, do, n)) if docker_log is not None else None) or True)
     return done
 
 
-def test_sheds_idle_allowed_container_after_sustained_high_and_restores_after_low():
-    log = []
-    done = _run_minutes([95] * 6, docker_log=log)
-    assert log == [("plex01", "stop", "tautulli")]                # plex는 목록에 없어서 안 건드림, etc는 부하가 낮음
-    assert done[0]["do"] == "stop" and "tautulli" in loadshed.quiet_names(T0 + timedelta(minutes=6))
-    assert loadshed.max_cpu(T0 + timedelta(minutes=6)) == 95
-    log.clear()
-    _run_minutes([50] * 10, start=T0 + timedelta(minutes=6), docker_log=log)
-    assert log == []                                              # 아직 15분이 안 됐다
-    _run_minutes([50] * 7, start=T0 + timedelta(minutes=16), docker_log=log)
-    assert log == [("plex01", "start", "tautulli")]
+def _stage(host="plex01"):
+    return loadshed._load()["hosts"][host].get("stage", 0)
+
+
+def test_stage_climbs_one_step_every_five_minutes_and_slows_carrier_not_stops():
+    docker, slow = [], []
+    done = _run([85] * 13, docker_log=docker, slow_log=slow)
+    stages = [(d["host"], d["to"]) for d in done if d["do"] == "stage" and d["host"] == "plex01"]
+    assert stages == [("plex01", 1), ("plex01", 2), ("plex01", 3)]           # 한 번에 한 단계씩
+    assert ("etc", "stop", "docker-warproxy") in docker                       # 1단계: 놀고 있는 희생 가능 시설
+    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", 20, None) in slow    # 3단계: 짐꾼은 끄지 않고 늦춤
+    assert not [x for x in docker if x[1] == "stop" and x[2] != "docker-warproxy"]           # 시청 경로는 그대로
+    slow.clear()
+    _run([95] * 3, start=T0 + timedelta(minutes=13), slow_log=slow)
+    assert _stage() == 4 and ("plex01", "throttle", "unit", "bookoasis_assistant.service", 5, None) in slow
+    assert loadshed._load()["hosts"]["plex01"]["throttled"]["unit:bookoasis_assistant.service"]["orig"] == 100
+    assert loadshed.stage(T0 + timedelta(minutes=16)) == 4 and loadshed.max_cpu(T0 + timedelta(minutes=16)) == 95
+
+
+def test_spike_jumps_to_four_and_short_blip_is_only_watched():
+    _run([40, 40, 40, 99], etc=10)
+    assert _stage() == 0                                                     # 1분만 튐 - 5분 평균은 낮다
+    done = _run([95] * 3, start=T0 + timedelta(minutes=10), etc=10)
+    st = [d for d in done if d["do"] == "stage"]
+    assert st and st[-1]["to"] == 4 and st[-1]["alert"]                      # 90% 이상 급등 -> 바로 4단계 + 경고
+
+
+def test_playback_lowers_thresholds_and_psi_escalates():
+    _run([55] * 3, etc=10)
+    assert _stage() == 0
+    _run([55] * 3, start=T0 + timedelta(minutes=10), etc=10, playing=2)
+    assert _stage() == 1                                                     # 재생 중이면 기준 -10%p (60 -> 50)
+    loadshed._save({})
+    _run([30] * 3, etc=10, psi={"io": 15.0})
+    assert _stage() == 1                                                     # 지수는 낮아도 실제 지연(PSI)이면 한 단계
+
+
+def test_hysteresis_and_reverse_restore():
+    slow, docker = [], []
+    _run([85] * 13, docker_log=docker, slow_log=slow)
+    assert _stage() == 3
+    slow.clear()
+    _run([78] * 15, start=T0 + timedelta(minutes=13), slow_log=slow)
+    assert _stage() == 3 and not slow                                        # 80 아래지만 75(80-5%p)보다 높다 -> 그대로
+    _run([72] * 11, start=T0 + timedelta(minutes=28), slow_log=slow)
+    assert _stage() == 2                                                     # 75 아래 10분 -> 한 단계만 내림
+    assert ("plex01", "unthrottle", "unit", "bookoasis_assistant.service", None, 100) in slow   # 원래 값으로
+    docker.clear()
+    _run([30] * 25, start=T0 + timedelta(minutes=39), docker_log=docker)
+    assert _stage() == 0 and _stage("etc") == 0
+    assert docker == [("etc", "start", "docker-warproxy")]                   # 직접 내린 것만 다시 올림
+    assert not loadshed._load()["hosts"]["plex01"].get("throttled")
+
+
+def test_ttl_restores_even_while_high():
+    slow = []
+    _run([95] * 4, slow_log=slow)
+    assert _stage() == 4
+    slow.clear()
+    later = T0 + timedelta(hours=loadshed.SLOW_TTL_H, minutes=5)
+    _run([95] * 3, start=later, slow_log=slow)
+    assert slow[0][:4] == ("plex01", "unthrottle", "unit", "bookoasis_assistant.service")    # ttl 지나면 되돌림
+    assert not [x for x in slow if x[1] == "throttle"]                                       # 방금 되돌린 건 잠시 쉼(쿨다운)
+
+
+def test_old_version_throttles_on_watching_path_are_undone_right_away():
+    loadshed._save({"hosts": {"plex01": {
+        "shed": {"tautulli": "2026-10-25T19:00:00"},
+        "throttled": {"cpus:bookoasis_mariadb": {"kind": "cpus", "name": "bookoasis_mariadb", "orig": 0, "at": "2026-10-25T19:00:00"},
+                      "nice:Plex Media Scanner": {"kind": "nice", "name": "Plex Media Scanner", "orig": 0, "at": "2026-10-25T19:01:00"}}}}})
+    slow, docker = [], []
+    _run([95], slow_log=slow, docker_log=docker)                              # 부하가 높아도
+    assert {x[3] for x in slow if x[1] == "unthrottle"} == {"bookoasis_mariadb", "Plex Media Scanner"}
+    assert [x[3] for x in slow if x[1] == "unthrottle"][0] == "Plex Media Scanner"       # 마지막에 한 것부터
+    assert ("plex01", "start", "tautulli") in docker
     st = loadshed._load()["hosts"]["plex01"]
-    assert not st.get("shed") and "tautulli" in st["restored"]
+    assert not st.get("throttled") and not st.get("shed")
 
 
-def test_short_spike_or_busy_container_is_left_alone():
-    log = []
-    _run_minutes([95, 95, 40, 95, 95, 95], docker_log=log)        # 중간에 내려간 적 있음 -> 5분 연속 아님
-    assert log == []
-    _run_minutes([95] * 7, start=T0 + timedelta(hours=1), running={"tautulli": 12.0}, docker_log=log)
-    assert log == []                                              # 일하는 중(12%)이면 안 내림
-    _run_minutes([95] * 7, start=T0 + timedelta(hours=2), running={}, docker_log=log)
-    assert log == []                                              # 원래 꺼져 있던 건 상관없음
-
-
-def test_max_off_hours_and_cooldown():
-    log = []
-    _run_minutes([95] * 6, docker_log=log)
-    log.clear()
-    later = T0 + timedelta(hours=loadshed.MAX_OFF_HOURS, minutes=10)
-    _run_minutes([95], start=later, docker_log=log)
-    assert log == [("plex01", "start", "tautulli")]               # 너무 오래 꺼져 있으면 부하가 높아도 다시 올림
-    log.clear()
-    _run_minutes([95] * 6, start=later + timedelta(minutes=1), docker_log=log)
-    assert log == []                                              # 방금 올린 건 잠시 다시 안 내림
-
-
-def test_announce_story_and_facilities_ignore_quiet(monkeypatch):
+def test_announce_story_and_facilities_ignore_quiet():
     from poring_food import facilities, memory
     posts, sent = [], []
-    loadshed.announce([{"host": "plex01", "do": "stop", "name": "tautulli", "why": "결계 부하 95%"}], T0,
+    loadshed.announce([{"host": "etc", "do": "stop", "name": "docker-warproxy", "why": "결계 경보 1단계"},
+                       {"host": "plex01", "do": "stage", "name": "결계 경보", "from": 3, "to": 4, "why": "5분 평균 95%",
+                        "alert": True}], T0,
                       post=posts.append, react=lambda d, title, key: sent.append((title, key)) or [])
-    assert "환영극장 관객 세는 수정구" in posts[0] and "슈나" in posts[0]
-    assert sent[0][0] == "환영극장 관객 세는 수정구 잠시 소등 (결계 조절)"
-    assert sent[0][1][:2] == ["슈나", "베니마루"] and any(n in sent[0][1] for n in ("소라", "일레이나", "크리스"))   # 극장 사람
+    assert "성문 전령 초소" in posts[0] and "슈나" in posts[0]
+    assert "4단계" in posts[1] and "⚠️" in posts[1] and "환영극과 책 열람은 그대로" in posts[1]
+    assert sent[0][0] == "성문 전령 초소 잠시 소등 (결계 조절)" and sent[1][0].startswith("결계 경보 4단계")
+    assert sent[1][1][:3] == ["슈나", "베니마루", "애순이"]
     assert any("불을 잠시 껐다" in m["text"] for m in memory.store.memories("슈나"))
-    # 결계 조절로 끈 tautulli는 facilities가 "불 꺼짐" 사고로 알리지 않는다
-    _run_minutes([95] * 6)
-    plex = facilities.HOSTS and list(facilities.HOSTS)[1]
-    base = {plex: [{"name": "tautulli", "up": True, "started": "a"}, {"name": "flaskfarm", "up": True, "started": "a"}]}
+    # 결계 조절로 끈 docker-warproxy는 facilities가 "불 꺼짐" 사고로 알리지 않는다
+    _run([85] * 3)
+    etc = list(facilities.HOSTS)[0]
     got = []
-    facilities.check(T0, lambda: base, inject=lambda *a: got.append(a))
-    facilities.check(T0 + timedelta(minutes=7), lambda: {plex: [{"name": "tautulli", "up": False, "started": "a"},
-                                                                {"name": "flaskfarm", "up": False, "started": "a"}]},
+    facilities.check(T0, lambda: {etc: [{"name": "docker-warproxy", "up": True, "started": "a"},
+                                        {"name": "litellm-proxy", "up": True, "started": "a"}]}, inject=lambda *a: got.append(a))
+    facilities.check(T0 + timedelta(minutes=7), lambda: {etc: [{"name": "docker-warproxy", "up": False, "started": "a"},
+                                                              {"name": "litellm-proxy", "up": False, "started": "a"}]},
                      inject=lambda t, d, title: got.append(title) or [])
-    assert got == ["환영극장 이야기 배급소 불 꺼짐"]
-
-
-def test_unsafe_names_are_dropped(monkeypatch):
-    monkeypatch.setenv("X_TEST", "tautulli, bad;rm -rf /,ok-name")
-    assert loadshed._names("X_TEST", "") == ["tautulli", "ok-name"]
-
-
-def test_throttles_busy_containers_unit_and_process_then_restores_originals():
-    slow = []
-    busy = {"tautulli": 0.4, "flaskfarm": 58.0, "bookoasis_mariadb": 100.3, "bookoasis": 0.1}
-    done = _run_minutes([95] * 6, running=busy, slow_log=slow)
-    assert ("plex01", "throttle", "cpus", "flaskfarm", 1.0, None) in slow
-    assert ("plex01", "throttle", "cpus", "bookoasis_mariadb", 2.0, None) in slow
-    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", None, None) in slow
-    assert ("plex01", "throttle", "nice", "Plex Media Scanner", None, None) in slow
-    assert not any(n == "bookoasis" for _, _, _, n, _, _ in slow)          # 목록에 없는 건 안 건드림
-    assert {d["do"] for d in done} == {"stop", "throttle"}
-    st = loadshed._load()["hosts"]["plex01"]["throttled"]
-    assert st["cpus:flaskfarm"]["orig"] == 4_000_000_000
-    slow.clear()
-    _run_minutes([40] * 17, start=T0 + timedelta(minutes=6), running=busy, slow_log=slow)
-    assert ("plex01", "unthrottle", "cpus", "flaskfarm", None, 4_000_000_000) in slow    # 원래 상한(4코어)으로 되돌림
-    assert len([x for x in slow if x[1] == "unthrottle"]) == 4 and not loadshed._load()["hosts"]["plex01"].get("throttled")
-    assert "늦춤" in loadshed.summary(T0 + timedelta(minutes=30)) or "되돌림" in loadshed.summary(T0 + timedelta(minutes=30))
-
-
-def test_quiet_container_is_not_capped():
-    slow = []
-    _run_minutes([95] * 6, running={"flaskfarm": 3.0, "bookoasis_mariadb": 1.0}, slow_log=slow)
-    assert not [x for x in slow if x[2] == "cpus"]                        # 거의 안 쓰는 건 상한을 안 건다
+    assert got == ["수비대 마나 중계탑 불 꺼짐"]
 
 
 def test_throttle_story():
     posts = []
-    loadshed.announce([{"host": "plex01", "do": "throttle", "name": "flaskfarm", "kind": "cpus", "why": "x"},
-                       {"host": "plex01", "do": "unthrottle", "name": "Plex Media Scanner", "kind": "nice", "why": "y"}],
+    loadshed.announce([{"host": "plex01", "do": "throttle", "name": "bookoasis_assistant.service", "kind": "unit", "why": "x"},
+                       {"host": "plex01", "do": "unthrottle", "name": "upload", "kind": "rclone", "why": "y"}],
                       T0, post=posts.append, react=lambda *a: [])
-    assert "이야기 배급소으로" not in posts[0] and "마나 흐름을 좁혔다" in posts[0] and "🐢" in posts[0]
-    assert "환영극장 서고 정리 정령" in posts[1] and "되돌렸다" in posts[1]
-
-
-def test_process_and_cap_parsing(monkeypatch):
-    monkeypatch.setenv("X_CAP", "flaskfarm:1, bad;x:2, db:0, ok:1.5")
-    assert loadshed._caps("X_CAP", "") == {"flaskfarm": 1.0, "ok": 1.5}
-    monkeypatch.setenv("X_P", "Plex Media Scanner, rm -rf;/")
-    assert loadshed._procs("X_P", "") == ["Plex Media Scanner"]
+    assert "도서관 두루마리 운반 정령으로 가는 마나 흐름을 좁혔다" in posts[0] and "🐢" in posts[0]
+    assert "왕도로 가는 두루마리 짐마차로" in posts[1] and "되돌렸다" in posts[1]
+    assert "1~4단계" in loadshed.summary(T0)
 
 
 def test_react_now_reaches_everyone_quietly_and_key_people_react_now(fake_llm):
@@ -176,6 +210,6 @@ def test_facilities_quick_catches_manual_stop_and_start():
 
 
 def test_running_by_server_after_step():
-    _run_minutes([20])
+    _run([20])
     got = loadshed.running_by_server(T0 + timedelta(seconds=30))
-    assert got[loadshed.HOSTS["plex01"]["docker_mcp"]] == ["plex", "tautulli"]
+    assert got[loadshed.HOSTS["plex01"]["docker_mcp"]] == ["bookoasis", "bookoasis_mariadb", "flaskfarm"]

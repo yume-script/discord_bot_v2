@@ -1,21 +1,40 @@
 """
-결계 조절(부하 줄이기) - 서버 부하가 오래 높으면 그 순간 놀고 있는 컨테이너를 잠시 내리고, 부하가 내려가면 다시 올린다.
+결계 조절(부하 줄이기) - 「집스마을 서버 관리 가이드 v1.0」의 단계(0~4) 방식.
 
-실제 서버를 건드리는 기능이다. 그래서:
-- 내릴 수 있는 건 서버별 허용 목록(HOSTS의 "allow", .env로 바꿈)에 있는 컨테이너뿐이다. 목록에 없는 건 절대 안 건드린다.
-- 다시 올리는 건 이 기능이 직접 내린 것뿐이다 (원래 꺼져 있던 컨테이너는 안 켠다).
-- 내리는 건 그 순간 거의 일 안 하는 것만 (컨테이너 CPU < IDLE_CPU %).
-- 기준: 서버 전체 CPU가 HIGH % 이상으로 HIGH_MIN분 이어지면 내림, LOW % 미만으로 LOW_MIN분 이어지면 다시 올림.
-  내린 지 MAX_OFF_HOURS시간이 지나면 부하와 상관없이 다시 올리고, 다시 올린 컨테이너는 COOLDOWN_MIN분 동안 다시 안 내린다.
-- 재는 법(봇 서버 etc에서): etc = /proc/stat 직접 + `docker stats`, plex01 = `ssh <host>`로 같은 것 (docker_bookoasis MCP가
-  쓰는 SSH 접속 그대로). 내리기/올리기는 `docker stop` / `docker start`. 못 재면(SSH/도커 실패) 아무것도 안 한다.
+목표 위계 (절대 바뀌지 않는다):
+ 1) 영상 재생(Plex/YM_PLAYER/SHYNI)과 책·웹툰 열람(북오아시스)이 끊기거나 느려지지 않는다 - 절대 목표.
+ 2) 부하 지수를 95% 아래로 - 1번을 지키는 안전선.
+ 3) 자료(웹툰/책)를 최대한 많이 DB에 올린다 - 1·2번이 허락하는 만큼만. 그래서 짐꾼(bookoasis_assistant)은 끄지 않고
+    3단계부터 늦추기만 한다(진행 중인 회차는 끝까지 올라가게).
 
-이야기: 결계 마법사 슈나(ACTOR)이 결계 부하를 줄이려고 그 감시탑(facilities.FACILITIES 이름)의 불을 잠시 끄고, 부하가 내려가면
-다시 켠다 - 채널 한 줄 + 마을 사건. facilities.py는 이 기능이 끈 컨테이너를 "불 꺼짐" 사고로 치지 않는다 (quiet_names).
-raids.py 위험도의 결계 부하는 두 서버 중 높은 쪽(max_cpu)을 쓴다.
-봇(cogs/poring_food.py load_guard)이 CHECK_SEC(60초)마다 step()을 부르고, 한 일이 있으면 잠금 안에서 announce().
-저장: storage/poring_food/loadshed.json {"hosts": {서버: {"samples": [[시각, cpu]], "shed": {이름: 시각},
-"restored": {이름: 시각}, "last_cpu", "at"}}, "log": [...]}
+안전장치:
+- PROTECTED(티어 S 시청 경로 + 금고/통신망)는 설정에 적혀 있어도 절대 안 건드린다 - 도구 자체를 안 만든다.
+  bookoasis/bookoasis_mariadb/bookoasis_redis, Plex(스캐너 포함), shyni, YM_PLAYER, flaskfarm(IPTV 경로라 컨테이너 단위 금지),
+  rclone 마운트, vaultwarden, litellm.
+- 모든 조치는 되돌릴 수 있고(원래 값 기록), ttl이 지나면 부하와 상관없이 되돌린다. 복구는 조치의 역순.
+- 이 기능이 직접 한 것만 되돌린다 (원래 꺼져 있던 컨테이너는 안 켠다). 못 재면 아무것도 안 한다.
+
+부하 지수 = max(CPU us+sy+irq+steal (nice 제외 - nice된 작업은 바로 양보하므로), 메모리 사용 %, I/O 압박 PSI some avg10).
+- 서버별로 매분 잰다: etc = 이 서버 /proc, plex01 = `ssh <host>`. PORING_LOADSHED_ZEEPS_SSH가 있으면 호스트(zeeps)도 재서
+  두 서버 지수에 같이 반영한다(호스트 부하는 모든 CT에 걸리므로).
+- 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만): 60/70/80/90% 이상 = 1/2/3/4단계.
+  재생 중(Plex 세션이 있음)이면 기준을 10%p 낮춘다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
+- 한 번에 한 단계씩 올리고(5분 간격), 5분 평균이 90%(재생 중 80%) 이상이면 바로 4단계.
+- 내릴 때는 지금 단계 기준보다 5%p 낮은 값이 10분 이어져야 한 단계 내린다 (히스테리시스).
+
+단계별 조치 (STAGE_PLAN, .env로 바꿈 - 보호 목록은 못 넘는다):
+- 1단계~: 놀고 있는(CPU < IDLE_CPU %) 희생 가능 컨테이너 정지 - 기본 etc docker-warproxy. ttl STOP_TTL_H.
+- 3단계~: 짐꾼 bookoasis_assistant.service CPUWeight 20, 4단계면 5 (끄지 않음). ttl SLOW_TTL_H.
+          rclone 업로드만 대역폭 제한(PORING_LOADSHED_RCLONE_RC가 있을 때, rate=5M:off - 읽기/재생은 안 막는다).
+- 4단계 또는 지수 95% 초과: 채널에 ⚠️ 경고.
+- PORING_LOADSHED_STAGE_SSH가 있으면 매분 그 호스트의 /run/village/stage에 지금 단계를 쓴다 (가이드 6.3 게이트 -
+  호스트의 방역/정비 타이머가 ExecCondition으로 읽고 스스로 건너뛴다).
+
+이야기: 결계 무녀 슈나(ACTOR)가 결계 경보 단계를 올리고 내리며, 짐 나르는 정령의 마나 흐름을 좁히고 성문 초소 불을 잠시 끈다.
+facilities.py는 이 기능이 끈 컨테이너를 "불 꺼짐" 사고로 치지 않는다 (quiet_names). raids 위험도는 max_cpu()(가장 높은 지수).
+봇(cogs/poring_food.py load_guard)이 CHECK_SEC(60초)마다 step()을 부르고, 한 일이 있으면 바로 notify, 잠금 안에서 reflect.
+저장: storage/poring_food/loadshed.json {"hosts": {서버: {"samples": [[시각, 지수, psi]], "stage", "stage_at", "shed": {이름: 시각},
+"throttled": {키: {...}}, "restored": {키: 시각}, "last_cpu"(=지수), "at", "playing"}}, "log": [...]}
 """
 from __future__ import annotations
 
@@ -24,7 +43,6 @@ import os
 import re
 import shlex
 import subprocess
-import time
 from datetime import datetime, timedelta
 
 from .clock import now_kst
@@ -32,66 +50,80 @@ from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 s
 from .config import STATE_DIR
 
 ENABLED = os.getenv("PORING_LOADSHED", "1") not in ("0", "false", "False", "")
-DRY_RUN = os.getenv("PORING_LOADSHED_DRY", "0") not in ("0", "false", "False", "")   # 1이면 내리고 올리는 척만 (로그만)
+DRY_RUN = os.getenv("PORING_LOADSHED_DRY", "0") not in ("0", "false", "False", "")   # 1이면 하는 척만 (로그만)
 CHECK_SEC = 60
-HIGH = float(os.getenv("PORING_LOADSHED_HIGH", "90"))
-HIGH_MIN = int(os.getenv("PORING_LOADSHED_HIGH_MIN", "5"))
-LOW = float(os.getenv("PORING_LOADSHED_LOW", "60"))
-LOW_MIN = int(os.getenv("PORING_LOADSHED_LOW_MIN", "15"))
+STAGES = [60.0, 70.0, 80.0, 90.0]           # 1~4단계 시작 지수
+PLAY_ADJ = 10.0                             # 재생 중이면 기준을 이만큼 낮춘다
+DOWN_GAP = 5.0                              # 내릴 때 기준보다 이만큼 더 낮아야
+UP_EVERY_MIN = 5                            # 한 단계 올린 뒤 다음 단계까지 (조치 효과 검증 시간)
+DOWN_MIN = 10                               # 낮은 값이 이만큼 이어져야 한 단계 내림
+AVG_MIN = 5                                 # 단계 판단은 최근 5분 평균
+ALERT = 95.0
 IDLE_CPU = float(os.getenv("PORING_LOADSHED_IDLE_CPU", "5"))
-MAX_OFF_HOURS = float(os.getenv("PORING_LOADSHED_MAX_OFF_HOURS", "6"))
+STOP_TTL_H = float(os.getenv("PORING_LOADSHED_MAX_OFF_HOURS", "6"))
+SLOW_TTL_H = float(os.getenv("PORING_LOADSHED_SLOW_HOURS", "2"))
 COOLDOWN_MIN = 30
 KEEP_SAMPLES = 40
 TIMEOUT = 25
 ACTOR = "슈나"
 NAME = "💠 결계 조절"
 LOADSHED_PATH = os.path.join(STATE_DIR, "loadshed.json")
-
+UNIT_WEIGHT = {3: 20, 4: 5}                 # 짐꾼 CPUWeight (기본 100) - 끄지 않고 늦춘다
+RCLONE_RATE = os.getenv("PORING_LOADSHED_RCLONE_RATE", "5M:off")   # 업로드:다운로드 - 다운로드(재생)는 off(제한 없음)
 
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")   # 컨테이너/서비스 이름 (명령에 들어가서 검사)
-_SAFE_PROC = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]*$")  # 프로세스 이름 (pgrep -f 패턴)
+_SAFE_URL = re.compile(r"^https?://[A-Za-z0-9.\-]+(:[0-9]+)?$")
+
+# 티어 S(시청 경로) + 특별 보호 - 어떤 단계, 어떤 설정에서도 정지/강등하지 않는다
+PROTECTED = {"bookoasis", "bookoasis_mariadb", "bookoasis_redis", "flaskfarm", "shyni", "plex", "plexmediaserver",
+             "plexmediaserver.service", "ym_player", "vaultwarden", "litellm-proxy", "litellm-db", "gds2.service",
+             "pve-cluster.service", "docker.service", "containerd.service"}
+_PROTECTED_PREFIX = ("plex", "rclone", "litellm", "vaultwarden", "ym_player", "ym-player", "shyni", "bookoasis_mariadb",
+                     "bookoasis_redis", "mariadb", "mysql", "redis", "nginx", "pve")
+
+
+def protected(name: str) -> bool:
+    n = (name or "").strip().lower()
+    return n in PROTECTED or n.startswith(_PROTECTED_PREFIX)
 
 
 def _names(env: str, default: str) -> list[str]:
-    return [n.strip() for n in os.getenv(env, default).split(",") if _SAFE.match(n.strip())]
-
-
-def _caps(env: str, default: str) -> dict[str, float]:
-    """"flaskfarm:1,bookoasis_mariadb:2" -> {이름: CPU 상한(코어 수)}."""
-    out = {}
-    for part in os.getenv(env, default).split(","):
-        name, _, cap = part.strip().partition(":")
-        try:
-            if _SAFE.match(name.strip()) and float(cap) > 0:
-                out[name.strip()] = float(cap)
-        except ValueError:
+    """"docker-warproxy, x" -> 안전한 이름만, 보호 대상은 뺀다 (로그로 알림)."""
+    out = []
+    for n in os.getenv(env, default).split(","):
+        n = n.strip()
+        if not _SAFE.match(n):
             continue
+        if protected(n):
+            print(f"[결계 조절] {env}의 {n}은(는) 시청 경로/보호 대상이라 조치 목록에서 뺐다")
+            continue
+        out.append(n)
     return out
 
 
-def _procs(env: str, default: str) -> list[str]:
-    return [n.strip() for n in os.getenv(env, default).split(",") if _SAFE_PROC.match(n.strip())]
+def _url(env: str) -> str:
+    u = os.getenv(env, "").strip().rstrip("/")
+    return u if _SAFE_URL.match(u) else ""
 
 
 # 서버 -> ssh 대상("" = 이 봇이 도는 서버)
-#  allow: 내려도 되는 컨테이너 (놀고 있을 때만 docker stop)
-#  caps:  늦춰도 되는 컨테이너와 CPU 상한(코어 수) - 끄지 않고 docker update --cpus (CAP_MIN_CPU % 이상 쓰는 중일 때만)
-#  units: 우선순위를 낮춰도 되는 systemd 서비스 - systemctl set-property --runtime CPUWeight=UNIT_WEIGHT
-#  nice:  우선순위를 낮춰도 되는 프로세스 이름 - renice NICE_LEVEL (그때 떠 있는 것만)
+#  stop:  1단계부터 놀고 있으면 내려도 되는 희생 가능(티어 B) 컨테이너
+#  units: 3단계부터 늦출 systemd 서비스(티어 A 짐꾼) - CPUWeight 20(3단계)/5(4단계), 끄지 않는다
+#  rclone: 3단계부터 업로드만 대역폭 제한할 rclone rc 주소 (예: http://192.168.0.10:5276)
 HOSTS = {
-    "etc": {"ssh": "", "docker_mcp": os.getenv("PORING_DOCKER_ETC_MCP_SERVER", "docker_local"), "allow": _names("PORING_LOADSHED_ETC", "docker-warproxy"),
-            "caps": _caps("PORING_LOADSHED_ETC_CAP", ""), "units": _names("PORING_LOADSHED_ETC_UNITS", ""),
-            "nice": _procs("PORING_LOADSHED_ETC_NICE", "")},
+    "etc": {"ssh": "", "docker_mcp": os.getenv("PORING_DOCKER_ETC_MCP_SERVER", "docker_local"),
+            "stop": _names("PORING_LOADSHED_ETC", "docker-warproxy"), "units": _names("PORING_LOADSHED_ETC_UNITS", ""),
+            "rclone": ""},
     "plex01": {"ssh": os.getenv("PORING_LOADSHED_PLEX_SSH", "192.168.0.31"),
                "docker_mcp": os.getenv("PORING_DOCKER_PLEX_MCP_SERVER", "docker_bookoasis"),
-               "allow": _names("PORING_LOADSHED_PLEX01", "tautulli"),
-               "caps": _caps("PORING_LOADSHED_PLEX01_CAP", "flaskfarm:1,bookoasis_mariadb:2"),
+               "stop": _names("PORING_LOADSHED_PLEX01", ""),
                "units": _names("PORING_LOADSHED_PLEX01_UNITS", "bookoasis_assistant.service"),
-               "nice": _procs("PORING_LOADSHED_PLEX01_NICE", "Plex Media Scanner")},
+               "rclone": _url("PORING_LOADSHED_RCLONE_RC")},
 }
-CAP_MIN_CPU = 20      # 상한은 이만큼(%) 이상 쓰는 컨테이너에만 건다
-UNIT_WEIGHT = 20      # systemd CPUWeight (기본 100)
-NICE_LEVEL = 15
+ZEEPS_SSH = os.getenv("PORING_LOADSHED_ZEEPS_SSH", "").strip()      # 호스트(zeeps) 지수도 같이 볼 때 (읽기만)
+STAGE_SSH = os.getenv("PORING_LOADSHED_STAGE_SSH", "").strip()      # /run/village/stage를 쓸 호스트
+STOP_STAGE = 1
+SLOW_STAGE = 3
 
 
 def _load() -> dict:
@@ -112,8 +144,12 @@ def _save(data: dict) -> None:
 
 
 # ===================================================================== 재기 / 명령
+def _ssh_of(host: str) -> str:
+    return ZEEPS_SSH if host == "zeeps" else HOSTS[host]["ssh"]
+
+
 def _cmd(host: str, args: list[str]) -> list[str]:
-    ssh = HOSTS[host]["ssh"]
+    ssh = _ssh_of(host)
     if not ssh:
         return args
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", ssh, " ".join(args)]
@@ -121,7 +157,7 @@ def _cmd(host: str, args: list[str]) -> list[str]:
 
 def _sh(host: str, script: str) -> str | None:
     """셸 한 줄 실행 (이 서버면 sh -c, 아니면 ssh 원격 셸)."""
-    return _run(host, [script] if HOSTS[host]["ssh"] else ["sh", "-c", script])
+    return _run(host, [script] if _ssh_of(host) else ["sh", "-c", script])
 
 
 def _run(host: str, args: list[str]) -> str | None:
@@ -137,37 +173,70 @@ def _run(host: str, args: list[str]) -> str | None:
     return p.stdout
 
 
-def parse_stat(line: str) -> tuple[int, int] | None:
-    """/proc/stat 첫 줄 -> (전체, 쉰 시간)."""
+def parse_stat(line: str) -> tuple[int, int, int] | None:
+    """/proc/stat 첫 줄 -> (전체, 쉰 시간, 바쁜 시간 - nice/iowait 제외)."""
     parts = line.split()
     if len(parts) < 5 or parts[0] != "cpu":
         return None
-    nums = [int(x) for x in parts[1:9]]
-    idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
-    return sum(nums), idle
+    nums = [int(x) for x in parts[1:9]] + [0] * 8
+    user, nice, system, idle, iowait, irq, softirq, steal = nums[:8]
+    return sum(nums[:8]), idle + iowait, user + system + irq + softirq + steal
 
 
 def cpu_from(a: str, b: str) -> float | None:
+    """전체 CPU 사용률 (nice 포함 - 표시용)."""
     x, y = parse_stat(a), parse_stat(b)
     if not x or not y or y[0] <= x[0]:
         return None
     return round(100.0 * (1 - (y[1] - x[1]) / (y[0] - x[0])), 1)
 
 
-def _host_cpu(host: str) -> float | None:
-    if not HOSTS[host]["ssh"]:
-        try:
-            with open("/proc/stat") as f:
-                a = f.readline()
-            time.sleep(1)
-            with open("/proc/stat") as f:
-                b = f.readline()
-        except OSError:
-            return None
-        return cpu_from(a, b)
-    out = _run(host, ["head -1 /proc/stat; sleep 1; head -1 /proc/stat"])
+def busy_from(a: str, b: str) -> float | None:
+    """지수용 CPU = us+sy+irq+steal (nice된 작업은 바로 양보하므로 위험으로 안 센다)."""
+    x, y = parse_stat(a), parse_stat(b)
+    if not x or not y or y[0] <= x[0]:
+        return None
+    return round(100.0 * (y[2] - x[2]) / (y[0] - x[0]), 1)
+
+
+def parse_mem(text: str) -> float | None:
+    vals = {}
+    for line in (text or "").splitlines():
+        k, _, v = line.partition(":")
+        if k in ("MemTotal", "MemAvailable") and v.split():
+            vals[k] = int(v.split()[0])
+    if vals.get("MemTotal") and "MemAvailable" in vals:
+        return round(100.0 * (1 - vals["MemAvailable"] / vals["MemTotal"]), 1)
+    return None
+
+
+def parse_psi(line: str) -> float | None:
+    """'some avg10=1.23 avg60=... ' -> 1.23."""
+    m = re.search(r"some\s+avg10=([0-9.]+)", line or "")
+    return float(m.group(1)) if m else None
+
+
+_PROBE = ("head -1 /proc/stat; sleep 1; head -1 /proc/stat; grep -E '^(MemTotal|MemAvailable):' /proc/meminfo; "
+          "for r in cpu io memory; do printf 'psi_%s ' $r; head -1 /proc/pressure/$r 2>/dev/null || echo; done")
+
+
+def parse_probe(out: str) -> dict | None:
+    """_PROBE 출력 -> {"cpu"(nice 포함), "busy", "mem", "psi": {cpu, io, memory}, "index"}."""
     lines = (out or "").strip().splitlines()
-    return cpu_from(lines[0], lines[1]) if len(lines) >= 2 else None
+    stats = [ln for ln in lines if ln.startswith("cpu ")]
+    if len(stats) < 2:
+        return None
+    busy, mem = busy_from(stats[0], stats[1]), parse_mem("\n".join(lines))
+    if busy is None:
+        return None
+    psi = {}
+    for ln in lines:
+        if ln.startswith("psi_"):
+            kind, _, rest = ln[4:].partition(" ")
+            psi[kind] = parse_psi(rest)
+    io = psi.get("io")
+    index = max(v for v in (busy, mem, io) if v is not None)
+    return {"cpu": cpu_from(stats[0], stats[1]), "busy": busy, "mem": mem, "psi": psi, "index": round(index, 1)}
 
 
 def parse_stats(out: str) -> dict[str, float]:
@@ -182,111 +251,193 @@ def parse_stats(out: str) -> dict[str, float]:
     return res
 
 
+def _playing() -> int | None:
+    """지금 재생 중인 수 (Plex 직접 -> 매시 지표). 모르면 None."""
+    try:
+        from . import plex_api
+        if plex_api.enabled():
+            got = plex_api.sessions()
+            if got is not None:
+                return len(got)
+        from . import metrics
+        return metrics.streams()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def measure() -> dict:
-    """[스레드에서] {서버: {"cpu": float|None, "running": {이름: CPU %}|None}}."""
+    """[스레드에서] {서버: {"probe": dict|None, "running": {이름: CPU %}|None}, "_zeeps": dict|None, "_playing": int|None}."""
     out = {}
     for host in HOSTS:
-        cpu = _host_cpu(host)
+        probe = parse_probe(_sh(host, _PROBE) or "")
         stats = _run(host, ["docker", "stats", "--no-stream", "--format", "'{{.Name}}\t{{.CPUPerc}}'"]
                      if HOSTS[host]["ssh"] else ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}"])
-        out[host] = {"cpu": cpu, "running": parse_stats(stats) if stats is not None else None}
+        out[host] = {"probe": probe, "running": parse_stats(stats) if stats is not None else None}
+    out["_zeeps"] = parse_probe(_sh("zeeps", _PROBE) or "") if ZEEPS_SSH else None
+    out["_playing"] = _playing()
     return out
 
 
+# ===================================================================== 단계 판단 (순수)
+def psi_alarm(psi: dict | None) -> bool:
+    psi = psi or {}
+    return (psi.get("cpu") or 0) > 10 or (psi.get("io") or 0) > 10 or (psi.get("memory") or 0) > 1
+
+
+def stage_of(value: float, playing: bool) -> int:
+    adj = PLAY_ADJ if playing else 0.0
+    return sum(1 for t in STAGES if value >= t - adj)
+
+
+def next_stage(samples: list, current: int, changed_at: str, playing: bool, now: datetime) -> tuple[int, str]:
+    """최근 기록으로 다음 단계와 이유. samples = [[시각, 지수, psi경보(bool)]]. 순수 함수 (테스트용)."""
+    since5 = (now - timedelta(minutes=AVG_MIN)).isoformat()
+    recent = [s for s in samples if s[0] >= since5]
+    if len(recent) < 3:
+        return current, ""
+    avg = sum(s[1] for s in recent) / len(recent)
+    alarm = bool(recent[-1][2]) if len(recent[-1]) > 2 else False
+    target = min(4, stage_of(avg, playing) + (1 if alarm else 0))
+    adj = PLAY_ADJ if playing else 0.0
+    tag = f"5분 평균 {avg:.0f}%" + (" · 재생 중이라 기준 -10%p" if playing else "") + (" · 지연(PSI) 감지" if alarm else "")
+    waited = not changed_at or changed_at <= (now - timedelta(minutes=UP_EVERY_MIN)).isoformat()
+    if target > current:
+        if avg >= STAGES[3] - adj:
+            return 4, tag + " - 급등이라 바로 4단계"
+        return (current + 1, tag) if waited else (current, "")
+    if target < current and current > 0:
+        floor = STAGES[current - 1] - adj - DOWN_GAP
+        since10 = (now - timedelta(minutes=DOWN_MIN)).isoformat()
+        window = [s for s in samples if s[0] >= since10]
+        covered = any(s[0] <= (now - timedelta(minutes=DOWN_MIN - 1)).isoformat() for s in samples)
+        calm = covered and len(window) >= DOWN_MIN * 0.6 and all(s[1] < floor and not (len(s) > 2 and s[2]) for s in window)
+        long_enough = not changed_at or changed_at <= since10
+        if calm and long_enough:
+            return current - 1, f"{DOWN_MIN}분째 {floor:g}% 아래"
+    return current, ""
+
+
+def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime) -> list[dict]:
+    """지금 단계에 맞춰 할 일 [{"host", "do": stop|start|throttle|unthrottle, "name", "kind"?, "weight"?, "why"}].
+    복구는 조치의 역순(마지막에 한 것부터). ttl이 지나면 단계와 상관없이 되돌린다. 순수 함수 (테스트용)."""
+    cfg = HOSTS[host]
+    shed = st.get("shed") or {}
+    slow = st.get("throttled") or {}
+    restored = st.get("restored") or {}
+    cool = (now - timedelta(minutes=COOLDOWN_MIN)).isoformat()
+    stop_old = (now - timedelta(hours=STOP_TTL_H)).isoformat()
+    slow_old = (now - timedelta(hours=SLOW_TTL_H)).isoformat()
+    undo = []
+    for n, t in shed.items():
+        stale = n not in cfg["stop"] or protected(n)        # 예전 설정으로 내린 것 / 이제 보호 대상 -> 바로 되돌림
+        if stale or stage < STOP_STAGE or t <= stop_old:
+            undo.append((t, {"host": host, "do": "start", "name": n,
+                             "why": "이제 조치 대상이 아님" if stale else
+                             f"결계 경보 {stage}단계로 내려감" if stage < STOP_STAGE else f"{STOP_TTL_H:g}시간 지남(ttl)"}))
+    for key, t in slow.items():
+        stale = t["kind"] not in ("unit", "rclone") or protected(t["name"]) or \
+            (t["kind"] == "unit" and t["name"] not in cfg["units"])
+        if stale or stage < SLOW_STAGE or t.get("at", "") <= slow_old:
+            undo.append((t.get("at", ""), {"host": host, "do": "unthrottle", "name": t["name"], "kind": t["kind"],
+                                            "orig": t.get("orig"),
+                                            "why": "시청 경로/이제 조치 대상이 아님" if stale else
+                                            f"결계 경보 {stage}단계로 내려감" if stage < SLOW_STAGE else f"{SLOW_TTL_H:g}시간 지남(ttl)"}))
+    acts = [a for _, a in sorted(undo, key=lambda x: x[0], reverse=True)]
+    undone = {a["name"] for a in acts}
+    if running is None:
+        return acts
+    why = f"결계 경보 {stage}단계"
+    if stage >= STOP_STAGE:
+        for name in cfg["stop"]:
+            if protected(name) or name in shed or name not in running or restored.get(name, "") >= cool:
+                continue
+            if running[name] < IDLE_CPU:
+                acts.append({"host": host, "do": "stop", "name": name, "why": f"{why}, 이 시설은 놀고 있음({running[name]:g}%)"})
+    if stage >= SLOW_STAGE:
+        for name in cfg["units"]:
+            key, w = f"unit:{name}", UNIT_WEIGHT[min(stage, 4)]
+            if protected(name) or name in undone or restored.get(key, "") >= cool:
+                continue
+            if (slow.get(key) or {}).get("weight") != w:
+                acts.append({"host": host, "do": "throttle", "name": name, "kind": "unit", "weight": w,
+                             "why": f"{why} - 끄지 않고 늦춤(진행 중인 회차는 끝까지)"})
+        if cfg.get("rclone"):
+            key = "rclone:upload"
+            if key not in slow and "upload" not in undone and restored.get(key, "") < cool:
+                acts.append({"host": host, "do": "throttle", "name": "upload", "kind": "rclone", "weight": RCLONE_RATE,
+                             "why": f"{why} - 업로드만 {RCLONE_RATE} (재생 읽기는 그대로)"})
+    return acts
+
+
 def _docker(host: str, do: str, name: str) -> bool:
+    if protected(name):
+        return False
     if DRY_RUN:
         print(f"[결계 조절] (시험) {host} docker {do} {name}")
         return True
     return _run(host, ["docker", do, name]) is not None
 
 
-# ===================================================================== 판단 (순수)
-def _sustained(samples: list, now: datetime, minutes: int, pred) -> bool:
-    """최근 minutes분 동안 쭉 pred였나 (그만큼 기록이 쌓여 있어야 한다, 빠진 회차는 조금 봐준다)."""
-    since = (now - timedelta(minutes=minutes)).isoformat()
-    window = [c for t, c in samples if t >= since]
-    covered = any(t <= (now - timedelta(minutes=minutes - 1)).isoformat() for t, _ in samples)
-    return covered and len(window) >= max(1, int(minutes * 0.6)) and all(pred(c) for c in window)
-
-
-def decide(host: str, st: dict, running: dict | None, now: datetime) -> list[dict]:
-    """한 서버의 할 일 [{"host", "do": stop|start|throttle|unthrottle, "name", "kind"?, "cap"?, "why"}]. 순수 함수 (테스트용).
-    kind: cpus(컨테이너 CPU 상한) / unit(systemd CPUWeight) / nice(프로세스 우선순위)."""
-    samples = st.get("samples") or []
-    shed = st.get("shed") or {}
-    slow = st.get("throttled") or {}
-    cfg = HOSTS[host]
-    acts = []
-    if shed or slow:
-        old = (now - timedelta(hours=MAX_OFF_HOURS)).isoformat()
-        if _sustained(samples, now, LOW_MIN, lambda c: c < LOW):
-            why = f"결계 부하가 {LOW_MIN}분째 {LOW:g}% 아래"
-            return ([{"host": host, "do": "start", "name": n, "why": why} for n in shed]
-                    + [{"host": host, "do": "unthrottle", "name": t["name"], "kind": t["kind"], "orig": t.get("orig"), "why": why}
-                       for t in slow.values()])
-        why = f"{MAX_OFF_HOURS:g}시간 넘게 그대로였음"
-        acts += [{"host": host, "do": "start", "name": n, "why": why} for n, t in shed.items() if t <= old]
-        acts += [{"host": host, "do": "unthrottle", "name": t["name"], "kind": t["kind"], "orig": t.get("orig"), "why": why}
-                 for t in slow.values() if t.get("at", "") <= old]
-    if running is None or not _sustained(samples, now, HIGH_MIN, lambda c: c >= HIGH):
-        return acts
-    cool = (now - timedelta(minutes=COOLDOWN_MIN)).isoformat()
-    restored = st.get("restored") or {}
-    high = f"결계 부하 {samples[-1][1]:g}% ({HIGH_MIN}분째 {HIGH:g}% 이상)"
-    for name in cfg["allow"]:
-        if name in shed or name not in running or restored.get(name, "") >= cool:
-            continue
-        if running[name] < IDLE_CPU:
-            acts.append({"host": host, "do": "stop", "name": name, "why": f"{high}, 이 시설은 놀고 있음({running[name]:g}%)"})
-    for kind, items in (("cpus", cfg.get("caps") or {}), ("unit", cfg.get("units") or []), ("nice", cfg.get("nice") or [])):
-        for name in items:
-            key = f"{kind}:{name}"
-            if key in slow or restored.get(key, "") >= cool:
-                continue
-            if kind == "cpus":
-                if name not in running or running[name] < CAP_MIN_CPU:
-                    continue
-                acts.append({"host": host, "do": "throttle", "name": name, "kind": kind, "cap": items[name],
-                             "why": f"{high}, 이 시설이 {running[name]:g}%를 쓰는 중 - {items[name]:g}코어로 제한"})
-            else:
-                acts.append({"host": host, "do": "throttle", "name": name, "kind": kind, "why": f"{high} - 우선순위 낮춤"})
-    return acts
+def _rclone(host: str, rate: str) -> bool:
+    import requests
+    url = HOSTS[host].get("rclone")
+    if not url:
+        return False
+    if DRY_RUN:
+        print(f"[결계 조절] (시험) rclone bwlimit {rate}")
+        return True
+    try:
+        return requests.post(f"{url}/core/bwlimit", json={"rate": rate}, timeout=8).status_code == 200
+    except requests.RequestException as e:
+        print(f"[결계 조절] rclone bwlimit 실패: {e!r}"[:200])
+        return False
 
 
 def _throttle(host: str, a: dict) -> dict | None:
-    """늦추기/되돌리기 실행. 반환: 성공하면 {"orig": 원래 값} (되돌리기는 {}), 아니면(대상이 없거나 실패) None."""
+    """늦추기/되돌리기 실행. 반환: 성공하면 {"orig": 원래 값} (되돌리기는 {}), 아니면 None."""
     name, kind = a["name"], a["kind"]
-    q = shlex.quote(name)
-    pat = shlex.quote(f"[{name[0]}]{name[1:]}")   # pgrep -f가 이 명령을 실행하는 셸 자신을 찾지 않게 ("[P]lex ...")
+    if a["do"] == "throttle" and (kind not in ("unit", "rclone") or protected(name)):
+        return None
     if DRY_RUN:
-        print(f"[결계 조절] (시험) {host} {a['do']} {kind} {name}")
+        print(f"[결계 조절] (시험) {host} {a['do']} {kind} {name} {a.get('weight', '')}")
         return {"orig": None}
+    q = shlex.quote(name)
+    if kind == "rclone":
+        return ({"orig": "off"} if _rclone(host, str(a["weight"])) else None) if a["do"] == "throttle" else \
+            ({} if _rclone(host, "off") else None)
     if a["do"] == "throttle":
-        if kind == "cpus":
-            orig = _run(host, ["docker", "inspect", "-f", "{{.HostConfig.NanoCpus}}", name])
-            if orig is None or _run(host, ["docker", "update", "--cpus", f"{a['cap']:g}", name]) is None:
-                return None
-            return {"orig": int(orig.strip() or 0)}
-        if kind == "unit":
-            orig = _sh(host, f"systemctl show -p CPUWeight --value {q}")
-            if _sh(host, f"systemctl set-property --runtime {q} CPUWeight={UNIT_WEIGHT}") is None:
-                return None
-            o = (orig or "").strip()
-            return {"orig": int(o) if o.isdigit() else None}
-        out = _sh(host, f"p=$(pgrep -f {pat}); if [ -n \"$p\" ]; then renice -n {NICE_LEVEL} -p $p >/dev/null && echo $p; fi")
-        return {"orig": 0} if out and out.strip() else None
-    if kind == "cpus":
+        orig = a.get("orig_known")
+        if orig is None:
+            o = (_sh(host, f"systemctl show -p CPUWeight --value {q}") or "").strip()
+            orig = int(o) if o.isdigit() else None
+        if _sh(host, f"systemctl set-property --runtime {q} CPUWeight={int(a['weight'])}") is None:
+            return None
+        return {"orig": orig}
+    if kind == "cpus":      # 예전 버전이 건 컨테이너 CPU 상한 되돌리기 (이제는 걸지 않는다)
         cpus = (a.get("orig") or 0) / 1e9
         return {} if _run(host, ["docker", "update", "--cpus", f"{cpus:g}", name]) is not None else None
-    if kind == "unit":
-        w = a.get("orig") or 100
-        return {} if _sh(host, f"systemctl set-property --runtime {q} CPUWeight={w}") is not None else None
-    _sh(host, f"p=$(pgrep -f {pat}); [ -n \"$p\" ] && renice -n 0 -p $p >/dev/null; true")
-    return {}
+    if kind == "nice":      # 예전 버전이 낮춘 프로세스 우선순위 되돌리기
+        pat = shlex.quote(f"[{name[0]}]{name[1:]}")
+        _sh(host, f"p=$(pgrep -f {pat}); [ -n \"$p\" ] && renice -n 0 -p $p >/dev/null; true")
+        return {}
+    w = a.get("orig") or 100
+    return {} if _sh(host, f"systemctl set-property --runtime {q} CPUWeight={w}") is not None else None
+
+
+def _write_stage(stage: int) -> None:
+    """가이드 6.3 게이트: 호스트 /run/village/stage에 단계 숫자 (호스트 타이머가 ExecCondition으로 읽는다)."""
+    if not STAGE_SSH or DRY_RUN:
+        return
+    try:
+        subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", STAGE_SSH,
+                        f"mkdir -p /run/village && echo {int(stage)} > /run/village/stage"],
+                       capture_output=True, text=True, timeout=TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"[결계 조절] 단계 파일 쓰기 실패: {e!r}"[:200])
 
 
 def step(now: datetime | None = None, measurer=None, docker=None, throttler=None) -> list[dict]:
-    """[매분, 스레드에서] 재고 -> 판단 -> 실제로 내리고/올리고/늦추고/되돌린다. 반환: 실제로 한 일."""
+    """[매분, 스레드에서] 재고 -> 단계 -> 실제로 내리고/올리고/늦추고/되돌린다. 반환: 실제로 한 일 (단계 변화 포함)."""
     if not ENABLED:
         return []
     now = now or now_kst()
@@ -295,17 +446,35 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     throttler = throttler or _throttle
     data = _load()
     hosts = data.setdefault("hosts", {})
+    zeeps = readings.get("_zeeps") or None
+    playing = readings.get("_playing")
     done = []
+    stamp = now.isoformat(timespec="seconds")
     for host in HOSTS:
         r = readings.get(host) or {}
         st = hosts.setdefault(host, {})
-        if r.get("cpu") is not None:
-            st["samples"] = (st.get("samples") or [])[-(KEEP_SAMPLES - 1):] + [[now.isoformat(timespec="seconds"), r["cpu"]]]
-            st["last_cpu"], st["at"] = r["cpu"], now.isoformat(timespec="seconds")
+        probe = r.get("probe")
+        if probe is None and r.get("cpu") is not None:      # 예전 모양 (cpu만) - 지수로 그대로 쓴다
+            probe = {"index": r["cpu"], "cpu": r["cpu"], "psi": {}}
+        if probe is not None:
+            index = max(probe["index"], (zeeps or {}).get("index") or 0)
+            alarm = psi_alarm(probe.get("psi")) or psi_alarm((zeeps or {}).get("psi"))
+            st["samples"] = (st.get("samples") or [])[-(KEEP_SAMPLES - 1):] + [[stamp, index, alarm]]
+            st["last_cpu"], st["at"] = index, stamp
+            st["detail"] = {k: probe.get(k) for k in ("cpu", "busy", "mem")} | {"psi": probe.get("psi") or {}}
         if r.get("running") is not None:   # 매분 도는 컨테이너 목록 - facilities.quick이 사람이 끄고 켠 것도 바로 잡는다
-            st["running"], st["running_at"] = sorted(r["running"]), now.isoformat(timespec="seconds")
-        stamp = now.isoformat(timespec="seconds")
-        for a in decide(host, st, r.get("running"), now):
+            st["running"], st["running_at"] = sorted(r["running"]), stamp
+        st["playing"] = playing
+        if probe is None:          # 못 쟀으면 단계는 그대로, 아무것도 안 한다
+            continue
+        cur = int(st.get("stage", 0))
+        new, why = next_stage(st.get("samples") or [], cur, st.get("stage_at", ""), bool(playing), now)
+        if new != cur:
+            st["stage"], st["stage_at"] = new, stamp
+            done.append({"host": host, "do": "stage", "name": "결계 경보", "from": cur, "to": new, "why": why,
+                         "cpu": st["last_cpu"], "alert": new >= 4 or st["last_cpu"] > ALERT})
+            print(f"[결계 조절] {host} 결계 경보 {cur} -> {new}단계 - {why}")
+        for a in plan(host, new, st, r.get("running"), now):
             if a["do"] in ("stop", "start"):
                 if not docker(host, a["do"], a["name"]):
                     continue
@@ -315,13 +484,18 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
                     (st.get("shed") or {}).pop(a["name"], None)
                     st.setdefault("restored", {})[a["name"]] = stamp
             else:
+                key = f"{a['kind']}:{a['name']}"
+                prev = (st.get("throttled") or {}).get(key)
+                if a["do"] == "throttle" and prev:
+                    a["orig_known"] = prev.get("orig")
                 got = throttler(host, a)
+                a.pop("orig_known", None)
                 if got is None:
                     continue
-                key = f"{a['kind']}:{a['name']}"
                 if a["do"] == "throttle":
-                    st.setdefault("throttled", {})[key] = {"kind": a["kind"], "name": a["name"], "orig": got.get("orig"),
-                                                           "at": stamp}
+                    st.setdefault("throttled", {})[key] = {"kind": a["kind"], "name": a["name"], "weight": a.get("weight"),
+                                                           "orig": prev.get("orig") if prev else got.get("orig"),
+                                                           "at": prev.get("at", stamp) if prev else stamp}
                 else:
                     (st.get("throttled") or {}).pop(key, None)
                     st.setdefault("restored", {})[key] = stamp
@@ -329,6 +503,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             done.append(a)
             word = {"stop": "내림", "start": "다시 올림", "throttle": "늦춤", "unthrottle": "되돌림"}[a["do"]]
             print(f"[결계 조절] {host} {a['name']} {word} - {a['why']}")
+    _write_stage(max((int(st.get("stage", 0)) for h, st in hosts.items() if h in HOSTS), default=0))
     if done:
         data["log"] = (data.get("log") or [])[-99:] + [{**a, "at": now.isoformat(timespec="minutes")} for a in done]
     _save(data)
@@ -336,7 +511,8 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
 
 
 # ===================================================================== 이야기 / 다른 모듈
-LABELS = {"bookoasis_assistant.service": "도서관 두루마리 운반 정령", "Plex Media Scanner": "환영극장 서고 정리 정령"}
+LABELS = {"bookoasis_assistant.service": "도서관 두루마리 운반 정령", "upload": "왕도로 가는 두루마리 짐마차"}
+STAGE_NAMES = {0: "평시", 1: "경계", 2: "방어", 3: "짐꾼 늦춤", 4: "짐꾼 최소"}
 
 
 def _label(name: str) -> str:
@@ -347,6 +523,15 @@ def _label(name: str) -> str:
 def _story(a: dict) -> tuple[str, str, str]:
     """한 일 하나 -> (이야기 글, 사건 제목, 표시)."""
     from .josa import has_batchim, j
+    if a["do"] == "stage":
+        up = a["to"] > a["from"]
+        name = STAGE_NAMES.get(a["to"], "")
+        if up:
+            text = (f"{j(ACTOR, '이')} 결계 경보를 {a['to']}단계({name})로 올렸다 ({a['why']}). "
+                    "환영극과 책 열람은 그대로 지키고, 짐 나르는 일과 정비부터 쉬게 한다.")
+        else:
+            text = f"{j(ACTOR, '이')} 결계 경보를 {a['to']}단계({name})로 내렸다 ({a['why']}). 쉬던 일이 차례로 돌아온다."
+        return text, f"결계 경보 {a['to']}단계 ({name})", ("⚠️ " if a.get("alert") else "") + ("⬆" if up else "⬇") + f" {a['to']}단계"
     label = _label(a["name"])
     ro = label + ("으로" if has_batchim(label) and (ord(label[-1]) - 0xAC00) % 28 != 8 else "로")   # ㄹ 받침은 "로"
     return {
@@ -367,11 +552,12 @@ def notify(done: list[dict], now: datetime | None = None, post=None) -> None:
     post = post or (lambda text: ag._post_as(NAME, text))
     for a in done:
         text, _, mark = _story(a)
-        post(f"-# {NAME} · {now:%H:%M} · {a['host']} `{a['name']}` {mark}\n{text}")
+        warn = "\n⚠️ 부하 지수가 높아요 - 시청 경로는 건드리지 않았고, 계속 높으면 직접 확인이 필요해요." if a.get("alert") else ""
+        post(f"-# {NAME} · {now:%H:%M} · {a['host']} `{a['name']}` {mark}\n{text}{warn}")
 
 
 # 시설 -> 그 일을 바로 겪는 기관 (그 기관 사람 몇 명이 지금 반응한다)
-OWNERS = {"bookoasis_assistant.service": "BOOK", "Plex Media Scanner": "CINEMA"}
+OWNERS = {"bookoasis_assistant.service": "BOOK", "upload": "BOOK"}
 
 
 def key_people(names: list[str], agents: list[dict] | None = None, per_company: int = 2) -> list[str]:
@@ -380,7 +566,7 @@ def key_people(names: list[str], agents: list[dict] | None = None, per_company: 
     from .agents import load_agents
     from .facilities import FACILITIES
     agents = agents if agents is not None else load_agents()
-    out = [ACTOR, "베니마루"]
+    out = [ACTOR, "베니마루"] + (["애순이"] if "결계 경보" in names else [])   # 단계는 총괄 애순이도 바로 안다
     for name in names:
         company = FACILITIES[name][1] if name in FACILITIES else getattr(worldcfg, OWNERS.get(name, ""), "")
         if company in worldcfg.OFFICES:
@@ -429,22 +615,35 @@ def max_cpu(now: datetime | None = None, fresh_min: int = 15) -> float | None:
     return max(vals) if vals else None
 
 
+def stage(now: datetime | None = None, fresh_min: int = 15) -> int:
+    """지금 가장 높은 결계 경보 단계 (오래됐으면 0)."""
+    now = now or now_kst()
+    since = (now - timedelta(minutes=fresh_min)).isoformat()
+    return max([int(st.get("stage", 0)) for st in (_load().get("hosts") or {}).values() if st.get("at", "") >= since] or [0])
+
+
 def summary(now: datetime | None = None) -> str:
     now = now or now_kst()
     data = _load()
-    lines = [f"💠 **결계 조절** - {HIGH:g}% 이상 {HIGH_MIN}분이면 놀고 있는 시설은 내리고 바쁜 시설은 늦추고, "
-             f"{LOW:g}% 미만 {LOW_MIN}분이면 되돌림" + (" (시험 모드)" if DRY_RUN else "")]
-    word = {"stop": "내림", "start": "올림", "throttle": "늦춤", "unthrottle": "되돌림"}
+    lines = [f"💠 **결계 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 {'/'.join(f'{t:g}' for t in STAGES)}% = 1~4단계, "
+             f"재생 중 -{PLAY_ADJ:g}%p) - 시청 경로(북오아시스·Plex·YM_PLAYER·SHYNI·flaskfarm)는 절대 안 건드림"
+             + (" (시험 모드)" if DRY_RUN else "")]
+    word = {"stop": "내림", "start": "올림", "throttle": "늦춤", "unthrottle": "되돌림", "stage": "단계"}
     for host, cfg in HOSTS.items():
         st = (data.get("hosts") or {}).get(host) or {}
-        cpu = st.get("last_cpu")
-        slow = ", ".join(cfg["allow"] + [f"{n}(≤{c:g}코어)" for n, c in (cfg.get("caps") or {}).items()]
-                         + list(cfg.get("units") or []) + list(cfg.get("nice") or []))
-        lines.append(f"• {host}: 부하 {f'{cpu:g}%' if cpu is not None else '모름'} · 대상 {slow or '없음'}"
+        idx, det = st.get("last_cpu"), st.get("detail") or {}
+        parts = [f"{n}(1단계~ 정지)" for n in cfg["stop"]] + [f"{n}(3단계~ 늦춤)" for n in cfg["units"]] \
+            + (["rclone 업로드(3단계~ 제한)"] if cfg.get("rclone") else [])
+        lines.append(f"• {host}: {int(st.get('stage', 0))}단계({STAGE_NAMES[int(st.get('stage', 0))]}) · 지수 "
+                     + (f"{idx:g}%" if idx is not None else "모름")
+                     + (f" (CPU {det.get('busy')}% · 메모리 {det.get('mem')}% · I/O {(det.get('psi') or {}).get('io')})" if det else "")
+                     + (f" · 재생 {st['playing']}" if st.get("playing") else "")
+                     + f" · 대상 {', '.join(parts) or '없음'}"
                      + (f" · 지금 내려 둔 것 {', '.join(st['shed'])}" if st.get("shed") else "")
                      + (f" · 지금 늦춘 것 {', '.join(t['name'] for t in st['throttled'].values())}" if st.get("throttled") else ""))
     for g in (data.get("log") or [])[-5:][::-1]:
-        lines.append(f"  - {g['at'][5:16].replace('T', ' ')} {g['host']} {g['name']} {word.get(g['do'], g['do'])} ({g['why']})")
+        what = f"{g.get('from')}→{g.get('to')}단계" if g.get("do") == "stage" else f"{g['name']} {word.get(g['do'], g['do'])}"
+        lines.append(f"  - {g['at'][5:16].replace('T', ' ')} {g['host']} {what} ({g['why']})")
     return "\n".join(lines)
 
 

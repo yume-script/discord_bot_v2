@@ -211,22 +211,23 @@ python app.py
   많이 낸 MVP +15, 돕는 사람은 절반, 치유사는 다친 사람 1명당 10, 방어 시설을 세우거나 고친 사람은 8. 다음 레벨까지 80 x 지금 레벨,
   레벨당 침입 때 힘 +8%. Lv.5 숙련 / Lv.10 정예 / Lv.20 영웅 / Lv.30 전설 칭호. 판단 때 [내 전투 레벨]을 보고, `/포링푸드명단`에
   `Lv.N`이 붙는다. 시뮬레이션(60일, 평온한 서버): 시설 없으면 대부분 고전, 보통이면 격퇴, 튼튼하면 격퇴/대승, 주력은 Lv.6~8.
-- **결계 조절 - 실제 부하 줄이기** (`poring_food/loadshed.py`, 봇 `load_guard` 매분): 봇 서버(etc)는 `/proc/stat`, Plex 서버(plex01)는
-  `ssh 192.168.0.31`(docker_bookoasis와 같은 접속)로 CPU와 `docker stats`를 잰다. 서버 CPU가 90% 이상으로 5분 이어지면, 그 서버의
-  **허용 목록**에 있고 그 순간 거의 일 안 하는(컨테이너 CPU < 5%) 컨테이너를 `docker stop`으로 내리고, 60% 미만으로 15분 이어지면
-  **직접 내린 것만** `docker start`로 다시 올린다(6시간 넘게 꺼져 있으면 부하와 상관없이 올림, 올린 뒤 30분은 다시 안 내림).
-  허용 목록 기본: etc `docker-warproxy`, plex01 `tautulli` (`PORING_LOADSHED_ETC` / `PORING_LOADSHED_PLEX01`, 쉼표로).
-  **끄지 않고 늦추기**도 같은 기준으로 한다(부하가 내려가면 원래 값으로 되돌림): 바쁜 컨테이너(CPU 20% 이상)는 `docker update --cpus`로
-  상한(기본 plex01 `flaskfarm:1,bookoasis_mariadb:2` - `PORING_LOADSHED_PLEX01_CAP`), systemd 서비스는 `systemctl set-property
-  --runtime CPUWeight=20`(기본 plex01 `bookoasis_assistant.service` - `_UNITS`), 프로세스는 `renice 15`(기본 plex01
-  `Plex Media Scanner` - `_NICE`; etc도 `PORING_LOADSHED_ETC_CAP/_UNITS/_NICE`). Plex 재생(Plex Media Server/Transcoder)은 대상이 아니다. 목록에 없는
-  컨테이너(Plex/bookoasis/litellm/vaultwarden…)는 절대 안 건드린다. 이야기로는 결계 마법사 슈나가 그 감시탑 불을 잠시 끄고 다시
-  켠다(💠 결계 조절 채널 한 줄 + 마을 사건), 감시탑 사고 알림(facilities)으로는 치지 않는다. 몬스터 침입 위험도의 결계 부하는 두
-  서버 중 높은 쪽. `/포링푸드침입`에 지금 부하/내려 둔 것/최근 기록. 기준은 `PORING_LOADSHED_HIGH`(90)/`_HIGH_MIN`(5)/`_LOW`(60)/
-  `_LOW_MIN`(15)/`_IDLE_CPU`(5)/`_MAX_OFF_HOURS`(6), 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
-  tautulli를 내린 동안(또는 죽었을 때)은 환영극 알림과 관객 실적이 Plex에 바로 묻는 것(`poring_food/plex_api.py` -
-  plex MCP와 같은 `PLEX_URL`/`PLEX_TOKEN`, `/status/sessions`와 `/status/sessions/history/all`, 계정은 안 가져옴)으로 이어지고,
-  웹훅도 안 오니 그동안은 매분 확인한다. Plex 기록은 다 본 것 위주라 재생 수가 Tautulli보다 조금 적게 나온다.
+- **결계 조절 - 실제 부하 줄이기** (`poring_food/loadshed.py`, 봇 `load_guard` 매분): 「집스마을 서버 관리 가이드 v1.0」의 단계 방식.
+  목표 위계: 1) 영상 재생(Plex/YM_PLAYER/SHYNI)과 책·웹툰 열람(북오아시스)이 절대 끊기지 않게 2) 부하 지수 95% 아래
+  3) 그 안에서 자료를 최대한 DB에 올리기(짐꾼 bookoasis_assistant는 끄지 않고 늦추기만 - 진행 중인 회차는 끝까지).
+  - 시청 경로/보호 대상(`PROTECTED`: bookoasis·bookoasis_mariadb·bookoasis_redis·Plex(스캐너 포함)·shyni·YM_PLAYER·flaskfarm(IPTV 경로라
+    컨테이너 단위 금지)·rclone·vaultwarden·litellm)은 .env에 적어도 절대 안 건드린다. 예전 버전이 걸어 둔 mariadb/flaskfarm 상한과
+    Plex 스캐너 nice, tautulli 정지는 배포 직후 첫 측정에서 원래대로 되돌린다.
+  - 부하 지수 = max(CPU us+sy(nice 제외), 메모리 %, I/O 압박 PSI some avg10) - etc는 이 서버 `/proc`, plex01은 ssh. 
+    `PORING_LOADSHED_ZEEPS_SSH`가 있으면 호스트 zeeps도 재서 함께 반영(읽기만).
+  - 단계: 5분 평균 60/70/80/90% 이상 = 1/2/3/4단계, 재생 중(Plex 세션)이면 기준 -10%p, PSI(cpu>10·io>10·memory>1)면 한 단계 더.
+    한 번에 한 단계씩(5분 간격), 90% 이상 급등이면 바로 4단계. 내릴 때는 기준보다 5%p 낮은 값이 10분 이어져야 한 단계씩.
+  - 조치: 1단계~ 놀고 있는 희생 가능 컨테이너 정지(기본 etc `docker-warproxy`, `PORING_LOADSHED_ETC`/`_PLEX01`, ttl 6시간),
+    3단계~ 짐꾼 `bookoasis_assistant.service` CPUWeight 20(4단계 5, `PORING_LOADSHED_PLEX01_UNITS`, ttl 2시간), 3단계~ rclone 업로드만
+    `5M:off` 제한(`PORING_LOADSHED_RCLONE_RC=http://<호스트>:5276`이 있을 때). 4단계나 95% 초과면 채널에 ⚠️. 복구는 조치의 역순.
+  - `PORING_LOADSHED_STAGE_SSH`(예: `root@zeeps`)가 있으면 매분 그 호스트 `/run/village/stage`에 단계를 쓴다 - 가이드 6.3의
+    `village-gate.sh`(ExecCondition)로 방역/정비 타이머가 스스로 건너뛴다.
+  - 단계 변화와 조치는 💠 결계 조절 채널 한 줄 + 마을 사건(슈나·베니마루·애순이가 바로 반응). 감시탑 사고 알림으로는 치지 않는다.
+    몬스터 침입 위험도는 가장 높은 지수. `/포링푸드침입`에 지금 단계/지수/조치. 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
 - **바로 전파** (`agents.react_now`, 봇 `load_guard` 매분): 결계 조절이 컨테이너를 내리거나/늦추거나 되돌린 순간, 그리고 표에 있는
   컨테이너가 꺼지거나 켜진 것(사람이 직접 docker stop/start 한 것도 - 결계 조절이 매분 재는 `docker stats` 목록으로 `facilities.quick`이
   잡는다, 원래는 매시 회차에만 봤다)을 1) 채널에 바로 알리고(💠 결계 조절 / 🛰️ 감시탑 - 실제 서버/컨테이너 이름 + 이야기 한 줄,
