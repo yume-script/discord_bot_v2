@@ -459,7 +459,9 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         if probe is not None:
             index = max(probe["index"], (zeeps or {}).get("index") or 0)
             alarm = psi_alarm(probe.get("psi")) or psi_alarm((zeeps or {}).get("psi"))
-            st["samples"] = (st.get("samples") or [])[-(KEEP_SAMPLES - 1):] + [[stamp, index, alarm]]
+            # 예전 버전 기록([시각, 전체 CPU(nice 포함)])은 지수가 아니라서 버린다 - 안 버리면 배포 직후 옛 값으로 단계가 튄다
+            kept = [x for x in (st.get("samples") or []) if len(x) >= 3]
+            st["samples"] = kept[-(KEEP_SAMPLES - 1):] + [[stamp, index, alarm]]
             st["last_cpu"], st["at"] = index, stamp
             st["detail"] = {k: probe.get(k) for k in ("cpu", "busy", "mem")} | {"psi": probe.get("psi") or {}}
         if r.get("running") is not None:   # 매분 도는 컨테이너 목록 - facilities.quick이 사람이 끄고 켠 것도 바로 잡는다
