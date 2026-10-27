@@ -1,0 +1,213 @@
+From d6412a33d6d5935e5eeba3e66b3611d6a442ba9c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 27 Oct 2026 23:38:28 +0000
+Subject: [PATCH] =?UTF-8?q?=EC=9E=AC=EC=83=9D=20=ED=98=84=ED=99=A9=20API:?=
+ =?UTF-8?q?=20/api/activity=20(=EC=9E=AC=EC=83=9D=20=EC=A4=91=EC=9D=B8=20?=
+ =?UTF-8?q?=EC=8A=A4=ED=8A=B8=EB=A6=BC=20=EC=88=98=EB=A7=8C)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+서버 부하 조절 봇이 '지금 누가 보고 있나'를 알 수 있게, 중계로 흐르는 재생 스트림(IPTV/라디오 중계,
+텔레그램 원본·변환·HLS, Plex 원본·변환)을 종류별 숫자로만 알려 준다 (제목/사용자 없음).
+- 긴 스트림은 열려 있는 동안, 조각 요청은 마지막 요청 뒤 45초 동안 재생 중
+- MP_ACTIVITY_TOKEN + X-Activity-Token 헤더로 로그인 없이 이 경로만 (다른 API는 그대로 막힘)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01XmTckUkBh9qgyacwXKwT14
+---
+ README.md                    |  4 +++
+ deploy/ym_player.env.example |  4 +++
+ tests/test_ym_player.py      | 40 +++++++++++++++++++++
+ ym_player/server.py          | 67 +++++++++++++++++++++++++++++++++++-
+ 4 files changed, 114 insertions(+), 1 deletion(-)
+
+diff --git a/README.md b/README.md
+index b31c425..a0d757a 100644
+--- a/README.md
++++ b/README.md
+@@ -288,6 +288,10 @@ Jazz24)가 들어갑니다. 방송국은 한 줄에 하나 `이름 | 스트림 
+     UTF-8/UTF-16/CP949(EUC-KR) 인코딩을 알아서 읽습니다.
+   - **파일 안에 든 자막, 이미지 자막** (PGS·VobSub 등): 브라우저가 그릴 수 없어서 Plex가 변환하면서 영상에 입힙니다
+     ("영상에 입힘" 표시). 이걸 고르거나 다시 끄면 그 위치부터 다시 불러옵니다.
++- **재생 현황** (`GET /api/activity`): 지금 재생 중인 스트림 수만 종류별로(`plex`/`telegram`/`live`) 알려 줍니다 - 제목·사용자는 없음.
++  서버 중계로 흐르는 요청만 보입니다(원본 주소로 바로 트는 IPTV는 안 보임). 끝나지 않은 긴 스트림은 열려 있는 동안,
++  조각 요청(HLS·조각 받기)은 마지막 요청 뒤 45초 동안 재생 중으로 셉니다. `MP_ACTIVITY_TOKEN`을 정하면
++  `X-Activity-Token` 헤더로 로그인 없이 볼 수 있습니다 (서버 부하 조절 봇이 재생 중이면 다운로드를 먼저 양보시키는 데 씀).
+ - 편성표 매칭은 원래 플러그인과 같은 순서: `tvg-id` → 채널 표시명(공백·대소문자 무시) → 채널명 그대로.
+ 
+ ## 주의할 점
+diff --git a/deploy/ym_player.env.example b/deploy/ym_player.env.example
+index 4b9712f..f6f28fe 100644
+--- a/deploy/ym_player.env.example
++++ b/deploy/ym_player.env.example
+@@ -17,3 +17,7 @@ MP_PASSWORD=change-me
+ #MP_FFPROBE=/usr/local/bin/ffprobe
+ # 동시에 돌릴 변환 수 (HEVC 변환은 CPU를 많이 쓴다)
+ #MP_MAX_TRANSCODES=3
++
++# 서버 부하 조절 봇(discord_bot_v2 결계 조절)이 "지금 누가 보고 있나"를 묻는 /api/activity 열쇠.
++# 정하면 X-Activity-Token 헤더로 로그인 없이 숫자만(재생 중인 스트림 수) 볼 수 있다. 비우면 로그인한 사람만.
++#MP_ACTIVITY_TOKEN=
+diff --git a/tests/test_ym_player.py b/tests/test_ym_player.py
+index 3d2b5c9..6d65490 100644
+--- a/tests/test_ym_player.py
++++ b/tests/test_ym_player.py
+@@ -463,3 +463,43 @@ def test_radio_source_and_now_playing(monkeypatch, tmp_path):
+         return "ART" if (artist, title) == ("Bill Evans", "Peace Piece") else ""
+ 
+     asyncio.run(run())
++
++
++def test_activity_counts_playing_streams_without_titles(monkeypatch, tmp_path):
++    """재생 스트림(중계/텔레그램/Plex 원본) 요청은 '재생 중'으로 세고, 목록/이미지 같은 건 안 센다."""
++    pytest.importorskip("aiohttp")
++    import time
++
++    from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
++
++    from ym_player import server
++
++    act = server._Activity()
++    assert act.kind(make_mocked_request("GET", "/api/stream?url=http://x/live.ts"))[0] == "live"
++    assert act.kind(make_mocked_request("GET", "/api/tg/t1/stream/-100/5"))[0] == "telegram"
++    assert act.kind(make_mocked_request("GET", "/api/tg-hls/job1/seg3.ts"))[0] == "telegram"
++    assert act.kind(make_mocked_request("GET", "/api/plex/px/library/parts/12/file.mkv"))[0] == "plex"
++    for path in ("/api/tg/t1/thumb/-100/5", "/api/plex/px/library/sections", "/api/iptv/tv/channels", "/"):
++        assert act.kind(make_mocked_request("GET", path)) is None
++    act.last[("live", 1)] = time.time() - 100                              # 오래된 조각 요청은 끝난 것
++    act.last[("plex", 2)] = time.time()
++    act.open["telegram"] = 1                                               # 아직 열려 있는 긴 스트림
++    assert act.now() == {"plex": 1, "telegram": 1}
++
++    monkeypatch.setattr(config_store, "CONFIG_FILE", str(tmp_path / "config.json"))
++    monkeypatch.setattr(config_store, "DATA_DIR", str(tmp_path))
++    monkeypatch.setenv("MP_ACTIVITY_TOKEN", "sekret")
++
++    async def run():
++        client = TestClient(TestServer(server.create_app(require_auth=True)))
++        await client.start_server()
++        try:
++            assert (await client.get("/api/activity")).status == 401                       # 토큰 없으면 로그인 필요
++            assert (await client.get("/api/activity", headers={"X-Activity-Token": "nope"})).status == 401
++            r = await client.get("/api/activity", headers={"X-Activity-Token": "sekret"})
++            body = await r.json()
++            assert r.status == 200 and set(body) == {"success", "playing", "by", "hold_sec"}
++            assert (await client.get("/api/config", headers={"X-Activity-Token": "sekret"})).status == 401  # 다른 건 안 열림
++        finally:
++            await client.close()
++    asyncio.run(run())
+diff --git a/ym_player/server.py b/ym_player/server.py
+index de580c0..a77ae41 100644
+--- a/ym_player/server.py
++++ b/ym_player/server.py
+@@ -29,6 +29,7 @@ import base64
+ import binascii
+ import collections
+ import hashlib
++import hmac
+ import html
+ import json
+ import logging
+@@ -80,6 +81,44 @@ class _RecentWarnings(logging.Handler):
+ RECENT = _RecentWarnings()
+ STARTED = time.time()
+ 
++
++class _Activity:
++    """지금 재생 중인 스트림 수 (메모리에만) - 서버 부하 조절(discord_bot_v2 결계 조절)이 "누가 보고 있나"를 묻는다.
++    제목/사용자 이름은 남기지 않고 종류별 숫자만. 중계로 흐르는 요청만 보인다 (원본 주소로 바로 트는 IPTV는 안 보임).
++    - 끝나지 않은 스트림 요청(mpegts 같은 긴 연결)은 진행 중으로 센다.
++    - 조각 요청(HLS/조각 받기)은 마지막 요청 뒤 HOLD초 동안 재생 중으로 본다."""
++    HOLD = 45
++
++    def __init__(self):
++        self.open = collections.Counter()      # 종류 -> 지금 열려 있는 요청 수
++        self.last = {}                         # (종류, 키) -> 마지막 요청 시각
++
++    @staticmethod
++    def kind(request):
++        """요청 -> (종류, 키) 또는 None. 키는 같은 재생을 하나로 세는 용도 (주소/메시지 단위)."""
++        path = request.path
++        if path == "/api/stream":
++            return "live", hash(request.query.get("url", ""))
++        if path.startswith(("/api/tg/", "/api/tg-hls/")) and ("/stream/" in path or "/transcode/" in path
++                                                             or path.startswith("/api/tg-hls/")):
++            parts = path.split("/")
++            return "telegram", hash("/".join(parts[3:7]) if path.startswith("/api/tg/") else parts[3])
++        if path.startswith("/api/plex/") and ("/library/parts/" in path or "/transcode/" in path):
++            return "plex", hash(path.split("/library/parts/")[-1].split("/")[0] if "/library/parts/" in path
++                                else request.query.get("session", "") or path)
++        return None
++
++    def now(self):
++        cutoff = time.time() - self.HOLD
++        self.last = {k: t for k, t in self.last.items() if t >= cutoff}
++        by = collections.Counter(kind for kind, _ in self.last)
++        for kind, n in self.open.items():
++            by[kind] = max(by[kind], n)
++        return {k: v for k, v in by.items() if v}
++
++
++ACTIVITY = _Activity()
++
+ HTTP = web.AppKey("http", ClientSession)
+ CHANNEL_CACHE = web.AppKey("channel_cache", dict)
+ EPG_CACHE = web.AppKey("epg_cache", dict)
+@@ -116,11 +155,36 @@ async def auth_middleware(request, handler):
+         return await handler(request)
+     if request.path in _PUBLIC_PATHS or request.path.startswith(("/static/", "/s/", "/internal/tg/")):
+         return await handler(request)
++    token = os.getenv("MP_ACTIVITY_TOKEN", "")
++    if request.path == "/api/activity" and token and hmac.compare_digest(request.headers.get("X-Activity-Token", ""), token):
++        return await handler(request)
+     if request.path.startswith("/api/"):
+         return web.json_response({"success": False, "error": "로그인이 필요합니다.", "login": True}, status=401)
+     raise web.HTTPFound("/login")
+ 
+ 
++@web.middleware
++async def activity_middleware(request, handler):
++    """재생 스트림 요청을 센다 (ACTIVITY). 로그인 검사가 끝난 뒤라 로그인한 사람의 재생만 잡힌다."""
++    k = ACTIVITY.kind(request)
++    if not k:
++        return await handler(request)
++    ACTIVITY.last[k] = time.time()
++    ACTIVITY.open[k[0]] += 1
++    try:
++        return await handler(request)
++    finally:
++        ACTIVITY.open[k[0]] -= 1
++        ACTIVITY.last[k] = time.time()
++
++
++async def activity_get(request):
++    """GET /api/activity -> {"playing": 수, "by": {"plex"|"telegram"|"live": 수}} - 숫자만 (제목/사용자 없음).
++    로그인 없이 쓰려면 MP_ACTIVITY_TOKEN을 정하고 X-Activity-Token 헤더로 보낸다 (서버 부하 조절 봇용)."""
++    by = ACTIVITY.now()
++    return web.json_response({"success": True, "playing": sum(by.values()), "by": by, "hold_sec": ACTIVITY.HOLD})
++
++
+ def is_admin(request):
+     return request.get("user", {}).get("role") == "admin"
+ 
+@@ -1947,7 +2011,7 @@ async def _on_cleanup(app):
+ 
+ def create_app(require_auth=True):
+     """require_auth=False는 테스트용 (모든 요청을 관리자로 본다)."""
+-    app = web.Application(middlewares=[auth_middleware], client_max_size=8 * 1024 * 1024)
++    app = web.Application(middlewares=[auth_middleware, activity_middleware], client_max_size=8 * 1024 * 1024)
+     root = logging.getLogger()
+     if RECENT not in root.handlers:
+         root.addHandler(RECENT)
+@@ -1998,6 +2062,7 @@ def create_app(require_auth=True):
+     app.router.add_get("/api/iptv/{sid}/channels", iptv_channels)
+     app.router.add_get("/api/iptv/{sid}/epg", iptv_epg)
+     app.router.add_get("/api/stream", stream_proxy)
++    app.router.add_get("/api/activity", activity_get)
+     app.router.add_get("/api/radio/{sid}/now", radio_now)
+     app.router.add_post("/api/plex-auth/pin", plex_pin_create)
+     app.router.add_get("/api/plex-auth/pin/{pin_id}", plex_pin_check)
+-- 
+2.43.0
+

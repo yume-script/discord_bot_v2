@@ -285,3 +285,12 @@ def test_single_spikes_do_not_keep_stage_at_top_for_hours():
     noisy = [45, 60, 99, 50, 47, 62, 99, 48, 55, 46] * 6                    # 평균 61%인데 가끔 99%가 튐 (예전엔 몇 시간 갇힘)
     _run(noisy, start=T0 + timedelta(minutes=4), psi={"cpu": 29.0})
     assert _stage() <= 2
+
+
+def test_ymplayer_telegram_and_live_count_as_watching(monkeypatch):
+    assert loadshed.ymplayer_playing(lambda: {"by": {"telegram": 1}}) is None            # 주소/열쇠가 없으면 안 묻는다
+    monkeypatch.setattr(loadshed, "YMPLAYER_URL", "http://ym:8899")
+    monkeypatch.setattr(loadshed, "YMPLAYER_TOKEN", "t")
+    assert loadshed.ymplayer_playing(lambda: {"playing": 3, "by": {"plex": 1, "telegram": 1, "live": 1}}) == 2   # Plex는 빼고
+    assert loadshed.ymplayer_playing(lambda: {"by": {}}) == 0
+    assert loadshed.ymplayer_playing(lambda: None) is None

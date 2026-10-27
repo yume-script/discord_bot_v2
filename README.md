@@ -234,6 +234,9 @@ python app.py
   - 조치: 1단계~ 놀고 있는 희생 가능 컨테이너 정지(기본 etc `docker-warproxy`, ttl 6시간) + 방역관 CPU 25%, 2단계~ 정기 스캔 중단,
     4단계~ 짐꾼 `bookoasis_assistant.service` CPUWeight 30(5단계 15, 끄지 않음, `PORING_LOADSHED_PLEX01_UNITS`, ttl 2시간),
     4단계~ rclone 업로드만 `5M:off` 제한(`PORING_LOADSHED_RCLONE_RC`가 있을 때). 5단계나 95% 초과면 채널에 ⚠️. 복구는 조치의 역순.
+  - **재생 여부**: Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER `/api/activity`(텔레그램/IPTV·라디오 중계 스트림 수, 숫자만).
+    YM_PLAYER는 `scripts/patches/ym_player-activity.patch`를 적용하고 `MP_ACTIVITY_TOKEN`을 정한 뒤, etc `.env`에
+    `PORING_YMPLAYER_URL=http://<plex01>:8899` / `PORING_YMPLAYER_TOKEN=<같은 값>`. 원본 주소로 바로 트는 IPTV는 안 보인다.
   - **방역관(ClamAV, 호스트 zeeps)**: 봇은 호스트에 셸을 받지 않는다. `scripts/zeeps/install.sh`를 호스트에서 root로 한 번 실행하면
     1) `village-gate.sh`(가이드 6.3)와 `village-ctl.sh` 설치, 2) ClamAV·정비 타이머에 드롭인(`/etc/systemd/system/<unit>.d/village.conf`,
     원본 유닛은 그대로): `ExecCondition=village-gate.sh <최대 단계>`(risk-scan 1, deep-scan/freshclam/feed-update/malware-watch 2,
