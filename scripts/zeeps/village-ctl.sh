@@ -2,7 +2,7 @@
 # 집스마을 호스트(zeeps) 제어 - 봇(CT102 etc)이 SSH로 부르는 유일한 입구.
 # authorized_keys에 command="/usr/local/sbin/village-ctl.sh" 로 고정해서, 봇 키로는 아래 세 가지 말고 아무것도 못 한다.
 #   probe      : 부하 측정값 출력 (/proc/stat 두 번, meminfo, PSI) - 읽기만
-#   stage N    : 결계 경보 단계(0~4) 기록 + 방역관(ClamAV) 조절, 바뀐 것만 한 줄씩 출력
+#   stage N    : 결계 경보 단계(0~5) 기록 + 방역관(ClamAV) 조절, 바뀐 것만 한 줄씩 출력
 #   status     : 지금 단계와 방역관 상태
 # 방역관 조절 (가이드 5.1/7.3):
 #   0단계      : CPUQuota 60% (드롭인 기본값)
@@ -47,7 +47,7 @@ stage() {
 
 case "$CMD" in
   probe) probe ;;
-  "stage "[0-4]) stage "${CMD#stage }" ;;
+  "stage "[0-5]) stage "${CMD#stage }" ;;
   status)
     echo "stage $(cat "$DIR/stage" 2>/dev/null || echo '?') ($(( $(date +%s) - $(stat -c %Y "$DIR/stage" 2>/dev/null || echo 0) ))s ago)"
     for u in $SLOW malware-watch.service; do

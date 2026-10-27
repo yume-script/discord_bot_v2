@@ -219,11 +219,13 @@ python app.py
     Plex 스캐너 nice, tautulli 정지는 배포 직후 첫 측정에서 원래대로 되돌린다.
   - 부하 지수 = max(CPU us+sy(nice 제외), 메모리 %, I/O 압박 PSI some avg10) - etc는 이 서버 `/proc`, plex01은 ssh. 
     `PORING_LOADSHED_ZEEPS_SSH`가 있으면 호스트 zeeps도 재서 함께 반영(읽기만).
-  - 단계: 5분 평균 60/70/80/90% 이상 = 1/2/3/4단계, 재생 중(Plex 세션)이면 기준 -10%p, PSI(cpu>10·io>10·memory>1)면 한 단계 더.
-    한 번에 한 단계씩(5분 간격), 90% 이상 급등이면 바로 4단계. 내릴 때는 기준보다 5%p 낮은 값이 10분 이어져야 한 단계씩.
-  - 조치: 1단계~ 놀고 있는 희생 가능 컨테이너 정지(기본 etc `docker-warproxy`, `PORING_LOADSHED_ETC`/`_PLEX01`, ttl 6시간),
-    3단계~ 짐꾼 `bookoasis_assistant.service` CPUWeight 30(4단계 15, `PORING_LOADSHED_PLEX01_UNITS`, ttl 2시간), 3단계~ rclone 업로드만
-    `5M:off` 제한(`PORING_LOADSHED_RCLONE_RC=http://<호스트>:5276`이 있을 때). 4단계나 95% 초과면 채널에 ⚠️. 복구는 조치의 역순.
+  - 단계: 5분 평균 80/84/88/92/96% 이상 = 1~5단계(`PORING_LOADSHED_STAGES`) - 80% 아래는 평시라 아무것도 안 한다(자료 등록 최대).
+    재생 중(Plex 세션)이면 기준 -5%p, PSI(cpu>10·io>10·memory>1)가 절반 넘게 울리면 한 단계 더.
+    한 번에 한 단계씩(5분 간격), 96% 이상 급등이면 바로 5단계. 내릴 때는 10분 평균이 기준보다 3%p 낮으면 한 단계씩.
+    CPU는 지난 측정부터 지금까지(1분)의 평균.
+  - 조치: 1단계~ 놀고 있는 희생 가능 컨테이너 정지(기본 etc `docker-warproxy`, ttl 6시간) + 방역관 CPU 25%, 2단계~ 정기 스캔 중단,
+    4단계(92%)~ 짐꾼 `bookoasis_assistant.service` CPUWeight 30(5단계 15, 끄지 않음, `PORING_LOADSHED_PLEX01_UNITS`, ttl 2시간),
+    4단계~ rclone 업로드만 `5M:off` 제한(`PORING_LOADSHED_RCLONE_RC`가 있을 때). 5단계나 95% 초과면 채널에 ⚠️. 복구는 조치의 역순.
   - **방역관(ClamAV, 호스트 zeeps)**: 봇은 호스트에 셸을 받지 않는다. `scripts/zeeps/install.sh`를 호스트에서 root로 한 번 실행하면
     1) `village-gate.sh`(가이드 6.3)와 `village-ctl.sh` 설치, 2) ClamAV·정비 타이머에 드롭인(`/etc/systemd/system/<unit>.d/village.conf`,
     원본 유닛은 그대로): `ExecCondition=village-gate.sh <최대 단계>`(risk-scan 1, deep-scan/freshclam/feed-update/malware-watch 2,

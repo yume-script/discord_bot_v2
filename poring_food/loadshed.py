@@ -1,11 +1,11 @@
 """
-결계 조절(부하 줄이기) - 「집스마을 서버 관리 가이드 v1.0」의 단계(0~4) 방식.
+결계 조절(부하 줄이기) - 「집스마을 서버 관리 가이드 v1.0」의 단계 방식 (0~5단계, 80%부터).
 
 목표 위계 (절대 바뀌지 않는다):
  1) 영상 재생(Plex/YM_PLAYER/SHYNI)과 책·웹툰 열람(북오아시스)이 끊기거나 느려지지 않는다 - 절대 목표.
  2) 부하 지수를 95% 아래로 - 1번을 지키는 안전선.
  3) 자료(웹툰/책)를 최대한 많이 DB에 올린다 - 1·2번이 허락하는 만큼만. 그래서 짐꾼(bookoasis_assistant)은 끄지 않고
-    3단계부터 늦추기만 한다(진행 중인 회차는 끝까지 올라가게).
+    4단계(92%)부터 늦추기만 한다(진행 중인 회차는 끝까지 올라가게).
 
 안전장치:
 - PROTECTED(티어 S 시청 경로 + 금고/통신망)는 설정에 적혀 있어도 절대 안 건드린다 - 도구 자체를 안 만든다.
@@ -17,16 +17,17 @@
 부하 지수 = max(CPU us+sy+irq+steal (nice 제외 - nice된 작업은 바로 양보하므로), 메모리 사용 %, I/O 압박 PSI some avg10).
 - 서버별로 매분 잰다: etc = 이 서버 /proc, plex01 = `ssh <host>`. PORING_LOADSHED_ZEEPS_SSH가 있으면 호스트(zeeps)도 재서
   두 서버 지수에 같이 반영한다(호스트 부하는 모든 CT에 걸리므로).
-- 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만): 60/70/80/90% 이상 = 1/2/3/4단계.
-  재생 중(Plex 세션이 있음)이면 기준을 10%p 낮춘다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
-- 한 번에 한 단계씩 올리고(5분 간격), 5분 평균이 90%(재생 중 80%) 이상이면 바로 4단계.
-- 내릴 때는 지금 단계 기준보다 5%p 낮은 값이 10분 이어져야 한 단계 내린다 (히스테리시스).
+- 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만): 80/84/88/92/96% 이상 = 1~5단계 (PORING_LOADSHED_STAGES).
+  자료 등록(3순위)을 최대한 살리려고 80% 아래는 아무것도 안 한다 - 그 아래는 재생에 영향이 없는 평시.
+  재생 중(Plex 세션이 있음)이면 기준을 5%p 낮춘다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
+- 한 번에 한 단계씩 올리고(5분 간격), 5분 평균이 96%(재생 중 91%) 이상이면 바로 5단계.
+- 내릴 때는 10분 평균이 지금 단계 기준보다 3%p 낮아야 한 단계 내린다 (히스테리시스).
 
 단계별 조치 (STAGE_PLAN, .env로 바꿈 - 보호 목록은 못 넘는다):
 - 1단계~: 놀고 있는(CPU < IDLE_CPU %) 희생 가능 컨테이너 정지 - 기본 etc docker-warproxy. ttl STOP_TTL_H.
-- 3단계~: 짐꾼 bookoasis_assistant.service CPUWeight 30, 4단계면 15 (끄지 않음). ttl SLOW_TTL_H.
+- 4단계~: 짐꾼 bookoasis_assistant.service CPUWeight 30, 5단계면 15 (끄지 않음). ttl SLOW_TTL_H.
           rclone 업로드만 대역폭 제한(PORING_LOADSHED_RCLONE_RC가 있을 때, rate=5M:off - 읽기/재생은 안 막는다).
-- 4단계 또는 지수 95% 초과: 채널에 ⚠️ 경고.
+- 5단계 또는 지수 95% 초과: 채널에 ⚠️ 경고.
 - 방역관(ClamAV, 호스트 zeeps): PORING_LOADSHED_ZEEPS_SSH가 있으면 매분 호스트의 scripts/zeeps/village-ctl.sh에 "stage N"을 보낸다
   (봇 키는 authorized_keys command=로 이 스크립트에 묶여 probe/stage/status 말고는 못 한다). 호스트는
   /run/village/stage를 쓰고(가이드 6.3 게이트 - 방역/정비 타이머가 ExecCondition으로 읽고 스스로 건너뜀),
@@ -54,9 +55,10 @@ from .config import STATE_DIR
 ENABLED = os.getenv("PORING_LOADSHED", "1") not in ("0", "false", "False", "")
 DRY_RUN = os.getenv("PORING_LOADSHED_DRY", "0") not in ("0", "false", "False", "")   # 1이면 하는 척만 (로그만)
 CHECK_SEC = 60
-STAGES = [60.0, 70.0, 80.0, 90.0]           # 1~4단계 시작 지수
-PLAY_ADJ = 10.0                             # 재생 중이면 기준을 이만큼 낮춘다
-DOWN_GAP = 5.0                              # 내릴 때 기준보다 이만큼 더 낮아야
+STAGES = sorted(float(x) for x in os.getenv("PORING_LOADSHED_STAGES", "80,84,88,92,96").split(",") if x.strip())  # 1~N단계 시작 지수
+TOP = len(STAGES)
+PLAY_ADJ = 5.0                              # 재생 중이면 기준을 이만큼 낮춘다
+DOWN_GAP = 3.0                              # 내릴 때 기준보다 이만큼 더 낮아야 (단계 간격이 4%p라)
 UP_EVERY_MIN = 5                            # 한 단계 올린 뒤 다음 단계까지 (조치 효과 검증 시간)
 DOWN_MIN = 10                               # 낮은 값이 이만큼 이어져야 한 단계 내림
 AVG_MIN = 5                                 # 단계 판단은 최근 5분 평균
@@ -70,7 +72,7 @@ TIMEOUT = 25
 ACTOR = "슈나"
 NAME = "💠 결계 조절"
 LOADSHED_PATH = os.path.join(STATE_DIR, "loadshed.json")
-UNIT_WEIGHT = {3: 30, 4: 15}                # 짐꾼 CPUWeight (기본 100) - 끄지 않고 늦춘다 (자료 등록이 3순위 목표라 너무 굶기지 않게)
+UNIT_WEIGHT = {4: 30, 5: 15}                # 짐꾼 CPUWeight (기본 100) - 끄지 않고 늦춘다
 RCLONE_RATE = os.getenv("PORING_LOADSHED_RCLONE_RATE", "5M:off")   # 업로드:다운로드 - 다운로드(재생)는 off(제한 없음)
 
 _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")   # 컨테이너/서비스 이름 (명령에 들어가서 검사)
@@ -110,8 +112,8 @@ def _url(env: str) -> str:
 
 # 서버 -> ssh 대상("" = 이 봇이 도는 서버)
 #  stop:  1단계부터 놀고 있으면 내려도 되는 희생 가능(티어 B) 컨테이너
-#  units: 3단계부터 늦출 systemd 서비스(티어 A 짐꾼) - CPUWeight 20(3단계)/5(4단계), 끄지 않는다
-#  rclone: 3단계부터 업로드만 대역폭 제한할 rclone rc 주소 (예: http://192.168.0.10:5276)
+#  units: 4단계부터 늦출 systemd 서비스(티어 A 짐꾼) - CPUWeight 30(4단계)/15(5단계), 끄지 않는다
+#  rclone: 4단계부터 업로드만 대역폭 제한할 rclone rc 주소 (예: http://192.168.0.10:5276)
 HOSTS = {
     "etc": {"ssh": "", "docker_mcp": os.getenv("PORING_DOCKER_ETC_MCP_SERVER", "docker_local"),
             "stop": _names("PORING_LOADSHED_ETC", "docker-warproxy"), "units": _names("PORING_LOADSHED_ETC_UNITS", ""),
@@ -125,7 +127,7 @@ HOSTS = {
 ZEEPS_SSH = os.getenv("PORING_LOADSHED_ZEEPS_SSH", "").strip()      # 호스트(zeeps) 지수도 같이 볼 때 (읽기만)
 STAGE_SSH = os.getenv("PORING_LOADSHED_STAGE_SSH", ZEEPS_SSH).strip()   # village-ctl.sh가 있는 호스트 (기본 = ZEEPS_SSH)
 STOP_STAGE = 1
-SLOW_STAGE = 3
+SLOW_STAGE = 4                  # 짐꾼(자료 등록)은 92%부터만 늦춘다
 
 
 def _load() -> dict:
@@ -316,13 +318,13 @@ def next_stage(samples: list, current: int, changed_at: str, playing: bool, now:
         return current, ""
     avg = sum(s[1] for s in recent) / len(recent)
     alarm = bool(recent[-1][2]) if len(recent[-1]) > 2 else False
-    target = min(4, stage_of(avg, playing) + (1 if alarm else 0))
+    target = min(TOP, stage_of(avg, playing) + (1 if alarm else 0))
     adj = PLAY_ADJ if playing else 0.0
-    tag = f"5분 평균 {avg:.0f}%" + (" · 재생 중이라 기준 -10%p" if playing else "") + (" · 지연(PSI) 감지" if alarm else "")
+    tag = f"5분 평균 {avg:.0f}%" + (f" · 재생 중이라 기준 -{PLAY_ADJ:g}%p" if playing else "") + (" · 지연(PSI) 감지" if alarm else "")
     waited = not changed_at or changed_at <= (now - timedelta(minutes=UP_EVERY_MIN)).isoformat()
     if target > current:
-        if avg >= STAGES[3] - adj:
-            return 4, tag + " - 급등이라 바로 4단계"
+        if avg >= STAGES[-1] - adj:
+            return TOP, tag + f" - 급등이라 바로 {TOP}단계"
         return (current + 1, tag) if waited else (current, "")
     if target < current and current > 0:
         floor = STAGES[current - 1] - adj - DOWN_GAP
@@ -380,7 +382,7 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime) -
                 acts.append({"host": host, "do": "stop", "name": name, "why": f"{why}, 이 시설은 놀고 있음({running[name]:g}%)"})
     if stage >= SLOW_STAGE:
         for name in cfg["units"]:
-            key, w = f"unit:{name}", UNIT_WEIGHT[min(stage, 4)]
+            key, w = f"unit:{name}", UNIT_WEIGHT.get(stage, min(UNIT_WEIGHT.values()))
             if protected(name) or name in undone or restored.get(key, "") >= cool:
                 continue
             if (slow.get(key) or {}).get("weight") != w:
@@ -526,7 +528,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         if new != cur:
             st["stage"], st["stage_at"] = new, stamp
             done.append({"host": host, "do": "stage", "name": "결계 경보", "from": cur, "to": new, "why": why,
-                         "cpu": st["last_cpu"], "alert": new >= 4 or st["last_cpu"] > ALERT})
+                         "cpu": st["last_cpu"], "alert": new >= TOP or st["last_cpu"] > ALERT})
             print(f"[결계 조절] {host} 결계 경보 {cur} -> {new}단계 - {why}")
         for a in plan(host, new, st, r.get("running"), now):
             if a["do"] in ("stop", "start"):
@@ -571,7 +573,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
 # ===================================================================== 이야기 / 다른 모듈
 LABELS = {"bookoasis_assistant.service": "도서관 두루마리 운반 정령", "upload": "왕도로 가는 두루마리 짐마차",
           "clamav": CLAM_LABEL, "clamav-risk-scan.service": "방역관의 매시 정화 의식", "clamav-deep-scan.service": "방역관의 새벽 대정화 의식"}
-STAGE_NAMES = {0: "평시", 1: "경계", 2: "방어", 3: "짐꾼 늦춤", 4: "짐꾼 최소"}
+STAGE_NAMES = {0: "평시", 1: "경계", 2: "방역 정지", 3: "방어", 4: "짐꾼 늦춤", 5: "짐꾼 최소"}
 
 
 def _label(name: str) -> str:
@@ -684,16 +686,16 @@ def stage(now: datetime | None = None, fresh_min: int = 15) -> int:
 def summary(now: datetime | None = None) -> str:
     now = now or now_kst()
     data = _load()
-    lines = [f"💠 **결계 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 {'/'.join(f'{t:g}' for t in STAGES)}% = 1~4단계, "
+    lines = [f"💠 **결계 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 {'/'.join(f'{t:g}' for t in STAGES)}% = 1~{TOP}단계, "
              f"재생 중 -{PLAY_ADJ:g}%p) - 시청 경로(북오아시스·Plex·YM_PLAYER·SHYNI·flaskfarm)는 절대 안 건드림"
              + (" (시험 모드)" if DRY_RUN else "")]
     word = {"stop": "내림", "start": "올림", "throttle": "늦춤", "unthrottle": "되돌림", "stage": "단계"}
     for host, cfg in HOSTS.items():
         st = (data.get("hosts") or {}).get(host) or {}
         idx, det = st.get("last_cpu"), st.get("detail") or {}
-        parts = [f"{n}(1단계~ 정지)" for n in cfg["stop"]] + [f"{n}(3단계~ 늦춤)" for n in cfg["units"]] \
-            + (["rclone 업로드(3단계~ 제한)"] if cfg.get("rclone") else [])
-        lines.append(f"• {host}: {int(st.get('stage', 0))}단계({STAGE_NAMES[int(st.get('stage', 0))]}) · 지수 "
+        parts = [f"{n}(1단계~ 정지)" for n in cfg["stop"]] + [f"{n}({SLOW_STAGE}단계~ 늦춤)" for n in cfg["units"]] \
+            + ([f"rclone 업로드({SLOW_STAGE}단계~ 제한)"] if cfg.get("rclone") else [])
+        lines.append(f"• {host}: {int(st.get('stage', 0))}단계({STAGE_NAMES.get(int(st.get('stage', 0)), '')}) · 지수 "
                      + (f"{idx:g}%" if idx is not None else "모름")
                      + (f" (CPU {det.get('busy')}% · 메모리 {det.get('mem')}% · I/O {(det.get('psi') or {}).get('io')})" if det else "")
                      + (f" · 재생 {st['playing']}" if st.get("playing") else "")

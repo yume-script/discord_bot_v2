@@ -62,32 +62,32 @@ def _stage(host="plex01"):
 
 def test_stage_climbs_one_step_every_five_minutes_and_slows_carrier_not_stops():
     docker, slow = [], []
-    done = _run([85] * 13, docker_log=docker, slow_log=slow)
+    done = _run([93] * 18, docker_log=docker, slow_log=slow)
     stages = [(d["host"], d["to"]) for d in done if d["do"] == "stage" and d["host"] == "plex01"]
-    assert stages == [("plex01", 1), ("plex01", 2), ("plex01", 3)]           # 한 번에 한 단계씩
+    assert stages == [("plex01", 1), ("plex01", 2), ("plex01", 3), ("plex01", 4)]   # 한 번에 한 단계씩
     assert ("etc", "stop", "docker-warproxy") in docker                       # 1단계: 놀고 있는 희생 가능 시설
-    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", 30, None) in slow    # 3단계: 짐꾼은 끄지 않고 늦춤
+    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", 30, None) in slow    # 4단계(92%): 짐꾼은 끄지 않고 늦춤
     assert not [x for x in docker if x[1] == "stop" and x[2] != "docker-warproxy"]           # 시청 경로는 그대로
     slow.clear()
-    _run([95] * 3, start=T0 + timedelta(minutes=13), slow_log=slow)
-    assert _stage() == 4 and ("plex01", "throttle", "unit", "bookoasis_assistant.service", 15, None) in slow
+    _run([99] * 3, start=T0 + timedelta(minutes=18), slow_log=slow)
+    assert _stage() == 5 and ("plex01", "throttle", "unit", "bookoasis_assistant.service", 15, None) in slow
     assert loadshed._load()["hosts"]["plex01"]["throttled"]["unit:bookoasis_assistant.service"]["orig"] == 100
-    assert loadshed.stage(T0 + timedelta(minutes=16)) == 4 and loadshed.max_cpu(T0 + timedelta(minutes=16)) == 95
+    assert loadshed.stage(T0 + timedelta(minutes=21)) == 5 and loadshed.max_cpu(T0 + timedelta(minutes=21)) == 99
 
 
-def test_spike_jumps_to_four_and_short_blip_is_only_watched():
+def test_spike_jumps_to_top_and_short_blip_is_only_watched():
     _run([40, 40, 40, 99], etc=10)
     assert _stage() == 0                                                     # 1분만 튐 - 5분 평균은 낮다
-    done = _run([95] * 3, start=T0 + timedelta(minutes=10), etc=10)
+    done = _run([97] * 3, start=T0 + timedelta(minutes=10), etc=10)
     st = [d for d in done if d["do"] == "stage"]
-    assert st and st[-1]["to"] == 4 and st[-1]["alert"]                      # 90% 이상 급등 -> 바로 4단계 + 경고
+    assert st and st[-1]["to"] == 5 and st[-1]["alert"]                      # 96% 이상 급등 -> 바로 5단계 + 경고
 
 
 def test_playback_lowers_thresholds_and_psi_escalates():
-    _run([55] * 3, etc=10)
-    assert _stage() == 0
-    _run([55] * 3, start=T0 + timedelta(minutes=10), etc=10, playing=2)
-    assert _stage() == 1                                                     # 재생 중이면 기준 -10%p (60 -> 50)
+    _run([77] * 3, etc=10)
+    assert _stage() == 0                                                     # 80% 아래는 평시 (자료 등록을 최대한)
+    _run([77] * 3, start=T0 + timedelta(minutes=10), etc=10, playing=2)
+    assert _stage() == 1                                                     # 재생 중이면 기준 -5%p (80 -> 75)
     loadshed._save({})
     _run([30] * 3, etc=10, psi={"io": 15.0})
     assert _stage() == 1                                                     # 지수는 낮아도 실제 지연(PSI)이면 한 단계
@@ -95,16 +95,16 @@ def test_playback_lowers_thresholds_and_psi_escalates():
 
 def test_hysteresis_and_reverse_restore():
     slow, docker = [], []
-    _run([85] * 13, docker_log=docker, slow_log=slow)
-    assert _stage() == 3
+    _run([93] * 18, docker_log=docker, slow_log=slow)
+    assert _stage() == 4
     slow.clear()
-    _run([78] * 15, start=T0 + timedelta(minutes=13), slow_log=slow)
-    assert _stage() == 3 and not slow                                        # 80 아래지만 75(80-5%p)보다 높다 -> 그대로
-    _run([72] * 11, start=T0 + timedelta(minutes=28), slow_log=slow)
-    assert _stage() == 2                                                     # 75 아래 10분 -> 한 단계만 내림
+    _run([90] * 15, start=T0 + timedelta(minutes=18), slow_log=slow)
+    assert _stage() == 4 and not slow                                        # 92 아래지만 89(92-3%p)보다 높다 -> 그대로
+    _run([87] * 11, start=T0 + timedelta(minutes=33), slow_log=slow)
+    assert _stage() == 3                                                     # 10분 평균 89 아래 -> 한 단계만 내림
     assert ("plex01", "unthrottle", "unit", "bookoasis_assistant.service", None, 100) in slow   # 원래 값으로
     docker.clear()
-    _run([30] * 25, start=T0 + timedelta(minutes=39), docker_log=docker)
+    _run([30] * 45, start=T0 + timedelta(minutes=44), docker_log=docker)
     assert _stage() == 0 and _stage("etc") == 0
     assert docker == [("etc", "start", "docker-warproxy")]                   # 직접 내린 것만 다시 올림
     assert not loadshed._load()["hosts"]["plex01"].get("throttled")
@@ -112,11 +112,11 @@ def test_hysteresis_and_reverse_restore():
 
 def test_ttl_restores_even_while_high():
     slow = []
-    _run([95] * 4, slow_log=slow)
-    assert _stage() == 4
+    _run([97] * 4, slow_log=slow)
+    assert _stage() == 5
     slow.clear()
     later = T0 + timedelta(hours=loadshed.SLOW_TTL_H, minutes=5)
-    _run([95] * 3, start=later, slow_log=slow)
+    _run([97] * 3, start=later, slow_log=slow)
     assert slow[0][:4] == ("plex01", "unthrottle", "unit", "bookoasis_assistant.service")    # ttl 지나면 되돌림
     assert not [x for x in slow if x[1] == "throttle"]                                       # 방금 되돌린 건 잠시 쉼(쿨다운)
 
@@ -166,7 +166,7 @@ def test_throttle_story():
                       T0, post=posts.append, react=lambda *a: [])
     assert "도서관 두루마리 운반 정령으로 가는 마나 흐름을 좁혔다" in posts[0] and "🐢" in posts[0]
     assert "왕도로 가는 두루마리 짐마차로" in posts[1] and "되돌렸다" in posts[1]
-    assert "1~4단계" in loadshed.summary(T0)
+    assert "1~5단계" in loadshed.summary(T0)
 
 
 def test_react_now_reaches_everyone_quietly_and_key_people_react_now(fake_llm):
@@ -223,12 +223,12 @@ def test_old_version_samples_do_not_trigger_stage_after_upgrade():
     assert loadshed._load()["hosts"]["plex01"]["samples"] == [[T0.isoformat(timespec="seconds"), 30, False]]
 
 
-def test_steady_psi_alarm_does_not_trap_stage_at_four():
+def test_steady_psi_alarm_does_not_trap_stage_at_top():
     slow = []
-    _run([95] * 4, slow_log=slow)
-    assert _stage() == 4
+    _run([97] * 4, slow_log=slow)
+    assert _stage() == 5
     slow.clear()
-    _run([35] * 40, start=T0 + timedelta(minutes=4), psi={"cpu": 25.0}, slow_log=slow)
+    _run([35] * 60, start=T0 + timedelta(minutes=4), psi={"cpu": 25.0}, slow_log=slow)
     assert _stage() == 1                                                     # 지수 35% + PSI 경보 = 1단계까지는 내려온다
     assert ("plex01", "unthrottle", "unit", "bookoasis_assistant.service", None, 100) in slow   # 짐꾼은 원래 속도로
 
@@ -250,7 +250,7 @@ def test_clamav_on_host_follows_stage_through_village_ctl():
     for i in range(3):
         done += loadshed.step(T0 + timedelta(minutes=i), stage_writer=writer, throttler=lambda h, a: {},
                               docker=lambda *a: True,
-                              measurer=lambda: {"etc": {"probe": _probe(65), "running": {}},
+                              measurer=lambda: {"etc": {"probe": _probe(82), "running": {}},
                                                 "plex01": {"probe": _probe(30), "running": {}}})
     assert sent == [0, 0, 1]                                                 # 매분 지금 단계를 보낸다 (게이트가 신선도를 본다)
     assert [d["name"] for d in done if d["host"] == "zeeps"] == ["clamav"]
@@ -270,9 +270,9 @@ def test_cpu_is_averaged_over_the_minute_not_one_second():
                            "2026-10-28T08:02:00", "2026-10-28T07:57:00")["index"] == 99.0      # 지난 값이 너무 오래됨
 
 
-def test_single_spikes_do_not_keep_stage_four_for_hours():
-    _run([95] * 4)
-    assert _stage() == 4
-    noisy = [45, 60, 99, 50, 47, 62, 99, 48, 55, 46] * 4                    # 평균 61%인데 가끔 99%가 튐 (예전엔 몇 시간 갇힘)
+def test_single_spikes_do_not_keep_stage_at_top_for_hours():
+    _run([97] * 4)
+    assert _stage() == 5
+    noisy = [45, 60, 99, 50, 47, 62, 99, 48, 55, 46] * 6                    # 평균 61%인데 가끔 99%가 튐 (예전엔 몇 시간 갇힘)
     _run(noisy, start=T0 + timedelta(minutes=4), psi={"cpu": 29.0})
     assert _stage() <= 2
