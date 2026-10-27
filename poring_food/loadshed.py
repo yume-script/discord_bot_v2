@@ -20,7 +20,7 @@
 - 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만). 기준은 재생 여부로 두 벌:
   재생 없음 70/75/80/93/96% = 1~5단계 (PORING_LOADSHED_STAGES) - 아무도 안 볼 땐 짐꾼을 93%까지 그대로 둔다,
   재생 중   65/70/75/85/90% = 1~5단계 (PORING_LOADSHED_STAGES_PLAY) - 볼 때는 시청이 먼저라 더 일찍 양보.
-  재생 여부는 Plex 세션으로 본다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
+  재생 여부는 Plex 세션 + YM_PLAYER /api/activity(텔레그램/IPTV·라디오 중계, PORING_YMPLAYER_URL/_TOKEN)로 본다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
 - 한 번에 한 단계씩 올리고(5분 간격), 5분 평균이 5단계 기준(96%, 재생 중 90%) 이상이면 바로 5단계.
 - 내릴 때는 10분 평균이 지금 단계 기준보다 3%p 낮아야 한 단계 내린다 (히스테리시스).
 
@@ -277,18 +277,46 @@ def parse_stats(out: str) -> dict[str, float]:
     return res
 
 
+YMPLAYER_URL = os.getenv("PORING_YMPLAYER_URL", "").strip().rstrip("/")   # 예: http://192.168.0.31:8899
+YMPLAYER_TOKEN = os.getenv("PORING_YMPLAYER_TOKEN", "").strip()            # ym_player의 MP_ACTIVITY_TOKEN
+
+
+def ymplayer_playing(get=None) -> int | None:
+    """YM_PLAYER가 지금 중계 중인 텔레그램/IPTV·라디오 스트림 수 (/api/activity - 숫자만). 안 켰거나 못 받으면 None.
+    Plex 재생은 Plex 세션으로도 잡히니 여기선 텔레그램/라이브만 더한다 (두 번 세지 않게)."""
+    if not (YMPLAYER_URL and YMPLAYER_TOKEN):
+        return None
+    try:
+        if get is None:
+            import requests
+            res = requests.get(f"{YMPLAYER_URL}/api/activity", headers={"X-Activity-Token": YMPLAYER_TOKEN}, timeout=5)
+            body = res.json() if res.status_code == 200 else None
+        else:
+            body = get()
+        by = (body or {}).get("by") if isinstance(body, dict) else None
+        return None if by is None else int(by.get("telegram", 0)) + int(by.get("live", 0))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _playing() -> int | None:
-    """지금 재생 중인 수 (Plex 직접 -> 매시 지표). 모르면 None."""
+    """지금 재생 중인 수 = Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER 텔레그램/IPTV·라디오. 둘 다 모르면 None."""
+    plex = None
     try:
         from . import plex_api
         if plex_api.enabled():
             got = plex_api.sessions()
             if got is not None:
-                return len(got)
-        from . import metrics
-        return metrics.streams()
+                plex = len(got)
+        if plex is None:
+            from . import metrics
+            plex = metrics.streams()
     except Exception:  # noqa: BLE001
+        plex = None
+    ym = ymplayer_playing()
+    if plex is None and ym is None:
         return None
+    return (plex or 0) + (ym or 0)
 
 
 def measure() -> dict:
