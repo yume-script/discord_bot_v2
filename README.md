@@ -222,7 +222,7 @@ python app.py
   - 단계: 5분 평균 60/70/80/90% 이상 = 1/2/3/4단계, 재생 중(Plex 세션)이면 기준 -10%p, PSI(cpu>10·io>10·memory>1)면 한 단계 더.
     한 번에 한 단계씩(5분 간격), 90% 이상 급등이면 바로 4단계. 내릴 때는 기준보다 5%p 낮은 값이 10분 이어져야 한 단계씩.
   - 조치: 1단계~ 놀고 있는 희생 가능 컨테이너 정지(기본 etc `docker-warproxy`, `PORING_LOADSHED_ETC`/`_PLEX01`, ttl 6시간),
-    3단계~ 짐꾼 `bookoasis_assistant.service` CPUWeight 20(4단계 5, `PORING_LOADSHED_PLEX01_UNITS`, ttl 2시간), 3단계~ rclone 업로드만
+    3단계~ 짐꾼 `bookoasis_assistant.service` CPUWeight 30(4단계 15, `PORING_LOADSHED_PLEX01_UNITS`, ttl 2시간), 3단계~ rclone 업로드만
     `5M:off` 제한(`PORING_LOADSHED_RCLONE_RC=http://<호스트>:5276`이 있을 때). 4단계나 95% 초과면 채널에 ⚠️. 복구는 조치의 역순.
   - `PORING_LOADSHED_STAGE_SSH`(예: `root@zeeps`)가 있으면 매분 그 호스트 `/run/village/stage`에 단계를 쓴다 - 가이드 6.3의
     `village-gate.sh`(ExecCondition)로 방역/정비 타이머가 스스로 건너뛴다.
