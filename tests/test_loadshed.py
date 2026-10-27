@@ -231,3 +231,28 @@ def test_steady_psi_alarm_does_not_trap_stage_at_four():
     _run([35] * 40, start=T0 + timedelta(minutes=4), psi={"cpu": 25.0}, slow_log=slow)
     assert _stage() == 1                                                     # 지수 35% + PSI 경보 = 1단계까지는 내려온다
     assert ("plex01", "unthrottle", "unit", "bookoasis_assistant.service", None, 100) in slow   # 짐꾼은 원래 속도로
+
+
+def test_clamav_on_host_follows_stage_through_village_ctl():
+    assert loadshed.parse_ctl("quota clamav-risk-scan.service 25%\nquota clamav-deep-scan.service 25%\n"
+                              "stopped clamav-deep-scan.service\n", 2) == [
+        {"host": "zeeps", "do": "stop", "name": "clamav-deep-scan.service",
+         "why": "결계 경보 2단계 - 정기 스캔은 다음 타이머 때 다시 (실시간 감시는 유지)"},
+        {"host": "zeeps", "do": "throttle", "name": "clamav", "kind": "quota", "why": "결계 경보 2단계 - 방역관 CPU 25%로"}]
+    assert loadshed.parse_ctl("quota clamav-risk-scan.service 60%\n", 0)[0]["do"] == "unthrottle"
+    assert loadshed.parse_ctl("", 1) == []                                   # 바뀐 게 없으면 조용히
+    sent, posts = [], []
+
+    def writer(n):
+        sent.append(n)
+        return loadshed.parse_ctl("quota clamav-risk-scan.service 25%\n" if n >= 1 and len(sent) == 3 else "", n)
+    done = []
+    for i in range(3):
+        done += loadshed.step(T0 + timedelta(minutes=i), stage_writer=writer, throttler=lambda h, a: {},
+                              docker=lambda *a: True,
+                              measurer=lambda: {"etc": {"probe": _probe(65), "running": {}},
+                                                "plex01": {"probe": _probe(30), "running": {}}})
+    assert sent == [0, 0, 1]                                                 # 매분 지금 단계를 보낸다 (게이트가 신선도를 본다)
+    assert [d["name"] for d in done if d["host"] == "zeeps"] == ["clamav"]
+    loadshed.notify([d for d in done if d["host"] == "zeeps"], T0, post=posts.append)
+    assert "방역관의 정화 의식(ClamAV)" in posts[0] and "🐢" in posts[0]
