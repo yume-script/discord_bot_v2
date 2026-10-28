@@ -27,7 +27,7 @@
 단계별 조치 (STAGE_PLAN, .env로 바꿈 - 보호 목록은 못 넘는다):
 - 1단계~: 놀고 있는(CPU < IDLE_CPU %) 희생 가능 컨테이너 정지 - 기본 etc docker-warproxy. ttl STOP_TTL_H.
 - 4단계~: 짐꾼 bookoasis_assistant.service CPUWeight 30, 5단계면 15 (끄지 않음). ttl SLOW_TTL_H.
-  재생 중일 때만 - 아무도 안 보면 단계가 높아도 짐꾼은 그대로 (지킬 시청이 없으니 자료 등록이 먼저).
+  재생 중이고 그 재생이 버벅일 때만 (Plex 버퍼링 또는 변환 속도 < 1.0, 10분 유지) - 아무도 안 보거나 잘 나오면 짐꾼은 그대로.
           rclone 업로드만 대역폭 제한(PORING_LOADSHED_RCLONE_RC가 있을 때, rate=5M:off - 읽기/재생은 안 막는다).
 - 5단계 또는 지수 95% 초과: 채널에 ⚠️ 경고.
 - 방역관(ClamAV, 호스트 zeeps): PORING_LOADSHED_ZEEPS_SSH가 있으면 매분 호스트의 scripts/zeeps/village-ctl.sh에 "stage N"을 보낸다
@@ -134,7 +134,8 @@ HOSTS = {
 ZEEPS_SSH = os.getenv("PORING_LOADSHED_ZEEPS_SSH", "").strip()      # 호스트(zeeps) 지수도 같이 볼 때 (읽기만)
 STAGE_SSH = os.getenv("PORING_LOADSHED_STAGE_SSH", ZEEPS_SSH).strip()   # village-ctl.sh가 있는 호스트 (기본 = ZEEPS_SSH)
 STOP_STAGE = 1
-SLOW_STAGE = 4                  # 짐꾼(자료 등록)은 4단계(재생 없음 93% / 재생 중 85%)부터만 늦춘다
+SLOW_STAGE = 4                  # 짐꾼(자료 등록)은 4단계(재생 중 85%)부터, 재생이 버벅일 때만 늦춘다
+STRUGGLE_HOLD_MIN = 10          # 버벅임을 한 번 보면 이만큼은 버벅이는 것으로 (깜빡깜빡 풀었다 걸었다 하지 않게)
 
 
 def _load() -> dict:
@@ -325,8 +326,10 @@ def watching(plex_sessions=None, ym=None) -> dict:
         k = _PLEX_KIND.get(x.get("media_type", ""), "기타")
         kinds[k] = kinds.get(k, 0) + 1
     plex = len(plex_sessions) if plex_sessions is not None else None
+    from . import plex_api
+    struggle = sum(1 for x in plex_sessions or [] if plex_api.struggling(x))
     total = None if plex is None and ym is None else (plex or 0) + ((ym or {}).get("telegram", 0) + (ym or {}).get("live", 0))
-    return {"plex": plex, "plex_kinds": kinds, "ym": ym, "total": total}
+    return {"plex": plex, "plex_kinds": kinds, "ym": ym, "total": total, "struggle": struggle}
 
 
 def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
@@ -342,7 +345,8 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
     else:
         kinds = ", ".join(f"{k} {n}" for k, n in sorted(w["plex_kinds"].items(), key=lambda x: -x[1]))
         lines.append(f"• Plex: {w['plex']}" + (f" ({kinds})" if kinds else "")
-                     + (f" - 그중 YM_PLAYER로 {w['ym']['plex']}" if w["ym"] and w["ym"].get("plex") else ""))
+                     + (f" - 그중 YM_PLAYER로 {w['ym']['plex']}" if w["ym"] and w["ym"].get("plex") else "")
+                     + (f" · ⚠️ 버벅이는 재생 {w['struggle']}" if w.get("struggle") else (" · 모두 잘 나옴" if w["plex"] else "")))
     if w["ym"] is None:
         lines.append("• YM_PLAYER 텔레그램/IPTV: " + ("못 받음" if YMPLAYER_URL and YMPLAYER_TOKEN else "연결 안 함"))
     else:
@@ -353,15 +357,16 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
     return "\n".join(lines)
 
 
-def _playing() -> int | None:
-    """지금 재생 중인 수 = Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER 텔레그램/IPTV·라디오. 둘 다 모르면 None."""
-    plex = None
+def _viewing() -> tuple[int | None, int | None]:
+    """(지금 재생 중인 수, 그중 버벅이는 수). 재생 = Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER 텔레그램/IPTV·라디오.
+    버벅임은 Plex만 안다 (버퍼링 중이거나 변환 속도 < 1.0) - 모르면 None."""
+    plex = struggle = None
     try:
         from . import plex_api
         if plex_api.enabled():
             got = plex_api.sessions()
             if got is not None:
-                plex = len(got)
+                plex, struggle = len(got), sum(1 for x in got if plex_api.struggling(x))
         if plex is None:
             from . import metrics
             plex = metrics.streams()
@@ -369,12 +374,17 @@ def _playing() -> int | None:
         plex = None
     ym = ymplayer_playing()
     if plex is None and ym is None:
-        return None
-    return (plex or 0) + (ym or 0)
+        return None, struggle
+    return (plex or 0) + (ym or 0), struggle
+
+
+def _playing() -> int | None:
+    return _viewing()[0]
 
 
 def measure() -> dict:
-    """[스레드에서] {서버: {"probe": dict|None, "running": {이름: CPU %}|None}, "_zeeps": dict|None, "_playing": int|None}."""
+    """[스레드에서] {서버: {"probe": dict|None, "running": {이름: CPU %}|None}, "_zeeps": dict|None, "_playing": int|None,
+    "_struggle": 버벅이는 재생 수|None}."""
     out = {}
     for host in HOSTS:
         probe = parse_probe(_sh(host, _PROBE) or "")
@@ -383,7 +393,7 @@ def measure() -> dict:
         out[host] = {"probe": probe, "running": parse_stats(stats) if stats is not None else None}
     # 호스트는 village-ctl.sh(강제 명령) 뒤에 있다 - 셸 대신 "probe"만 보낸다
     out["_zeeps"] = parse_probe(_run("zeeps", ["probe"]) or "") if ZEEPS_SSH else None
-    out["_playing"] = _playing()
+    out["_playing"], out["_struggle"] = _viewing()
     return out
 
 
@@ -435,10 +445,13 @@ def next_stage(samples: list, current: int, changed_at: str, playing: bool, now:
     return current, ""
 
 
-def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, playing: bool = True) -> list[dict]:
+def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, playing: bool = True,
+         struggling: bool = True) -> list[dict]:
     """지금 단계에 맞춰 할 일 [{"host", "do": stop|start|throttle|unthrottle, "name", "kind"?, "weight"?, "why"}].
     복구는 조치의 역순(마지막에 한 것부터). ttl이 지나면 단계와 상관없이 되돌린다. 순수 함수 (테스트용).
-    짐꾼(units)/업로드(rclone) 늦추기는 재생 중일 때만 - 아무도 안 보면 지킬 시청이 없으니 자료 등록을 그대로 둔다."""
+    짐꾼(units)/업로드(rclone) 늦추기는 재생 중이고 그 재생이 버벅일 때만 (struggling - 버퍼링/변환이 실시간을 못 따라감,
+    STRUGGLE_HOLD_MIN분 유지). 아무도 안 보거나 잘 나오면 자료 등록을 그대로 둔다."""
+    need = playing and struggling
     cfg = HOSTS[host]
     shed = st.get("shed") or {}
     slow = st.get("throttled") or {}
@@ -456,11 +469,12 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, p
     for key, t in slow.items():
         stale = t["kind"] not in ("unit", "rclone") or protected(t["name"]) or \
             (t["kind"] == "unit" and t["name"] not in cfg["units"])
-        if stale or stage < SLOW_STAGE or not playing or t.get("at", "") <= slow_old:
+        if stale or stage < SLOW_STAGE or not need or t.get("at", "") <= slow_old:
             undo.append((t.get("at", ""), {"host": host, "do": "unthrottle", "name": t["name"], "kind": t["kind"],
                                             "orig": t.get("orig"),
                                             "why": "시청 경로/이제 조치 대상이 아님" if stale else
                                             "재생이 없어 자료 등록 우선" if not playing and stage >= SLOW_STAGE else
+                                            "재생이 잘 나와서(버퍼링 없음) 자료 등록 우선" if not need and stage >= SLOW_STAGE else
                                             f"결계 경보 {stage}단계로 내려감" if stage < SLOW_STAGE else f"{SLOW_TTL_H:g}시간 지남(ttl)"}))
     acts = [a for _, a in sorted(undo, key=lambda x: x[0], reverse=True)]
     undone = {a["name"] for a in acts}
@@ -473,14 +487,14 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, p
                 continue
             if running[name] < IDLE_CPU:
                 acts.append({"host": host, "do": "stop", "name": name, "why": f"{why}, 이 시설은 놀고 있음({running[name]:g}%)"})
-    if stage >= SLOW_STAGE and playing:
+    if stage >= SLOW_STAGE and need:
         for name in cfg["units"]:
             key, w = f"unit:{name}", UNIT_WEIGHT.get(stage, min(UNIT_WEIGHT.values()))
             if protected(name) or name in undone or restored.get(key, "") >= cool:
                 continue
             if (slow.get(key) or {}).get("weight") != w:
                 acts.append({"host": host, "do": "throttle", "name": name, "kind": "unit", "weight": w,
-                             "why": f"{why} - 끄지 않고 늦춤(진행 중인 회차는 끝까지)"})
+                             "why": f"{why} · 재생이 버벅임 - 끄지 않고 늦춤(진행 중인 회차는 끝까지)"})
         if cfg.get("rclone"):
             key = "rclone:upload"
             if key not in slow and "upload" not in undone and restored.get(key, "") < cool:
@@ -595,6 +609,9 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     since_raw = (now - timedelta(minutes=5)).isoformat(timespec="seconds")
     zeeps = smooth(readings.get("_zeeps") or None, data.setdefault("zeeps", {}), stamp0, since_raw)
     playing = readings.get("_playing")
+    if readings.get("_struggle"):
+        data["struggle_at"] = stamp0
+    struggling = bool(playing) and data.get("struggle_at", "") >= (now - timedelta(minutes=STRUGGLE_HOLD_MIN)).isoformat()
     done = []
     stamp = now.isoformat(timespec="seconds")
     for host in HOSTS:
@@ -623,7 +640,8 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             done.append({"host": host, "do": "stage", "name": "결계 경보", "from": cur, "to": new, "why": why,
                          "cpu": st["last_cpu"], "alert": new >= TOP or st["last_cpu"] > ALERT})
             print(f"[결계 조절] {host} 결계 경보 {cur} -> {new}단계 - {why}")
-        for a in plan(host, new, st, r.get("running"), now, bool(playing)):
+        st["struggling"] = struggling
+        for a in plan(host, new, st, r.get("running"), now, bool(playing), struggling):
             if a["do"] in ("stop", "start"):
                 if not docker(host, a["do"], a["name"]):
                     continue
@@ -792,7 +810,7 @@ def summary(now: datetime | None = None) -> str:
         lines.append(f"• {host}: {int(st.get('stage', 0))}단계({STAGE_NAMES.get(int(st.get('stage', 0)), '')}) · 지수 "
                      + (f"{idx:g}%" if idx is not None else "모름")
                      + (f" (CPU {det.get('busy')}% · 메모리 {det.get('mem')}% · I/O {(det.get('psi') or {}).get('io')})" if det else "")
-                     + (f" · 재생 {st['playing']}" if st.get("playing") else "")
+                     + (f" · 재생 {st['playing']}" + (" (버벅임 있음)" if st.get("struggling") else "") if st.get("playing") else "")
                      + f" · 대상 {', '.join(parts) or '없음'}"
                      + (f" · 지금 내려 둔 것 {', '.join(st['shed'])}" if st.get("shed") else "")
                      + (f" · 지금 늦춘 것 {', '.join(t['name'] for t in st['throttled'].values())}" if st.get("throttled") else ""))

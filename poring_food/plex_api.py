@@ -4,6 +4,7 @@ Plex 직접 조회 - Tautulli가 꺼져 있을 때(결계 조절로 내렸거나
 plex MCP(config/mcp_servers.yaml "plex")와 같은 서버/토큰(PLEX_URL, PLEX_TOKEN)을 쓰지만, MCP는 부를 때마다 node 프로세스를
 띄워서 1분마다 묻기엔 무겁다 - 그래서 Plex HTTP API를 바로 부른다 (읽기만).
 - sessions(): /status/sessions -> Tautulli get_activity 세션과 같은 모양 (plex_watch.describe가 그대로 쓴다).
+  + 변환 속도(transcode_speed)와 struggling(): 버퍼링 중이거나 변환이 실시간을 못 따라가는 재생 (결계 조절이 본다).
   시청자 계정(User)은 가져오지 않는다.
 - plays_by_date(days): /status/sessions/history/all -> {날짜: 재생 수} (metrics 판매 실적 대체용).
   Plex 기록은 "다 본 것" 위주라 Tautulli 재생 수보다 조금 적게 나온다.
@@ -48,7 +49,27 @@ def to_session(m: dict) -> dict:
             "title": m.get("title", ""), "grandparent_title": m.get("grandparentTitle", ""),
             "parent_media_index": m.get("parentIndex"), "media_index": m.get("index"), "year": m.get("year"),
             "library_name": m.get("librarySectionTitle", ""), "content_rating": m.get("contentRating", ""),
-            "state": player.get("state", "")}
+            "state": player.get("state", ""), **_transcode(m)}
+
+
+def _transcode(m: dict) -> dict:
+    """변환 중이면 속도(1.0 = 실시간, 그보다 낮으면 변환이 재생을 못 따라감)와 throttled(앞서 있어서 쉬는 중)."""
+    t = m.get("TranscodeSession") if isinstance(m.get("TranscodeSession"), dict) else None
+    if not t:
+        return {}
+    try:
+        speed = float(t.get("speed")) if t.get("speed") is not None else None
+    except (TypeError, ValueError):
+        speed = None
+    return {"transcode_speed": speed, "transcode_throttled": bool(t.get("throttled"))}
+
+
+def struggling(session: dict) -> bool:
+    """이 재생이 지금 버벅이나: 플레이어가 버퍼링 중이거나, 변환이 실시간을 못 따라감(속도 < 1.0, 쉬는 중 아님)."""
+    if session.get("state") == "buffering":
+        return True
+    speed = session.get("transcode_speed")
+    return speed is not None and speed < 1.0 and not session.get("transcode_throttled")
 
 
 def sessions() -> list[dict] | None:
