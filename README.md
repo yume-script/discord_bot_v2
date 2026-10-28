@@ -251,6 +251,13 @@ python app.py
     0단계면 60%로. 실시간 감시(malware-watch)는 멈추지 않는다. 봇이 멈춰 단계 파일이 10분 넘게 안 바뀌면 게이트가 호스트 PSI로 직접 판단.
     + 매시 빠른 검사(`clamav-risk-scan`)는 `village-quick-gate.sh`로 임시 폴더(/tmp /var/tmp /dev/shm)에 지난 검사 뒤 새 파일이
     있을 때만 (하루 한 번은 전체) - 한 번에 CPU 약 1분·메모리 1GB(대부분 서명 DB 로딩)를 아낀다. 서명 업데이트는 6시간마다.
+  - **zeeps_member 로컬 스테이징(호스트 zeeps, 선택)**: 북오아시스가 rclone 마운트에서 읽기를 기다리는 것을 줄이려고 `scripts/zeeps/staging.sh`가
+    mergerfs로 `/mnt/staging/zeeps_member`(로컬, 1순위) + 기존 rclone `/mnt/zeeps_member`(2순위)를 `/mnt/zeeps_merged`로 합친다.
+    새 파일은 로컬에 바로 써지고 바로 읽히며, `village-mover.timer`가 1시간마다 30분 넘게 안 바뀐 파일을 올리고(08~01시 5MB/s,
+    01~08시 무제한, 결계 3단계 이상이면 미룸) rc로 그 폴더 목록을 새로 고친 뒤 원격에 같은 크기로 보이는 것만 로컬에서 지운다.
+    기존 rclone 마운트·서비스와 gds2는 그대로. `install`(합친 폴더+타이머, CT105는 아직 그대로) → 확인 → 시청 없을 때 `switch`
+    (CT105 mp1 원본만 `/mnt/zeeps_merged`로 바꾸고 재시작, CT 안 경로는 `/mnt/zeeps_member` 그대로) / `status` / `uninstall`
+    (남은 파일을 전부 올린 뒤 mp1 원래대로). 설정은 `/etc/village/staging.conf`.
   - 단계 변화와 조치는 💠 결계 조절 채널 한 줄 + 마을 사건(슈나·베니마루·애순이가 바로 반응). 감시탑 사고 알림으로는 치지 않는다.
     몬스터 침입 위험도는 가장 높은 지수. `/포링푸드침입`에 지금 단계/지수/조치. 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
 - **바로 전파** (`agents.react_now`, 봇 `load_guard` 매분): 결계 조절이 컨테이너를 내리거나/늦추거나 되돌린 순간, 그리고 표에 있는
