@@ -27,6 +27,7 @@
 단계별 조치 (STAGE_PLAN, .env로 바꿈 - 보호 목록은 못 넘는다):
 - 1단계~: 놀고 있는(CPU < IDLE_CPU %) 희생 가능 컨테이너 정지 - 기본 etc docker-warproxy. ttl STOP_TTL_H.
 - 4단계~: 짐꾼 bookoasis_assistant.service CPUWeight 30, 5단계면 15 (끄지 않음). ttl SLOW_TTL_H.
+  재생 중일 때만 - 아무도 안 보면 단계가 높아도 짐꾼은 그대로 (지킬 시청이 없으니 자료 등록이 먼저).
           rclone 업로드만 대역폭 제한(PORING_LOADSHED_RCLONE_RC가 있을 때, rate=5M:off - 읽기/재생은 안 막는다).
 - 5단계 또는 지수 95% 초과: 채널에 ⚠️ 경고.
 - 방역관(ClamAV, 호스트 zeeps): PORING_LOADSHED_ZEEPS_SSH가 있으면 매분 호스트의 scripts/zeeps/village-ctl.sh에 "stage N"을 보낸다
@@ -434,9 +435,10 @@ def next_stage(samples: list, current: int, changed_at: str, playing: bool, now:
     return current, ""
 
 
-def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime) -> list[dict]:
+def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, playing: bool = True) -> list[dict]:
     """지금 단계에 맞춰 할 일 [{"host", "do": stop|start|throttle|unthrottle, "name", "kind"?, "weight"?, "why"}].
-    복구는 조치의 역순(마지막에 한 것부터). ttl이 지나면 단계와 상관없이 되돌린다. 순수 함수 (테스트용)."""
+    복구는 조치의 역순(마지막에 한 것부터). ttl이 지나면 단계와 상관없이 되돌린다. 순수 함수 (테스트용).
+    짐꾼(units)/업로드(rclone) 늦추기는 재생 중일 때만 - 아무도 안 보면 지킬 시청이 없으니 자료 등록을 그대로 둔다."""
     cfg = HOSTS[host]
     shed = st.get("shed") or {}
     slow = st.get("throttled") or {}
@@ -454,10 +456,11 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime) -
     for key, t in slow.items():
         stale = t["kind"] not in ("unit", "rclone") or protected(t["name"]) or \
             (t["kind"] == "unit" and t["name"] not in cfg["units"])
-        if stale or stage < SLOW_STAGE or t.get("at", "") <= slow_old:
+        if stale or stage < SLOW_STAGE or not playing or t.get("at", "") <= slow_old:
             undo.append((t.get("at", ""), {"host": host, "do": "unthrottle", "name": t["name"], "kind": t["kind"],
                                             "orig": t.get("orig"),
                                             "why": "시청 경로/이제 조치 대상이 아님" if stale else
+                                            "재생이 없어 자료 등록 우선" if not playing and stage >= SLOW_STAGE else
                                             f"결계 경보 {stage}단계로 내려감" if stage < SLOW_STAGE else f"{SLOW_TTL_H:g}시간 지남(ttl)"}))
     acts = [a for _, a in sorted(undo, key=lambda x: x[0], reverse=True)]
     undone = {a["name"] for a in acts}
@@ -470,7 +473,7 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime) -
                 continue
             if running[name] < IDLE_CPU:
                 acts.append({"host": host, "do": "stop", "name": name, "why": f"{why}, 이 시설은 놀고 있음({running[name]:g}%)"})
-    if stage >= SLOW_STAGE:
+    if stage >= SLOW_STAGE and playing:
         for name in cfg["units"]:
             key, w = f"unit:{name}", UNIT_WEIGHT.get(stage, min(UNIT_WEIGHT.values()))
             if protected(name) or name in undone or restored.get(key, "") >= cool:
@@ -620,7 +623,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             done.append({"host": host, "do": "stage", "name": "결계 경보", "from": cur, "to": new, "why": why,
                          "cpu": st["last_cpu"], "alert": new >= TOP or st["last_cpu"] > ALERT})
             print(f"[결계 조절] {host} 결계 경보 {cur} -> {new}단계 - {why}")
-        for a in plan(host, new, st, r.get("running"), now):
+        for a in plan(host, new, st, r.get("running"), now, bool(playing)):
             if a["do"] in ("stop", "start"):
                 if not docker(host, a["do"], a["name"]):
                     continue
@@ -644,7 +647,8 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
                                                            "at": prev.get("at", stamp) if prev else stamp}
                 else:
                     (st.get("throttled") or {}).pop(key, None)
-                    st.setdefault("restored", {})[key] = stamp
+                    if "ttl" in a.get("why", ""):     # 쿨다운은 ttl로 푼 것만 (재생이 끝나 푼 건 다시 틀면 바로 양보해야)
+                        st.setdefault("restored", {})[key] = stamp
             a["cpu"] = st.get("last_cpu")
             done.append(a)
             word = {"stop": "내림", "start": "다시 올림", "throttle": "늦춤", "unthrottle": "되돌림"}[a["do"]]
