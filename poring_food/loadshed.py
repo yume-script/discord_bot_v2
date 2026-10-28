@@ -281,9 +281,8 @@ YMPLAYER_URL = os.getenv("PORING_YMPLAYER_URL", "").strip().rstrip("/")   # 예:
 YMPLAYER_TOKEN = os.getenv("PORING_YMPLAYER_TOKEN", "").strip()            # ym_player의 MP_ACTIVITY_TOKEN
 
 
-def ymplayer_playing(get=None) -> int | None:
-    """YM_PLAYER가 지금 중계 중인 텔레그램/IPTV·라디오 스트림 수 (/api/activity - 숫자만). 안 켰거나 못 받으면 None.
-    Plex 재생은 Plex 세션으로도 잡히니 여기선 텔레그램/라이브만 더한다 (두 번 세지 않게)."""
+def ymplayer_activity(get=None) -> dict | None:
+    """YM_PLAYER /api/activity의 by {"plex", "telegram", "live"} (숫자만). 안 켰거나 못 받으면 None."""
     if not (YMPLAYER_URL and YMPLAYER_TOKEN):
         return None
     try:
@@ -294,9 +293,63 @@ def ymplayer_playing(get=None) -> int | None:
         else:
             body = get()
         by = (body or {}).get("by") if isinstance(body, dict) else None
-        return None if by is None else int(by.get("telegram", 0)) + int(by.get("live", 0))
+        return None if not isinstance(by, dict) else {k: int(by.get(k, 0) or 0) for k in ("plex", "telegram", "live")}
     except Exception:  # noqa: BLE001
         return None
+
+
+def ymplayer_playing(get=None) -> int | None:
+    """YM_PLAYER가 지금 중계 중인 텔레그램/IPTV·라디오 스트림 수. 안 켰거나 못 받으면 None.
+    Plex 재생은 Plex 세션으로도 잡히니 여기선 텔레그램/라이브만 더한다 (두 번 세지 않게)."""
+    by = ymplayer_activity(get)
+    return None if by is None else by["telegram"] + by["live"]
+
+
+_PLEX_KIND = {"movie": "영화", "episode": "드라마/시리즈", "track": "음악", "clip": "영상"}
+
+
+def watching(plex_sessions=None, ym=None) -> dict:
+    """[스레드에서] 지금 보는 중인 것 - 숫자만 (제목/계정 없음).
+    {"plex": 수|None, "plex_kinds": {종류: 수}, "ym": {"plex", "telegram", "live"}|None, "total": 수|None}"""
+    if plex_sessions is None:
+        try:
+            from . import plex_api
+            plex_sessions = plex_api.sessions() if plex_api.enabled() else None
+        except Exception:  # noqa: BLE001
+            plex_sessions = None
+    if ym is None:
+        ym = ymplayer_activity()
+    kinds = {}
+    for x in plex_sessions or []:
+        k = _PLEX_KIND.get(x.get("media_type", ""), "기타")
+        kinds[k] = kinds.get(k, 0) + 1
+    plex = len(plex_sessions) if plex_sessions is not None else None
+    total = None if plex is None and ym is None else (plex or 0) + ((ym or {}).get("telegram", 0) + (ym or {}).get("live", 0))
+    return {"plex": plex, "plex_kinds": kinds, "ym": ym, "total": total}
+
+
+def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
+    now = now or now_kst()
+    w = w if w is not None else watching()
+    lines = [f"📺 **지금 시청 현황** ({now:%H:%M})"]
+    if w["total"] is None:
+        lines.append("• 재생 정보를 못 받았어요 (PLEX_TOKEN / PORING_YMPLAYER_URL·_TOKEN 확인)")
+        return "\n".join(lines)
+    lines.append(f"• 모두 **{w['total']}**개 재생 중")
+    if w["plex"] is None:
+        lines.append("• Plex: 못 받음")
+    else:
+        kinds = ", ".join(f"{k} {n}" for k, n in sorted(w["plex_kinds"].items(), key=lambda x: -x[1]))
+        lines.append(f"• Plex: {w['plex']}" + (f" ({kinds})" if kinds else "")
+                     + (f" - 그중 YM_PLAYER로 {w['ym']['plex']}" if w["ym"] and w["ym"].get("plex") else ""))
+    if w["ym"] is None:
+        lines.append("• YM_PLAYER 텔레그램/IPTV: " + ("못 받음" if YMPLAYER_URL and YMPLAYER_TOKEN else "연결 안 함"))
+    else:
+        lines.append(f"• YM_PLAYER: 텔레그램 {w['ym']['telegram']} · IPTV/라디오 중계 {w['ym']['live']}")
+    st = stage(now)
+    lines.append(f"-# 결계 경보 {st}단계 · 기준 {'재생 중' if w['total'] else '재생 없음'} "
+                 f"{'/'.join(f'{t:g}' for t in levels(bool(w['total'])))}% (브라우저가 원본 주소로 바로 트는 IPTV는 안 보임)")
+    return "\n".join(lines)
 
 
 def _playing() -> int | None:

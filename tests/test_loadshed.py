@@ -294,3 +294,27 @@ def test_ymplayer_telegram_and_live_count_as_watching(monkeypatch):
     assert loadshed.ymplayer_playing(lambda: {"playing": 3, "by": {"plex": 1, "telegram": 1, "live": 1}}) == 2   # Plex는 빼고
     assert loadshed.ymplayer_playing(lambda: {"by": {}}) == 0
     assert loadshed.ymplayer_playing(lambda: None) is None
+
+
+def test_watching_counts_only_no_titles(monkeypatch):
+    monkeypatch.setattr(loadshed, "YMPLAYER_URL", "http://ym:8899")
+    monkeypatch.setattr(loadshed, "YMPLAYER_TOKEN", "t")
+    sessions = [{"media_type": "episode", "title": "비밀 제목"}, {"media_type": "movie", "title": "x"},
+                {"media_type": "episode", "title": "y"}]
+    w = loadshed.watching(sessions, {"plex": 1, "telegram": 2, "live": 1})
+    assert w["total"] == 6 and w["plex_kinds"] == {"드라마/시리즈": 2, "영화": 1}   # Plex 3 + 텔레그램 2 + 라이브 1
+    text = loadshed.watching_text(T0, w)
+    assert "모두 **6**개" in text and "드라마/시리즈 2" in text and "텔레그램 2" in text and "그중 YM_PLAYER로 1" in text
+    assert "비밀 제목" not in text and "재생 중 65/70/75/85/90%" in text
+    none = loadshed.watching_text(T0, {"plex": None, "plex_kinds": {}, "ym": None, "total": None})
+    assert "못 받았어요" in none
+    assert loadshed.ymplayer_activity(lambda: {"by": {"telegram": "3"}}) == {"plex": 0, "telegram": 3, "live": 0}
+
+
+def test_chat_can_ask_watching_now(monkeypatch):
+    from core.tool_policy import is_server_affecting
+    from poring_food import tools
+    tool = next(t for t in tools.PORING_FOOD_TOOLS if t.name == "get_watching_now")
+    assert "몇 명 보고 있어" in tool.description and not is_server_affecting(tool.name)   # 조회라 누구나
+    monkeypatch.setattr(loadshed, "watching", lambda: {"plex": 1, "plex_kinds": {"영화": 1}, "ym": None, "total": 1})
+    assert "모두 **1**개" in tools.get_watching_now()

@@ -18,6 +18,7 @@
   · /포링푸드연대기 [날짜] - 그날 세계에서 있었던 일(하루 요약/원본 사건)과 진행 중인 일을 본다
   · /포링푸드명단 [소속] - 지금 스스로 사는 인물들의 소속/자리/맡은 일/고정 여부/지금 하는 일, 최근 교체
   · /포링푸드침입 [지금] - 몬스터 침입 예보(위험도)와 최근 밤들, 지금=True면 바로 침입 (시험용)
+  · /시청현황 - 지금 재생 중인 수 (Plex 종류별 + YM_PLAYER 텔레그램/IPTV, 숫자만 - 제목·계정 없음)
   · /포링푸드골목 - 마을 방어 배치 판 그림 + 방어 기금/놓인 것과 상태/손봐야 할 것/최근 기록
   · /포링푸드이웃 [작품] - 애니메이션 인물들을 지금 바로 마을로 이사 오게 한다 (원래는 주 1회 자동)
 """
@@ -586,6 +587,16 @@ class PoringFood(commands.Cog):
                     log.exception("포링푸드 침입 실행 실패")
         from poring_food import loadshed
         text = await asyncio.to_thread(lambda: raids.summary() + "\n\n" + loadshed.summary())
+        await interaction.followup.send(text[:1990], ephemeral=True)
+
+    @app_commands.command(name="시청현황", description="[관리자] 지금 몇 개가 재생 중인지 (Plex + YM_PLAYER 텔레그램/IPTV, 숫자만)")
+    async def watching_view(self, interaction: Interaction):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        from poring_food import loadshed
+        text = await asyncio.to_thread(loadshed.watching_text)
         await interaction.followup.send(text[:1990], ephemeral=True)
 
     @app_commands.command(name="포링푸드명단", description="[관리자] 지금 스스로 사는 인물들의 소속/자리/맡은 일/지금 하는 일을 봅니다")
