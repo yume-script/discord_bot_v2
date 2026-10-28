@@ -284,7 +284,8 @@ YMPLAYER_TOKEN = os.getenv("PORING_YMPLAYER_TOKEN", "").strip()            # ym_
 
 
 def ymplayer_activity(get=None) -> dict | None:
-    """YM_PLAYER /api/activity의 by {"plex", "telegram", "live"} (숫자만). 안 켰거나 못 받으면 None."""
+    """YM_PLAYER /api/activity -> {"plex", "telegram", "live"(재생 수), "stalls", "retries"(최근 5분 끊김/재연결 합계)} (숫자만).
+    안 켰거나 못 받으면 None."""
     if not (YMPLAYER_URL and YMPLAYER_TOKEN):
         return None
     try:
@@ -295,7 +296,14 @@ def ymplayer_activity(get=None) -> dict | None:
         else:
             body = get()
         by = (body or {}).get("by") if isinstance(body, dict) else None
-        return None if not isinstance(by, dict) else {k: int(by.get(k, 0) or 0) for k in ("plex", "telegram", "live")}
+        if not isinstance(by, dict):
+            return None
+        out = {k: int(by.get(k, 0) or 0) for k in ("plex", "telegram", "live")}
+        # ym_player 1.1.52~: 최근 window초(5분) 동안 끊김(stalls)/재연결(retries) 횟수 - 종류별 {plex, telegram, live}
+        for key in ("stalls", "retries"):
+            got = body.get(key) if isinstance(body.get(key), dict) else {}
+            out[key] = sum(int(got.get(k, 0) or 0) for k in ("plex", "telegram", "live"))
+        return out
     except Exception:  # noqa: BLE001
         return None
 
@@ -350,7 +358,9 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
     if w["ym"] is None:
         lines.append("• YM_PLAYER 텔레그램/IPTV: " + ("못 받음" if YMPLAYER_URL and YMPLAYER_TOKEN else "연결 안 함"))
     else:
-        lines.append(f"• YM_PLAYER: 텔레그램 {w['ym']['telegram']} · IPTV/라디오 중계 {w['ym']['live']}")
+        bad = w["ym"].get("stalls", 0) + w["ym"].get("retries", 0)
+        lines.append(f"• YM_PLAYER: 텔레그램 {w['ym']['telegram']} · IPTV/라디오 중계 {w['ym']['live']}"
+                     + (f" · ⚠️ 최근 5분 끊김 {w['ym'].get('stalls', 0)} / 재연결 {w['ym'].get('retries', 0)}" if bad else ""))
     st = stage(now)
     lines.append(f"-# 결계 경보 {st}단계 · 기준 {'재생 중' if w['total'] else '재생 없음'} "
                  f"{'/'.join(f'{t:g}' for t in levels(bool(w['total'])))}% (브라우저가 원본 주소로 바로 트는 IPTV는 안 보임)")
@@ -359,7 +369,7 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
 
 def _viewing() -> tuple[int | None, int | None]:
     """(지금 재생 중인 수, 그중 버벅이는 수). 재생 = Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER 텔레그램/IPTV·라디오.
-    버벅임은 Plex만 안다 (버퍼링 중이거나 변환 속도 < 1.0) - 모르면 None."""
+    버벅임 = Plex(버퍼링 중이거나 변환 속도 < 1.0) + YM_PLAYER가 알린 최근 5분 끊김/재연결 횟수 - 모르면 None."""
     plex = struggle = None
     try:
         from . import plex_api
@@ -372,7 +382,10 @@ def _viewing() -> tuple[int | None, int | None]:
             plex = metrics.streams()
     except Exception:  # noqa: BLE001
         plex = None
-    ym = ymplayer_playing()
+    act = ymplayer_activity()
+    ym = None if act is None else act["telegram"] + act["live"]
+    if act is not None and (act.get("stalls") or act.get("retries")):   # YM_PLAYER 재생기가 알린 끊김/재연결 (최근 5분)
+        struggle = (struggle or 0) + act.get("stalls", 0) + act.get("retries", 0)
     if plex is None and ym is None:
         return None, struggle
     return (plex or 0) + (ym or 0), struggle

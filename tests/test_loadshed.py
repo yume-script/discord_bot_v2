@@ -308,7 +308,8 @@ def test_watching_counts_only_no_titles(monkeypatch):
     assert "비밀 제목" not in text and "재생 중 65/70/75/85/90%" in text
     none = loadshed.watching_text(T0, {"plex": None, "plex_kinds": {}, "ym": None, "total": None})
     assert "못 받았어요" in none
-    assert loadshed.ymplayer_activity(lambda: {"by": {"telegram": "3"}}) == {"plex": 0, "telegram": 3, "live": 0}
+    assert loadshed.ymplayer_activity(lambda: {"by": {"telegram": "3"}}) == {"plex": 0, "telegram": 3, "live": 0,
+                                                                            "stalls": 0, "retries": 0}
 
 
 def test_chat_can_ask_watching_now(monkeypatch):
@@ -363,3 +364,21 @@ def test_smooth_playback_means_carrier_is_not_slowed():
     assert any(d.get("why") == "재생이 잘 나와서(버퍼링 없음) 자료 등록 우선" for d in done)
     text = loadshed.watching_text(T0, loadshed.watching([{"media_type": "movie", "state": "buffering"}], None))
     assert "버벅이는 재생 1" in text
+
+
+def test_ymplayer_stalls_and_retries_count_as_struggling(monkeypatch):
+    from poring_food import plex_api
+    monkeypatch.setattr(loadshed, "YMPLAYER_URL", "http://ym:8899")
+    monkeypatch.setattr(loadshed, "YMPLAYER_TOKEN", "t")
+    monkeypatch.setattr(plex_api, "enabled", lambda: False)
+    monkeypatch.setattr("poring_food.metrics.streams", lambda: None)
+    body = {"playing": 1, "by": {"plex": 0, "telegram": 1, "live": 0},
+            "stalls": {"plex": 0, "telegram": 2, "live": 0}, "retries": {"plex": 0, "telegram": 0, "live": 1}, "window": 300}
+    act = loadshed.ymplayer_activity(lambda: body)
+    assert act["stalls"] == 2 and act["retries"] == 1
+    monkeypatch.setattr(loadshed, "ymplayer_activity", lambda get=None: act)
+    assert loadshed._viewing() == (1, 3)                                    # 텔레그램 1개 재생, 최근 5분 끊김 2 + 재연결 1
+    monkeypatch.setattr(loadshed, "ymplayer_activity", lambda get=None: {**act, "stalls": 0, "retries": 0})
+    assert loadshed._viewing() == (1, None)                                 # 잘 나오면 버벅임 없음
+    text = loadshed.watching_text(T0, {"plex": 0, "plex_kinds": {}, "ym": act, "total": 1, "struggle": 0})
+    assert "최근 5분 끊김 2 / 재연결 1" in text
