@@ -37,7 +37,7 @@ def test_watching_path_is_never_touched(monkeypatch):
     assert all(not loadshed.protected(n) for cfg in loadshed.HOSTS.values() for n in cfg["stop"] + cfg["units"])
 
 
-def _run(indexes, start=T0, etc=None, playing=None, psi=None, running=None, docker_log=None, slow_log=None):
+def _run(indexes, start=T0, etc=None, playing=None, psi=None, running=None, docker_log=None, slow_log=None, struggle="same"):
     """매분 한 번씩 step - indexes는 분마다 plex01 지수 (etc는 etc 값, 없으면 같은 값). 반환: 한 일 전부."""
     done = []
 
@@ -50,7 +50,7 @@ def _run(indexes, start=T0, etc=None, playing=None, psi=None, running=None, dock
         readings = {"etc": {"probe": _probe(c if etc is None else etc), "running": {"docker-warproxy": 0.1, "litellm-proxy": 1.0}},
                     "plex01": {"probe": _probe(c, psi), "running": running if running is not None
                                else {"bookoasis_mariadb": 0.5, "flaskfarm": 3.0, "bookoasis": 1.0}},
-                    "_playing": playing}
+                    "_playing": playing, "_struggle": playing if struggle == "same" else struggle}
         done += loadshed.step(now, measurer=lambda r=readings: r, throttler=throttler,
                               docker=lambda h, do, n: (docker_log.append((h, do, n)) if docker_log is not None else None) or True)
     return done
@@ -339,3 +339,27 @@ def test_carrier_yields_again_right_away_when_someone_starts_watching_again():
     slow.clear()
     _run([99], start=T0 + timedelta(minutes=6), playing=1, slow_log=slow)     # 2분 만에 다시 틀었다
     assert slow and slow[0][1] == "throttle"                                 # 30분 쿨다운 없이 바로 양보
+
+
+def test_smooth_playback_means_carrier_is_not_slowed():
+    from poring_food import plex_api
+    assert plex_api.struggling({"state": "buffering"})
+    assert plex_api.struggling({"state": "playing", "transcode_speed": 0.8})
+    assert not plex_api.struggling({"state": "playing", "transcode_speed": 0.8, "transcode_throttled": True})
+    assert not plex_api.struggling({"state": "playing", "transcode_speed": 3.2})
+    assert not plex_api.struggling({"state": "playing"})                     # 원본 재생, 잘 나옴
+    s = plex_api.to_session({"type": "movie", "Player": {"state": "playing"}, "TranscodeSession": {"speed": "0.9"}})
+    assert s["transcode_speed"] == 0.9 and plex_api.struggling(s)
+    slow = []
+    _run([97] * 6, playing=2, struggle=0, slow_log=slow)
+    assert _stage() == 5 and not [x for x in slow if x[1] == "throttle"]     # 보는 중이어도 잘 나오면 짐꾼은 그대로
+    _run([97], start=T0 + timedelta(minutes=6), playing=2, struggle=1, slow_log=slow)
+    assert [x for x in slow if x[1] == "throttle"]                           # 버벅이면 바로 양보
+    slow.clear()
+    _run([97] * 5, start=T0 + timedelta(minutes=7), playing=2, struggle=0, slow_log=slow)
+    assert not [x for x in slow if x[1] == "unthrottle"]                     # 10분은 버벅이는 걸로 본다
+    done = _run([97] * 6, start=T0 + timedelta(minutes=12), playing=2, struggle=0, slow_log=slow)
+    assert [x for x in slow if x[1] == "unthrottle"]
+    assert any(d.get("why") == "재생이 잘 나와서(버퍼링 없음) 자료 등록 우선" for d in done)
+    text = loadshed.watching_text(T0, loadshed.watching([{"media_type": "movie", "state": "buffering"}], None))
+    assert "버벅이는 재생 1" in text
