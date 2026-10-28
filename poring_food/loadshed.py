@@ -344,10 +344,16 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
     now = now or now_kst()
     w = w if w is not None else watching()
     lines = [f"📺 **지금 시청 현황** ({now:%H:%M})"]
+    ym_set = bool(YMPLAYER_URL and YMPLAYER_TOKEN)
     if w["total"] is None:
-        lines.append("• 재생 정보를 못 받았어요 (PLEX_TOKEN / PORING_YMPLAYER_URL·_TOKEN 확인)")
+        lines.append("• 재생 정보를 못 받았어요 - 지금 몇 개가 재생 중인지 알 수 없음 (PLEX_TOKEN / PORING_YMPLAYER_URL·_TOKEN 확인)")
         return "\n".join(lines)
-    lines.append(f"• 모두 **{w['total']}**개 재생 중")
+    if w["ym"] is None:   # 텔레그램/IPTV를 모르면 '아무도 안 봄'이라고 단정하면 안 된다
+        lines.append(f"• Plex로 확인된 재생 **{w['plex'] or 0}**개 - YM_PLAYER(텔레그램/IPTV) 재생은 "
+                     + ("연결이 안 돼서 모름 (주소/토큰 확인)" if ym_set else "봇에 연결 설정이 없어서 모름 (.env PORING_YMPLAYER_URL/_TOKEN)")
+                     + ", 그쪽에서 보는 사람이 있을 수 있음")
+    else:
+        lines.append(f"• 모두 **{w['total']}**개 재생 중")
     if w["plex"] is None:
         lines.append("• Plex: 못 받음")
     else:
@@ -355,15 +361,14 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
         lines.append(f"• Plex: {w['plex']}" + (f" ({kinds})" if kinds else "")
                      + (f" - 그중 YM_PLAYER로 {w['ym']['plex']}" if w["ym"] and w["ym"].get("plex") else "")
                      + (f" · ⚠️ 버벅이는 재생 {w['struggle']}" if w.get("struggle") else (" · 모두 잘 나옴" if w["plex"] else "")))
-    if w["ym"] is None:
-        lines.append("• YM_PLAYER 텔레그램/IPTV: " + ("못 받음" if YMPLAYER_URL and YMPLAYER_TOKEN else "연결 안 함"))
-    else:
+    if w["ym"] is not None:
         bad = w["ym"].get("stalls", 0) + w["ym"].get("retries", 0)
         lines.append(f"• YM_PLAYER: 텔레그램 {w['ym']['telegram']} · IPTV/라디오 중계 {w['ym']['live']}"
                      + (f" · ⚠️ 최근 5분 끊김 {w['ym'].get('stalls', 0)} / 재연결 {w['ym'].get('retries', 0)}" if bad else ""))
-    st = stage(now)
-    lines.append(f"-# 결계 경보 {st}단계 · 기준 {'재생 중' if w['total'] else '재생 없음'} "
-                 f"{'/'.join(f'{t:g}' for t in levels(bool(w['total'])))}% (브라우저가 원본 주소로 바로 트는 IPTV는 안 보임)")
+    st, load = stage(now), max_cpu(now)
+    lines.append(f"-# 결계 경보 {st}단계" + (f" (지금 부하 지수 {load:g}%)" if load is not None else "")
+                 + f" · 단계 기준값({'재생 중' if w['total'] else '재생 없음'}): 1~5단계 = "
+                 + "/".join(f"{t:g}" for t in levels(bool(w["total"]))) + "% 이상 · 원본 주소로 바로 트는 IPTV는 안 보임")
     return "\n".join(lines)
 
 

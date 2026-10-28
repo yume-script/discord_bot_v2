@@ -305,7 +305,7 @@ def test_watching_counts_only_no_titles(monkeypatch):
     assert w["total"] == 6 and w["plex_kinds"] == {"드라마/시리즈": 2, "영화": 1}   # Plex 3 + 텔레그램 2 + 라이브 1
     text = loadshed.watching_text(T0, w)
     assert "모두 **6**개" in text and "드라마/시리즈 2" in text and "텔레그램 2" in text and "그중 YM_PLAYER로 1" in text
-    assert "비밀 제목" not in text and "재생 중 65/70/75/85/90%" in text
+    assert "비밀 제목" not in text and "단계 기준값(재생 중): 1~5단계 = 65/70/75/85/90%" in text
     none = loadshed.watching_text(T0, {"plex": None, "plex_kinds": {}, "ym": None, "total": None})
     assert "못 받았어요" in none
     assert loadshed.ymplayer_activity(lambda: {"by": {"telegram": "3"}}) == {"plex": 0, "telegram": 3, "live": 0,
@@ -318,7 +318,8 @@ def test_chat_can_ask_watching_now(monkeypatch):
     tool = next(t for t in tools.PORING_FOOD_TOOLS if t.name == "get_watching_now")
     assert "몇 명 보고 있어" in tool.description and not is_server_affecting(tool.name)   # 조회라 누구나
     monkeypatch.setattr(loadshed, "watching", lambda: {"plex": 1, "plex_kinds": {"영화": 1}, "ym": None, "total": 1})
-    assert "모두 **1**개" in tools.get_watching_now()
+    text = tools.get_watching_now()
+    assert "Plex로 확인된 재생 **1**개" in text and "모름" in text and "있을 수 있음" in text   # YM_PLAYER를 모르면 단정 안 함
 
 
 def test_nobody_watching_means_carrier_is_never_slowed():
