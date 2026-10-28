@@ -78,3 +78,51 @@ def test_tools_policy():
     assert {"get_download_plan", "preview_waitfree_window", "set_waitfree_window"} <= names
     assert is_server_affecting("set_waitfree_window")
     assert not is_server_affecting("get_download_plan") and not is_server_affecting("preview_waitfree_window")
+
+
+def _pilot_env(monkeypatch, tmp_path, stage=1):
+    monkeypatch.setattr(waitfree, "STATE_PATH", str(tmp_path / "waitfree.json"))
+    data = _hourly(busy=range(1, 8), watch=range(18, 24)) | {"hosts": {"plex01": {"stage": stage}}}
+    monkeypatch.setattr(loadshed, "_load", lambda: data)
+    monkeypatch.setattr(loadshed, "_viewing", lambda: (0, 0))
+    monkeypatch.setattr(loadshed, "DRY_RUN", False)
+    monkeypatch.setattr(waitfree, "_decider", lambda: "짐꾼담당")
+    monkeypatch.setattr("poring_food.memory.remember", lambda *a, **k: None)
+    calls = []
+
+    def remote(script, timeout):
+        calls.append(script)
+        return 0, ("적용했습니다. 백업: x" if "--apply" in script else "■ 분포\n  예:\n  제목: 충전 a → b\n\n미리 보기입니다.")
+    monkeypatch.setattr(waitfree, "_remote", remote)
+    return calls
+
+
+def test_autopilot_applies_llm_decision_once_a_day(monkeypatch, tmp_path):
+    calls = _pilot_env(monkeypatch, tmp_path)
+    posts, seen = [], []
+
+    def decide():
+        return {"apply": True, "start": 8, "end": 18, "reason": "저녁 재생과 새벽 부하를 피함"}
+    d = waitfree.autopilot(now=T0, decide=decide, post=posts.append, playing=0)
+    assert d["apply"] and any("--spread 8 18 --apply" in c for c in calls)
+    assert "08:00~17:59" in posts[0] and "적용함" in posts[0] and "제목" not in posts[0]
+    assert waitfree._state()["applied"][-1]["by"] == "자율(짐꾼담당)"
+    # 같은 날 다시 불러도 안 살펴봄 / 다음 날 추천과 같으면 LLM 안 부름
+    assert waitfree.autopilot(now=T0 + timedelta(hours=3), decide=lambda: seen.append(1), playing=0) is None
+    assert waitfree.autopilot(now=T0 + timedelta(days=1), decide=lambda: seen.append(1), playing=0) is None and not seen
+
+
+def test_autopilot_keep_and_safety(monkeypatch, tmp_path):
+    calls = _pilot_env(monkeypatch, tmp_path)
+    posts = []
+    d = waitfree.autopilot(now=T0, decide=lambda: {"apply": False, "reason": "충분함"}, post=posts.append, playing=0)
+    assert not d["apply"] and not any("--apply" in c for c in calls) and "그대로" in posts[0]
+    # 재생 중이면 LLM도 안 부르고 30분 뒤 다시
+    monkeypatch.setattr(waitfree, "STATE_PATH", str(tmp_path / "b.json"))
+    asked = []
+    assert waitfree.autopilot(now=T0, decide=lambda: asked.append(1), playing=2) is None and not asked
+    assert waitfree.autopilot(now=T0 + timedelta(minutes=10), decide=lambda: asked.append(1), playing=0) is None and not asked
+    # 기록이 모자라면 아무것도 안 함
+    monkeypatch.setattr(waitfree, "STATE_PATH", str(tmp_path / "c.json"))
+    monkeypatch.setattr(loadshed, "_load", lambda: _hourly(days=1))
+    assert waitfree.autopilot(now=T0, decide=lambda: asked.append(1), playing=0) is None and not asked

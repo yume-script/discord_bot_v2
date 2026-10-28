@@ -75,6 +75,7 @@ class PoringFood(commands.Cog):
             self.plex_watch.start()
             self.book_watch.start()
             self.load_guard.start()
+            self.waitfree_pilot.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -90,6 +91,7 @@ class PoringFood(commands.Cog):
         self.plex_watch.cancel()
         self.book_watch.cancel()
         self.load_guard.cancel()
+        self.waitfree_pilot.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -200,6 +202,20 @@ class PoringFood(commands.Cog):
                     await asyncio.to_thread(facilities.react, changed)
             except Exception:  # noqa: BLE001
                 log.exception("포링푸드 결계 조절/감시탑 세계 반영 실패")
+
+    @tasks.loop(minutes=30)
+    async def waitfree_pilot(self) -> None:
+        """짐꾼 담당 인물이 하루 한 번 기다무 충전 시간대를 스스로 살펴 바꾼다 (poring_food/waitfree.autopilot).
+        원격 명령이 몇 분 걸릴 수 있어 결계 조절(매분)과 따로 돈다."""
+        from poring_food import waitfree
+        try:
+            await asyncio.to_thread(waitfree.autopilot)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 기다무 시간대 자율 판단 실패")
+
+    @waitfree_pilot.before_loop
+    async def _before_waitfree(self) -> None:
+        await self.bot.wait_until_ready()
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
