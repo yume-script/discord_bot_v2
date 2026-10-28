@@ -11,6 +11,7 @@ config/mcp_servers.yaml의 poring_food 항목으로 하위 프로세스를 실�
 - get_character_story: 방송 순서가 안 돌아온 인물의 이야기를 즉석 생성(LLM 호출) - 같은
   시간대 안에서는 캐시를 재사용한다.
 - get_bookoasis_report: 애순이의 오아시스 마법도서관 서가(북오아시스) 마지막 점검 결과.
+- get_watching_now: 지금 재생 중인 수(Plex 종류별 + YM_PLAYER 텔레그램/IPTV, 숫자만)와 결계 경보 단계 (/시청현황과 같은 내용).
 
 함수들은 동기(파일 읽기, requests 기반 LLM 호출)라서 LangChain 도구로 감쌀 때 스레드에서
 실행되게 한다(봇 이벤트 루프를 막지 않게).
@@ -336,6 +337,17 @@ def get_poring_story(character: str = "") -> str:
     return story.story_so_far(character)
 
 
+def get_watching_now() -> str:
+    """
+    지금 실제로 영상/방송을 몇 개 보고 있는지(재생 중인 스트림 수)와 서버 결계 경보 단계를 알려준다.
+    "지금 몇 명 보고 있어?", "플렉스 누가 보고 있어?", "텔레그램으로 보는 사람 있어?", "지금 서버 바빠?" 같은 질문에 쓴다.
+    Plex(영화/드라마·시리즈/음악 종류별)와 YM_PLAYER(텔레그램, IPTV/라디오 중계)의 숫자만 나온다 -
+    제목과 시청자 계정은 알 수 없고 말하지 않는다. 사람 수가 아니라 재생 수다 (한 사람이 둘을 틀면 2).
+    """
+    from . import loadshed
+    return loadshed.watching_text()
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -356,5 +368,6 @@ PORING_FOOD_TOOLS = [
         get_character_story,
         get_bookoasis_report,
         get_poring_story,
+        get_watching_now,
     )
 ]

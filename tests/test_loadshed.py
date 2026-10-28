@@ -309,3 +309,12 @@ def test_watching_counts_only_no_titles(monkeypatch):
     none = loadshed.watching_text(T0, {"plex": None, "plex_kinds": {}, "ym": None, "total": None})
     assert "못 받았어요" in none
     assert loadshed.ymplayer_activity(lambda: {"by": {"telegram": "3"}}) == {"plex": 0, "telegram": 3, "live": 0}
+
+
+def test_chat_can_ask_watching_now(monkeypatch):
+    from core.tool_policy import is_server_affecting
+    from poring_food import tools
+    tool = next(t for t in tools.PORING_FOOD_TOOLS if t.name == "get_watching_now")
+    assert "몇 명 보고 있어" in tool.description and not is_server_affecting(tool.name)   # 조회라 누구나
+    monkeypatch.setattr(loadshed, "watching", lambda: {"plex": 1, "plex_kinds": {"영화": 1}, "ym": None, "total": 1})
+    assert "모두 **1**개" in tools.get_watching_now()
