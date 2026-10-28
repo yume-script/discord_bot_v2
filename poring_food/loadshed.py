@@ -689,6 +689,9 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             done.append(a)
             word = {"stop": "내림", "start": "다시 올림", "throttle": "늦춤", "unthrottle": "되돌림"}[a["do"]]
             print(f"[결계 조절] {host} {a['name']} {word} - {a['why']}")
+    idx_now = [st["last_cpu"] for h, st in hosts.items() if h in HOSTS and st.get("at") == stamp and st.get("last_cpu") is not None]
+    if idx_now:
+        record_hour(data, now, max(idx_now), playing)
     top = max((int(st.get("stage", 0)) for h, st in hosts.items() if h in HOSTS), default=0)
     for a in (stage_writer or _write_stage)(top):
         a["cpu"] = (zeeps or {}).get("index")
@@ -795,6 +798,23 @@ def quiet_names(now: datetime | None = None, minutes: int = 90) -> set[str]:
         out |= set(st.get("shed") or {})
         out |= {n for n, t in (st.get("restored") or {}).items() if t >= since}
     return out
+
+
+HOURLY_KEEP_DAYS = 14
+
+
+def record_hour(data: dict, now: datetime, index: float, playing: int | None) -> None:
+    """시간대별 기록 (waitfree가 한가한 시간대를 고를 때 쓴다): data["hourly"]["YYYY-MM-DDTHH"] =
+    [지수 합, 표본 수, 재생 여부를 안 표본 수, 그중 재생 중이던 표본 수] - 최근 HOURLY_KEEP_DAYS일만."""
+    h = data.setdefault("hourly", {})
+    s = h.setdefault(now.strftime("%Y-%m-%dT%H"), [0.0, 0, 0, 0])
+    s[0], s[1] = round(s[0] + float(index), 1), s[1] + 1
+    if playing is not None:
+        s[2] += 1
+        s[3] += 1 if playing else 0
+    cutoff = (now - timedelta(days=HOURLY_KEEP_DAYS)).strftime("%Y-%m-%dT%H")
+    for k in [k for k in h if k < cutoff]:
+        del h[k]
 
 
 def max_cpu(now: datetime | None = None, fresh_min: int = 15) -> float | None:

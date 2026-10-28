@@ -350,6 +350,38 @@ def get_watching_now() -> str:
     return loadshed.watching_text()
 
 
+def get_download_plan() -> str:
+    """
+    짐꾼(도서관 두루마리 운반 정령 = bookoasis_assistant)이 웹툰/웹소설 기다무 대여권을 언제 받는지 정하는 '충전 시간대'를
+    고를 근거를 보여준다: 최근 14일 시간대별 서버 부하 지수·영상 재생 비율, 가장 한가한 연속 10시간 추천, 마지막 적용,
+    지금 적용해도 되는지, 최근 7일 날짜별 다운로드 회차 수·용량. "웹툰 더 많이 받을 수 있어?", "다운로드 언제 하는 게
+    좋아?", "기다무 시간대 어때?" 같은 질문에 쓴다. 바꾸려면 preview_waitfree_window로 미리 본 뒤 set_waitfree_window.
+    """
+    from . import waitfree
+    return waitfree.plan_text()
+
+
+def preview_waitfree_window(start_hour: int, end_hour: int) -> str:
+    """
+    기다무(1·2·3일) 대여권 충전 시각을 start_hour:00 ~ end_hour 전까지(끝 미포함, 0~23시, 4~16시간)에 고르게 옮기면
+    시간대별 충전 개수가 어떻게 바뀌는지 미리 본다 (아무것도 바꾸지 않음). 영상 재생이 많은 저녁과 늘 바쁜 시간을 피한
+    get_download_plan의 추천 시간대를 넣어 보는 것이 기본이다.
+    """
+    from . import waitfree
+    return waitfree.preview(start_hour, end_hour)
+
+
+def set_waitfree_window(start_hour: int, end_hour: int) -> str:
+    """
+    기다무(1·2·3일) 대여권 충전 시각을 start_hour:00 ~ end_hour 전까지(끝 미포함)에 고르게 실제로 옮긴다 - 서버가 한가할 때
+    웹툰/웹소설을 받게 해서 영상·책 보기를 방해하지 않고 더 많이 받기 위한 것. 짐꾼을 1~2분 멈췄다가 다시 켜므로
+    지금 재생이 없고 결계 2단계 이하이고 지난 적용 뒤 20시간이 지났을 때만 실제로 한다(아니면 이유만 돌려줌).
+    옮길 때 작품마다 대여권 한 장이 최대 하루 늦어지므로 자주 바꾸지 않는다 - 먼저 preview_waitfree_window로 확인한다.
+    """
+    from . import waitfree
+    return waitfree.apply(start_hour, end_hour, by="대화 도구")
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -371,5 +403,8 @@ PORING_FOOD_TOOLS = [
         get_bookoasis_report,
         get_poring_story,
         get_watching_now,
+        get_download_plan,
+        preview_waitfree_window,
+        set_waitfree_window,
     )
 ]
