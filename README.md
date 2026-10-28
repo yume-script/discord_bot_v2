@@ -234,6 +234,7 @@ python app.py
   - 조치: 1단계~ 놀고 있는 희생 가능 컨테이너 정지(기본 etc `docker-warproxy`, ttl 6시간) + 방역관 CPU 25%, 2단계~ 정기 스캔 중단,
     4단계~ 짐꾼 `bookoasis_assistant.service` CPUWeight 30(5단계 15, 끄지 않음, `PORING_LOADSHED_PLEX01_UNITS`, ttl 2시간),
     4단계~ rclone 업로드만 `5M:off` 제한(`PORING_LOADSHED_RCLONE_RC`가 있을 때). 5단계나 95% 초과면 채널에 ⚠️. 복구는 조치의 역순.
+  - **시청 현황**: `/시청현황`(관리자) - 지금 재생 중인 수만 (Plex 종류별 + YM_PLAYER 텔레그램/IPTV 중계, 제목·계정 없음)과 지금 단계.
   - **재생 여부**: Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER `/api/activity`(텔레그램/IPTV·라디오 중계 스트림 수, 숫자만).
     YM_PLAYER는 `scripts/patches/ym_player-activity.patch`를 적용하고 `MP_ACTIVITY_TOKEN`을 정한 뒤, etc `.env`에
     `PORING_YMPLAYER_URL=http://<plex01>:8899` / `PORING_YMPLAYER_TOKEN=<같은 값>`. 원본 주소로 바로 트는 IPTV는 안 보인다.
