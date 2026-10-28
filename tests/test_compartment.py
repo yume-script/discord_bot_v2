@@ -53,6 +53,17 @@ def test_villain_scheme_thread_stays_in_shop(fake_llm):
 def test_shop_gossip_does_not_leak_to_town(monkeypatch):
     for k in ("GOSSIP_P_SAME_PLACE", "GOSSIP_P_COLLEAGUE", "GOSSIP_P_REGULAR", "GOSSIP_P_OTHER"):
         monkeypatch.setattr(agents, k, 1.0)
+
+    class _Always:   # 소문 난수는 지금 시각으로 씨앗을 잡아서, 가끔(약 1%) 아무에게도 안 퍼져 테스트가 흔들렸다 - 항상 퍼지게 고정
+        def __init__(self, *a):
+            pass
+
+        def random(self):
+            return 0.0
+
+        def shuffle(self, x):
+            pass
+    monkeypatch.setattr(agents.random, "Random", _Always)
     monkeypatch.setattr(agents, "GOSSIP_MAX_RECIPIENTS", 100)
     t = [{"speaker": "덴켄", "line": "애순이 사장님 장부 숫자 손댄 거 제가 다 압니다"}]
     got = agents._gossip(_by("덴켄"), _by("칸네"), "직접", "오아시스 마법도서관(계산대)", t, {})
