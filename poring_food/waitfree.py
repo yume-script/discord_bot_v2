@@ -198,3 +198,101 @@ def apply(start: int, end: int, by: str = "", now: datetime | None = None) -> st
     _save_state(st)
     print(f"[기다무 시간대] {start:02d}~{end:02d}시 적용 ({by or '도구'})")
     return _clean(out)
+
+
+# ===================================================================== 자율 (짐꾼 담당 인물이 스스로 판단)
+AUTO = os.getenv("PORING_WAITFREE_AUTO", "1") not in ("0", "false", "False", "")
+CHECK_GAP_H = 20          # 하루 한 번쯤 살펴본다 (적용 간격 APPLY_GAP_H와 같은 이유)
+RETRY_MIN = 30            # 재생 중/단계 높음으로 못 했으면 이만큼 뒤에 다시 (그날 안에)
+
+DECIDE_SYSTEM = """너는 오아시스 마을 도서관의 짐꾼(웹툰/웹소설 다운로더 bookoasis_assistant) 담당자다.
+목표 순서: 1) 영상 재생·책 읽기에 전혀 불편이 없게 2) 서버 부하 지수 95% 이하 3) 그 안에서 최대한 많이 받기.
+기다무 대여권은 충전되는 순간 받으러 가므로 '충전 시간대'가 곧 다운로드 시간대다. 시간대를 옮기면 작품마다 대여권
+한 장이 최대 하루 늦어지므로, 지금 시간대보다 확실히 나을 때만 바꾼다(재생이 많은 시간이나 늘 바쁜 시간과 겹칠 때,
+아직 한 번도 맞춘 적이 없을 때). 최근 다운로드 수가 지난 변경 뒤 크게 줄었으면 그것도 근거로 본다.
+시간대는 0~23시, 끝은 미포함, 길이 4~16시간. 추천 시간대를 그대로 쓰는 것이 기본이다.
+JSON으로만 답한다: {"apply": true/false, "start": 시작시, "end": 끝시, "reason": "한두 문장, 숫자 근거"}"""
+
+
+def _decider() -> str:
+    try:
+        from . import worldcfg
+        from .agents import load_agents
+        company = getattr(worldcfg, "BOOK", "")
+        return next((a["name"] for a in load_agents() if a.get("company") == company), loadshed.ACTOR)
+    except Exception:  # noqa: BLE001
+        return loadshed.ACTOR
+
+
+def autopilot(now: datetime | None = None, decide=None, post=None, playing: int | None = -1) -> dict | None:
+    """[30분마다, 스레드에서] 하루 한 번: 근거(시간대별 부하·재생, 추천, 지난 적용, 최근 다운로드 수, 미리 보기)를 모아
+    담당 인물(LLM)이 바꿀지 정하고, 정하면 안전장치(guard)를 통과할 때만 적용한다. 채널에 판단과 결과를 알린다.
+    반환: 이번에 한 판단 (안 살펴봤으면 None)."""
+    if not AUTO:
+        return None
+    now = now or now_kst()
+    st = _state()
+    last = st.get("checked_at", "")
+    if last and last > (now - timedelta(hours=CHECK_GAP_H)).isoformat():
+        return None
+    if st.get("retry_at", "") > now.isoformat():
+        return None
+    prof = profile()
+    s, e, why = best_window(10, prof)
+    if "기본값" in why:                       # 기록이 모자라면 스스로 바꾸지 않는다 (LLM도 부르지 않음)
+        return None
+    applied = (st.get("applied") or [])[-1:]
+    cur = (applied[0]["start"], applied[0]["end"]) if applied else None
+    if cur == (s, e):
+        st["checked_at"] = now.isoformat(timespec="minutes")
+        _save_state(st)
+        return None
+    why_not = guard(now, playing)
+    if why_not:                               # 안전하지 않으면 LLM도 부르지 않고 잠시 뒤 다시
+        st["retry_at"] = (now + timedelta(minutes=RETRY_MIN)).isoformat(timespec="minutes")
+        _save_state(st)
+        return None
+    who = _decider()
+    facts = (plan_text(now) + "\n\n■ 추천 시간대 미리 보기\n" + preview(s, e)
+             + "\n\n지금 맞춰 둔 시간대: " + (f"{cur[0]:02d}~{cur[1]:02d}시 ({applied[0]['at'][:16]})" if cur else "없음 (아직 맞춘 적 없음)"))
+    if decide is None:
+        from .llm import llm_json
+        decide = lambda: llm_json(DECIDE_SYSTEM, facts, temperature=0.2, timeout=60, tag="기다무 시간대", agent=who)  # noqa: E731
+    d = decide() or {}
+    st = _state()
+    st["checked_at"] = now.isoformat(timespec="minutes")
+    st.pop("retry_at", None)
+    try:
+        start, end = int(d.get("start", s)), int(d.get("end", e))
+    except (TypeError, ValueError):
+        start, end = s, e
+    reason = str(d.get("reason") or "").strip()[:300]
+    result = ""
+    if d.get("apply") and not _window_ok(start, end):
+        _save_state(st)
+        result = apply(start, end, by=f"자율({who})", now=now)
+        st = _state()
+    elif d.get("apply"):
+        result = f"시간대가 이상해서 하지 않음: {_window_ok(start, end)}"
+    st["decisions"] = (st.get("decisions") or [])[-19:] + [{"at": now.isoformat(timespec="minutes"), "who": who,
+                                                           "apply": bool(d.get("apply")), "start": start, "end": end,
+                                                           "reason": reason, "result": result[:200]}]
+    _save_state(st)
+    done = {"who": who, "apply": bool(d.get("apply")), "start": start, "end": end, "reason": reason, "result": result}
+    head = (f"기다무 충전 시간대를 {start:02d}:00~{(end - 1) % 24:02d}:59로 옮기기로 했어요" if done["apply"]
+            else f"기다무 충전 시간대는 그대로 두기로 했어요 (추천 {s:02d}~{e:02d}시)")
+    tail = ""
+    if done["apply"]:
+        tail = "\n→ " + ("적용함 (짐꾼 잠깐 멈췄다 다시 켬)" if "적용했습니다" in result else result.splitlines()[-1][:200] if result else "결과 없음")
+    text = f"-# {loadshed.NAME} · {now:%H:%M} · plex01 `bookoasis_assistant` 기다무 시간대\n**{who}**: {head} - {reason or '이유 없음'}{tail}"
+    try:
+        if post is None:
+            from .agents import _post_as
+            post = lambda t: _post_as(loadshed.NAME, t)  # noqa: E731
+        post(text)
+        from . import memory
+        memory.remember(who, f"{head} ({reason})", 4, [], "짐꾼")
+    except Exception as ex:  # noqa: BLE001
+        print(f"[기다무 시간대] 알림/기억 실패: {ex}")
+    print(f"[기다무 시간대] {who}: apply={done['apply']} {start}~{end} - {reason[:80]}")
+    return done

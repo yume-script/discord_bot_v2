@@ -263,6 +263,10 @@ python app.py
     `get_download_plan`(추천·시간대별 표·최근 7일 다운로드 수) / `preview_waitfree_window`(미리 보기) /
     `set_waitfree_window`(관리자 + 확인 뒤) - plex01에서 짐꾼을 멈추고 `python3 -m wtm.shift_waitfree --spread 시작 끝 --apply`
     후 다시 켠다. 재생 없음 · plex01 2단계 이하 · 지난 적용 뒤 20시간 · 4~16시간일 때만. 작품 제목 줄은 지우고 숫자만.
+    **자율**: 봇이 30분마다 보고 하루 한 번, 짐꾼 담당 인물(BOOK 기관 첫 사람)이 근거(위 표·추천·지난 적용·최근 7일 다운로드 수·
+    추천 미리 보기)를 받아 LLM으로 바꿀지 정한다 → 정하면 같은 안전장치를 통과할 때만 적용하고 💠 결계 조절 채널에 판단·이유·결과를
+    알린다(기억에도 남김). 기록이 3일 미만이거나 추천이 지금 시간대와 같으면 LLM을 부르지 않고, 재생 중/단계 높음이면 30분 뒤 다시.
+    끄려면 `PORING_WAITFREE_AUTO=0`.
     경로가 다르면 etc `.env`에 `PORING_BOOKOASIS_ASSISTANT_DIR`(기본 /opt/bookoasis_assistant)·`PORING_BOOKOASIS_ASSISTANT_UNIT`.
   - 단계 변화와 조치는 💠 결계 조절 채널 한 줄 + 마을 사건(슈나·베니마루·애순이가 바로 반응). 감시탑 사고 알림으로는 치지 않는다.
     몬스터 침입 위험도는 가장 높은 지수. `/포링푸드침입`에 지금 단계/지수/조치. 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
