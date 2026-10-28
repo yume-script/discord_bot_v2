@@ -62,14 +62,14 @@ def _stage(host="plex01"):
 
 def test_stage_climbs_one_step_every_five_minutes_and_slows_carrier_not_stops():
     docker, slow = [], []
-    done = _run([93] * 18, docker_log=docker, slow_log=slow)
+    done = _run([87] * 18, playing=1, docker_log=docker, slow_log=slow)
     stages = [(d["host"], d["to"]) for d in done if d["do"] == "stage" and d["host"] == "plex01"]
     assert stages == [("plex01", 1), ("plex01", 2), ("plex01", 3), ("plex01", 4)]   # 한 번에 한 단계씩
     assert ("etc", "stop", "docker-warproxy") in docker                       # 1단계: 놀고 있는 희생 가능 시설
-    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", 30, None) in slow    # 4단계(92%): 짐꾼은 끄지 않고 늦춤
+    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", 30, None) in slow    # 재생 중 4단계(85%): 짐꾼은 끄지 않고 늦춤
     assert not [x for x in docker if x[1] == "stop" and x[2] != "docker-warproxy"]           # 시청 경로는 그대로
     slow.clear()
-    _run([99] * 3, start=T0 + timedelta(minutes=18), slow_log=slow)
+    _run([99] * 3, start=T0 + timedelta(minutes=18), playing=1, slow_log=slow)
     assert _stage() == 5 and ("plex01", "throttle", "unit", "bookoasis_assistant.service", 15, None) in slow
     assert loadshed._load()["hosts"]["plex01"]["throttled"]["unit:bookoasis_assistant.service"]["orig"] == 100
     assert loadshed.stage(T0 + timedelta(minutes=21)) == 5 and loadshed.max_cpu(T0 + timedelta(minutes=21)) == 99
@@ -95,16 +95,16 @@ def test_playback_lowers_thresholds_and_psi_escalates():
 
 def test_hysteresis_and_reverse_restore():
     slow, docker = [], []
-    _run([93] * 18, docker_log=docker, slow_log=slow)
+    _run([87] * 18, playing=1, docker_log=docker, slow_log=slow)
     assert _stage() == 4
     slow.clear()
-    _run([90] * 15, start=T0 + timedelta(minutes=18), slow_log=slow)
-    assert _stage() == 4 and not slow                                        # 92 아래지만 89(92-3%p)보다 높다 -> 그대로
-    _run([87] * 11, start=T0 + timedelta(minutes=33), slow_log=slow)
-    assert _stage() == 3                                                     # 10분 평균 89 아래 -> 한 단계만 내림
+    _run([83] * 15, start=T0 + timedelta(minutes=18), playing=1, slow_log=slow)
+    assert _stage() == 4 and not slow                                        # 85 아래지만 82(85-3%p)보다 높다 -> 그대로
+    _run([80] * 11, start=T0 + timedelta(minutes=33), playing=1, slow_log=slow)
+    assert _stage() == 3                                                     # 10분 평균 82 아래 -> 한 단계만 내림
     assert ("plex01", "unthrottle", "unit", "bookoasis_assistant.service", None, 100) in slow   # 원래 값으로
     docker.clear()
-    _run([30] * 45, start=T0 + timedelta(minutes=44), docker_log=docker)
+    _run([30] * 45, start=T0 + timedelta(minutes=44), playing=1, docker_log=docker)
     assert _stage() == 0 and _stage("etc") == 0
     assert docker == [("etc", "start", "docker-warproxy")]                   # 직접 내린 것만 다시 올림
     assert not loadshed._load()["hosts"]["plex01"].get("throttled")
@@ -112,11 +112,11 @@ def test_hysteresis_and_reverse_restore():
 
 def test_ttl_restores_even_while_high():
     slow = []
-    _run([97] * 4, slow_log=slow)
+    _run([97] * 4, playing=1, slow_log=slow)
     assert _stage() == 5
     slow.clear()
     later = T0 + timedelta(hours=loadshed.SLOW_TTL_H, minutes=5)
-    _run([97] * 3, start=later, slow_log=slow)
+    _run([97] * 3, start=later, playing=1, slow_log=slow)
     assert slow[0][:4] == ("plex01", "unthrottle", "unit", "bookoasis_assistant.service")    # ttl 지나면 되돌림
     assert not [x for x in slow if x[1] == "throttle"]                                       # 방금 되돌린 건 잠시 쉼(쿨다운)
 
@@ -225,10 +225,10 @@ def test_old_version_samples_do_not_trigger_stage_after_upgrade():
 
 def test_steady_psi_alarm_does_not_trap_stage_at_top():
     slow = []
-    _run([97] * 4, slow_log=slow)
+    _run([97] * 4, playing=1, slow_log=slow)
     assert _stage() == 5
     slow.clear()
-    _run([35] * 60, start=T0 + timedelta(minutes=4), psi={"cpu": 25.0}, slow_log=slow)
+    _run([35] * 60, start=T0 + timedelta(minutes=4), playing=1, psi={"cpu": 25.0}, slow_log=slow)
     assert _stage() == 1                                                     # 지수 35% + PSI 경보 = 1단계까지는 내려온다
     assert ("plex01", "unthrottle", "unit", "bookoasis_assistant.service", None, 100) in slow   # 짐꾼은 원래 속도로
 
@@ -318,3 +318,24 @@ def test_chat_can_ask_watching_now(monkeypatch):
     assert "몇 명 보고 있어" in tool.description and not is_server_affecting(tool.name)   # 조회라 누구나
     monkeypatch.setattr(loadshed, "watching", lambda: {"plex": 1, "plex_kinds": {"영화": 1}, "ym": None, "total": 1})
     assert "모두 **1**개" in tools.get_watching_now()
+
+
+def test_nobody_watching_means_carrier_is_never_slowed():
+    slow = []
+    _run([99] * 6, slow_log=slow)
+    assert _stage() == 5 and not [x for x in slow if x[1] == "throttle"]     # 아무도 안 보면 5단계여도 짐꾼은 그대로
+    _run([99] * 2, start=T0 + timedelta(minutes=6), playing=1, slow_log=slow)
+    assert ("plex01", "throttle", "unit", "bookoasis_assistant.service", 15, None) in slow   # 누가 틀면 바로 양보
+    slow.clear()
+    done = _run([99], start=T0 + timedelta(minutes=8), slow_log=slow)        # 다 보고 껐다
+    assert slow[0][:4] == ("plex01", "unthrottle", "unit", "bookoasis_assistant.service")
+    assert any(d.get("why") == "재생이 없어 자료 등록 우선" for d in done)
+
+
+def test_carrier_yields_again_right_away_when_someone_starts_watching_again():
+    slow = []
+    _run([99] * 4, playing=1, slow_log=slow)
+    _run([99] * 2, start=T0 + timedelta(minutes=4), slow_log=slow)            # 껐다 (제한 풀림)
+    slow.clear()
+    _run([99], start=T0 + timedelta(minutes=6), playing=1, slow_log=slow)     # 2분 만에 다시 틀었다
+    assert slow and slow[0][1] == "throttle"                                 # 30분 쿨다운 없이 바로 양보
