@@ -214,7 +214,7 @@ python app.py
 - **결계 조절 - 실제 부하 줄이기** (`poring_food/loadshed.py`, 봇 `load_guard` 매분): 「집스마을 서버 관리 가이드 v1.0」의 단계 방식.
   목표 위계: 1) 영상 재생(Plex/YM_PLAYER/SHYNI)과 책·웹툰 열람(북오아시스)이 절대 끊기지 않게 2) 부하 지수 95% 아래
   3) 그 안에서 자료를 최대한 DB에 올리기(짐꾼 bookoasis_assistant는 끄지 않고 늦추기만 - 진행 중인 회차는 끝까지).
-  - 시청 경로/보호 대상(`PROTECTED`: bookoasis·bookoasis_mariadb·bookoasis_redis·Plex(스캐너 포함)·shyni·YM_PLAYER·flaskfarm(IPTV 경로라
+  - 시청 경로/보호 대상(`PROTECTED`: bookoasis·bookoasis_mariadb·bookoasis_redis·Plex(스캐너 포함)·Tautulli(시청 집계)·shyni·YM_PLAYER·flaskfarm(IPTV 경로라
     컨테이너 단위 금지)·rclone·vaultwarden·litellm)은 .env에 적어도 절대 안 건드린다. 예전 버전이 걸어 둔 mariadb/flaskfarm 상한과
     Plex 스캐너 nice, tautulli 정지는 배포 직후 첫 측정에서 원래대로 되돌린다.
   - 부하 지수 = max(CPU us+sy(nice 제외), 메모리 %, I/O 압박 PSI some avg10) - etc는 이 서버 `/proc`, plex01은 ssh. 
