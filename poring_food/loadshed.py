@@ -9,7 +9,7 @@
 
 안전장치:
 - PROTECTED(티어 S 시청 경로 + 금고/통신망)는 설정에 적혀 있어도 절대 안 건드린다 - 도구 자체를 안 만든다.
-  bookoasis/bookoasis_mariadb/bookoasis_redis, Plex(스캐너 포함), shyni, YM_PLAYER, flaskfarm(IPTV 경로라 컨테이너 단위 금지),
+  bookoasis/bookoasis_mariadb/bookoasis_redis, Plex(스캐너 포함), Tautulli(시청 집계), shyni, YM_PLAYER, flaskfarm(IPTV 경로라 컨테이너 단위 금지),
   rclone 마운트, vaultwarden, litellm.
 - 모든 조치는 되돌릴 수 있고(원래 값 기록), ttl이 지나면 부하와 상관없이 되돌린다. 복구는 조치의 역순.
 - 이 기능이 직접 한 것만 되돌린다 (원래 꺼져 있던 컨테이너는 안 켠다). 못 재면 아무것도 안 한다.
@@ -86,10 +86,10 @@ _SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")   # 컨테이너/서비스 
 _SAFE_URL = re.compile(r"^https?://[A-Za-z0-9.\-]+(:[0-9]+)?$")
 
 # 티어 S(시청 경로) + 특별 보호 - 어떤 단계, 어떤 설정에서도 정지/강등하지 않는다
-PROTECTED = {"bookoasis", "bookoasis_mariadb", "bookoasis_redis", "flaskfarm", "shyni", "plex", "plexmediaserver",
+PROTECTED = {"bookoasis", "bookoasis_mariadb", "bookoasis_redis", "flaskfarm", "shyni", "tautulli", "plex", "plexmediaserver",
              "plexmediaserver.service", "ym_player", "vaultwarden", "litellm-proxy", "litellm-db", "gds2.service",
              "pve-cluster.service", "docker.service", "containerd.service"}
-_PROTECTED_PREFIX = ("plex", "rclone", "litellm", "vaultwarden", "ym_player", "ym-player", "shyni", "bookoasis_mariadb",
+_PROTECTED_PREFIX = ("plex", "tautulli", "rclone", "litellm", "vaultwarden", "ym_player", "ym-player", "shyni", "bookoasis_mariadb",
                      "bookoasis_redis", "mariadb", "mysql", "redis", "nginx", "pve")
 
 
@@ -837,7 +837,7 @@ def summary(now: datetime | None = None) -> str:
     now = now or now_kst()
     data = _load()
     lines = [f"💠 **결계 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 재생 없음 {'/'.join(f'{t:g}' for t in STAGES)}% · "
-             f"재생 중 {'/'.join(f'{t:g}' for t in STAGES_PLAY)}% = 1~{TOP}단계) - 시청 경로(북오아시스·Plex·YM_PLAYER·SHYNI·flaskfarm)는 절대 안 건드림"
+             f"재생 중 {'/'.join(f'{t:g}' for t in STAGES_PLAY)}% = 1~{TOP}단계) - 시청 경로(북오아시스·Plex·Tautulli·YM_PLAYER·SHYNI·flaskfarm)는 절대 안 건드림"
              + (" (시험 모드)" if DRY_RUN else "")]
     word = {"stop": "내림", "start": "올림", "throttle": "늦춤", "unthrottle": "되돌림", "stage": "단계"}
     for host, cfg in HOSTS.items():

@@ -27,9 +27,9 @@ def test_parsers():
 
 def test_watching_path_is_never_touched(monkeypatch):
     monkeypatch.setenv("X_TEST", "tautulli, bad;rm -rf /,ok-name, bookoasis_mariadb, flaskfarm, Plex, shyni, vaultwarden")
-    assert loadshed._names("X_TEST", "") == ["tautulli", "ok-name"]
+    assert loadshed._names("X_TEST", "") == ["ok-name"]
     for n in ("bookoasis", "bookoasis_redis", "plexmediaserver.service", "Plex Media Scanner", "rclone-gds2",
-              "litellm-proxy", "YM_PLAYER", "flaskfarm"):
+              "litellm-proxy", "YM_PLAYER", "flaskfarm", "tautulli", "Tautulli", "shyni"):
         assert loadshed.protected(n), n
     assert not loadshed.protected("bookoasis_assistant.service") and not loadshed.protected("docker-warproxy")
     assert loadshed._docker("plex01", "stop", "bookoasis_mariadb") is False
