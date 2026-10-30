@@ -382,6 +382,29 @@ def set_waitfree_window(start_hour: int, end_hour: int) -> str:
     return waitfree.apply(start_hour, end_hour, by="대화 도구")
 
 
+def get_app_versions() -> str:
+    """
+    plex01의 앱(북오아시스, YM_PLAYER, 짐꾼 bookoasis_assistant)이 GitHub 최신 버전인지, 새 버전이 있으면 담당 인물이
+    받기로 했는지/미뤘는지, 마지막 업데이트 결과를 알려준다. "북오아시스 업데이트 됐어?", "새 버전 나왔어?" 같은 질문에 쓴다.
+    (업데이트는 봇이 재생 없고 한가할 때 알아서 한다 - 지금 바로 하려면 관리자가 update_app)
+    """
+    from . import updater
+    return updater.status_text()
+
+
+def update_app(app: str) -> str:
+    """
+    plex01의 앱 하나를 지금 GitHub 최신 버전으로 업데이트하고 다시 켠다. app은 bookoasis(북오아시스) / ym_player /
+    bookoasis_assistant(짐꾼). 재생 중이거나 결계 3단계 이상이거나 로컬 수정이 있으면 하지 않고 이유만 돌려준다.
+    결과는 시설 정비 채널에도 알린다.
+    """
+    from . import updater
+    events = updater.update_now(str(app).strip().lower())
+    if events and events[0].get("kind"):
+        updater.notify(events)
+    return "\n".join(e["text"] for e in events) or "할 일이 없었어요"
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -406,5 +429,7 @@ PORING_FOOD_TOOLS = [
         get_download_plan,
         preview_waitfree_window,
         set_waitfree_window,
+        get_app_versions,
+        update_app,
     )
 ]

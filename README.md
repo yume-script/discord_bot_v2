@@ -268,6 +268,13 @@ python app.py
     알린다(기억에도 남김). 기록이 3일 미만이거나 추천이 지금 시간대와 같으면 LLM을 부르지 않고, 재생 중/단계 높음이면 30분 뒤 다시.
     끄려면 `PORING_WAITFREE_AUTO=0`.
     경로가 다르면 etc `.env`에 `PORING_BOOKOASIS_ASSISTANT_DIR`(기본 /opt/bookoasis_assistant)·`PORING_BOOKOASIS_ASSISTANT_UNIT`.
+  - **앱 자동 업데이트** (`poring_food/updater.py`, 🛠️ 시설 정비): 30분마다 plex01에서 `git fetch`로 새 버전을 본다 -
+    북오아시스(`/root/docker/BookOasis_stable`, `./update.sh`, 새 CHANGELOG 줄), YM_PLAYER(`/mnt/ym_player`, `git pull --ff-only` +
+    `systemctl restart ym_player`), 짐꾼(`/mnt/bookoasis_assistant`, 같은 방식). 새 버전을 처음 보면 그 시설 기관 담당 인물이 LLM으로
+    받을지 정하고(.env/설정 추가·수동 마이그레이션·호환 깨짐이 적혀 있으면 미루고 알림) 이야기 한두 문장을 쓴다. 실행은 재생 없음 ·
+    plex01 2단계 이하 · 로컬 수정 없음(북오아시스 제외 - update.sh가 처리) · 북오아시스는 04~08시일 때만. 끝나면 서비스/컨테이너가
+    살아 있는지 확인하고 채널에 ✅/⚠️(되돌릴 커밋) + 마을 사건(관련 인물 바로 반응). 도구 `get_app_versions` / `update_app`(관리자).
+    `.env`: `PORING_UPDATE_AUTO=0`(끔), `PORING_UPDATE_<KEY>_DIR`, `PORING_UPDATE_<KEY>_HOURS`(예: `4-8`, 빈 값 = 언제든).
   - 단계 변화와 조치는 💠 결계 조절 채널 한 줄 + 마을 사건(슈나·베니마루·애순이가 바로 반응). 감시탑 사고 알림으로는 치지 않는다.
     몬스터 침입 위험도는 가장 높은 지수. `/포링푸드침입`에 지금 단계/지수/조치. 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
 - **바로 전파** (`agents.react_now`, 봇 `load_guard` 매분): 결계 조절이 컨테이너를 내리거나/늦추거나 되돌린 순간, 그리고 표에 있는
