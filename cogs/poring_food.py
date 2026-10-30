@@ -211,7 +211,8 @@ class PoringFood(commands.Cog):
         원격 명령이 몇 분 걸릴 수 있어 결계 조절(매분)과 따로 돈다."""
         from poring_food import waitfree
         try:
-            await asyncio.to_thread(waitfree.autopilot)
+            async with self._lock:   # 조율 회의가 인물 기억/연대기를 쓰므로 회차와 겹치지 않게
+                await asyncio.to_thread(waitfree.autopilot)
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 기다무 시간대 자율 판단 실패")
 
@@ -221,7 +222,8 @@ class PoringFood(commands.Cog):
         채널엔 바로, 인물 세계(마을 사건 + 바로 반응)는 회차 잠금 안에서."""
         from poring_food import updater
         try:
-            events = await asyncio.to_thread(updater.step)
+            async with self._lock:   # 새 버전 판단(조율 회의)이 인물 기억/연대기를 쓰므로
+                events = await asyncio.to_thread(updater.step)
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 시설 정비(앱 업데이트) 실패")
             return

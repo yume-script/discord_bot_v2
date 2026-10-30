@@ -258,6 +258,13 @@ python app.py
     기존 rclone 마운트·서비스와 gds2는 그대로. `install`(합친 폴더+타이머, CT105는 아직 그대로) → 확인 → 시청 없을 때 `switch`
     (CT105 mp1 원본만 `/mnt/zeeps_merged`로 바꾸고 재시작, CT 안 경로는 `/mnt/zeeps_member` 그대로) / `status` / `uninstall`
     (남은 파일을 전부 올린 뒤 mp1 원래대로). 설정은 `/etc/village/staging.conf`.
+  - **시설 담당** (`poring_food/stewards.py`): 인물 한 명이 실제 프로그램 하나를 책임진다 - 애순이(전체 조정), 소라(Plex 시청),
+    일레이나(flaskfarm - plex_mate rclone 새로 고침·GDS), 페른(북오아시스 서가·MariaDB·스캐너), 슈타르크(bookoasis_assistant 웹툰
+    다운로드), 프랑(YM_PLAYER), 크리스(Tautulli), 슈나(결계 조절), 고브타(LiteLLM), 소우에이(vaultwarden), 가비루(docker-warproxy),
+    팔린(ClamAV), 카즈마(zeeps_member 업로드). 담당자는 매시 판단에 자기 시설과 실제 상태가 들어가 자기 시설을 챙기고, 결계 조절이
+    자기 시설을 늦추면 바로 반응해 시청 담당(소라)과 아웅다웅한다. 기다무 시간대·앱 새 버전처럼 실제로 정할 일은 **시설 조율**:
+    관련 담당자가 돌아가며 자기 시설 입장(숫자 근거)을 말하고 애순이가 목표 순서대로 결론(JSON) - 그 결론도 코드 안전장치를
+    통과해야 실행된다. 담당자가 교대로 쉬면 같은 소속 사람이 대신. `.env` `PORING_STEWARDS="ff=일레이나,bookoasis=페른"`. 도구 `get_town_stewards`.
   - **기다무 충전 시간대** (`poring_food/waitfree.py`): 결계 조절이 매분 시간대별 부하 지수·재생 여부를 남기고(최근 14일,
     `loadshed.json`의 `hourly`), 가장 한가한 연속 10시간(점수 = 지수 + 재생 비율×40)을 추천한다. 대화 도구
     `get_download_plan`(추천·시간대별 표·최근 7일 다운로드 수) / `preview_waitfree_window`(미리 보기) /

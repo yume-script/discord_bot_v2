@@ -755,13 +755,18 @@ OWNERS = {"bookoasis_assistant.service": "BOOK", "upload": "BOOK"}
 
 
 def key_people(names: list[str], agents: list[dict] | None = None, per_company: int = 2) -> list[str]:
-    """바로 반응할 사람: 슈나(한 사람) + 수비대장 베니마루 + 그 시설 기관 사람 몇 명."""
-    from . import worldcfg
+    """바로 반응할 사람: 슈나(결계 담당) + 수비대장 베니마루 + 조치를 당한 시설의 담당자(stewards) + 시청 담당 소라
+    (그 시설이 밀린 게 시청 때문이니 서로 아웅다웅) - 담당이 없는 시설이면 그 기관 사람 몇 명."""
+    from . import stewards, worldcfg
     from .agents import load_agents
     from .facilities import FACILITIES
     agents = agents if agents is not None else load_agents()
-    out = [ACTOR, "베니마루"] + (["애순이"] if "결계 경보" in names else [])   # 단계는 총괄 애순이도 바로 안다
+    out = [ACTOR, "베니마루"] + ([stewards.steward("chair", agents)] if "결계 경보" in names else [])   # 단계는 총괄도 바로 안다
     for name in names:
+        key = stewards.for_name(name)
+        if key and key != "loadshed":
+            out += [stewards.steward(key, agents), stewards.steward("plex", agents)]
+            continue
         company = FACILITIES[name][1] if name in FACILITIES else getattr(worldcfg, OWNERS.get(name, ""), "")
         if company in worldcfg.OFFICES:
             out += [a["name"] for a in agents if a.get("company") == company][:per_company]
