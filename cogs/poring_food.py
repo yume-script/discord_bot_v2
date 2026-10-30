@@ -76,6 +76,7 @@ class PoringFood(commands.Cog):
             self.book_watch.start()
             self.load_guard.start()
             self.waitfree_pilot.start()
+            self.app_updater.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -92,6 +93,7 @@ class PoringFood(commands.Cog):
         self.book_watch.cancel()
         self.load_guard.cancel()
         self.waitfree_pilot.cancel()
+        self.app_updater.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -212,6 +214,32 @@ class PoringFood(commands.Cog):
             await asyncio.to_thread(waitfree.autopilot)
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 기다무 시간대 자율 판단 실패")
+
+    @tasks.loop(minutes=30)
+    async def app_updater(self) -> None:
+        """GitHub에 새 버전이 오면 담당 인물이 살펴보고 안전할 때 업데이트 (poring_food/updater.py).
+        채널엔 바로, 인물 세계(마을 사건 + 바로 반응)는 회차 잠금 안에서."""
+        from poring_food import updater
+        try:
+            events = await asyncio.to_thread(updater.step)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 시설 정비(앱 업데이트) 실패")
+            return
+        if not events:
+            return
+        try:
+            await asyncio.to_thread(updater.notify, events)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 시설 정비 알림 실패")
+        async with self._lock:
+            try:
+                await asyncio.to_thread(updater.reflect, events)
+            except Exception:  # noqa: BLE001
+                log.exception("포링푸드 시설 정비 세계 반영 실패")
+
+    @app_updater.before_loop
+    async def _before_updater(self) -> None:
+        await self.bot.wait_until_ready()
 
     @waitfree_pilot.before_loop
     async def _before_waitfree(self) -> None:
