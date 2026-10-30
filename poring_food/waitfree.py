@@ -215,11 +215,10 @@ JSON으로만 답한다: {"apply": true/false, "start": 시작시, "end": 끝시
 
 
 def _decider() -> str:
+    """짐꾼(bookoasis_assistant) 담당 (stewards)"""
     try:
-        from . import worldcfg
-        from .agents import load_agents
-        company = getattr(worldcfg, "BOOK", "")
-        return next((a["name"] for a in load_agents() if a.get("company") == company), loadshed.ACTOR)
+        from . import stewards
+        return stewards.steward("assistant")
     except Exception:  # noqa: BLE001
         return loadshed.ACTOR
 
@@ -255,9 +254,11 @@ def autopilot(now: datetime | None = None, decide=None, post=None, playing: int 
     who = _decider()
     facts = (plan_text(now) + "\n\n■ 추천 시간대 미리 보기\n" + preview(s, e)
              + "\n\n지금 맞춰 둔 시간대: " + (f"{cur[0]:02d}~{cur[1]:02d}시 ({applied[0]['at'][:16]})" if cur else "없음 (아직 맞춘 적 없음)"))
-    if decide is None:
-        from .llm import llm_json
-        decide = lambda: llm_json(DECIDE_SYSTEM, facts, temperature=0.2, timeout=60, tag="기다무 시간대", agent=who)  # noqa: E731
+    if decide is None:   # 짐꾼 담당이 제안하고 시청(Plex)·배급소(FF 새벽 새로 고침)·서가(북오아시스 등록)·결계 담당이 따진 뒤 조정자가 정한다
+        from . import stewards
+        decide = lambda: stewards.council(  # noqa: E731
+            "기다무 충전 시간대 (웹툰 받는 시간)", facts, ["assistant", "plex", "ff", "bookoasis", "loadshed"],
+            DECIDE_SYSTEM.split("\n", 1)[1])["decision"]
     d = decide() or {}
     st = _state()
     st["checked_at"] = now.isoformat(timespec="minutes")

@@ -434,8 +434,14 @@ def _post_group(agent: dict, group: str, text: str, data: dict, agents: list[dic
 
 # ===================================================================== 담당 업무 (실제 서비스 수치 = 실적, kpi.py)
 def _duty_block(agent: dict) -> str:
+    from . import stewards
+    try:
+        steward = stewards.prompt_block(agent["name"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 시설 담당 정보 실패: {e}")
+        steward = ""
     return "\n\n".join(b for b in (kpi.prompt_block(agent["name"], kpi.posts_of(agent["name"])),
-                                    kpi.trade_block(agent)) if b)
+                                    kpi.trade_block(agent), steward) if b)
 
 
 def _duty_updates(agents: list[dict], roster: list[dict], data: dict, now) -> None:

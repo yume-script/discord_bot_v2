@@ -405,6 +405,21 @@ def update_app(app: str) -> str:
     return "\n".join(e["text"] for e in events) or "할 일이 없었어요"
 
 
+def get_town_stewards() -> str:
+    """
+    오아시스 마을의 시설(실제 서버 프로그램)마다 누가 맡고 있는지와 지금 상태를 알려준다 - Plex 시청은 소라, flaskfarm은
+    일레이나, 북오아시스는 페른, 웹툰 다운로더(bookoasis_assistant)는 슈타르크, YM_PLAYER는 프랑처럼. "북오아시스 누가 관리해?",
+    "시설 담당자 알려줘", "웹툰 다운로드 담당이 누구야?" 같은 질문에 쓴다. 숫자만, 작품 제목·계정은 없다.
+    """
+    from . import loadshed, stewards
+    data = loadshed._load()
+    lines = ["■ 마을 시설 담당 (실제 프로그램)"]
+    for key, sysd in stewards.SYSTEMS.items():
+        st = stewards.status_line(key, data)
+        lines.append(f"• {sysd['facility']} ({sysd['label']}) - {stewards.steward(key)}" + (f" · {st}" if st else ""))
+    return "\n".join(lines)
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -431,5 +446,6 @@ PORING_FOOD_TOOLS = [
         set_waitfree_window,
         get_app_versions,
         update_app,
+        get_town_stewards,
     )
 ]

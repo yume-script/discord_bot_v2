@@ -49,17 +49,19 @@ def _hours(env: str, default: str) -> tuple[int, int] | None:
 
 APPS = {
     "bookoasis": {"label": "북오아시스", "facility": "도서관 서가 감시탑", "company": worldcfg.BOOK,
+                  "system": "bookoasis", "affects": ["assistant", "plex"],
                   "dir": os.getenv("PORING_UPDATE_BOOKOASIS_DIR", "/root/docker/BookOasis_stable"),
                   "run": "./update.sh", "notes": "CHANGELOG.md", "dirty_ok": True,   # update.sh가 알아서 (compose 설정 등 로컬 수정 있음)
                   "health": "docker inspect -f '{{.State.Running}}' bookoasis 2>/dev/null | grep -q true",
                   "hours": _hours("PORING_UPDATE_BOOKOASIS_HOURS", "4-8")},   # 독서 손님은 못 보므로 새벽에만
     "ym_player": {"label": "YM_PLAYER", "facility": "환영극장 영사 수정구", "company": worldcfg.CINEMA,
+                  "system": "ym_player", "affects": ["plex"],
                   "dir": os.getenv("PORING_UPDATE_YM_PLAYER_DIR", "/mnt/ym_player"),
                   "run": "git pull --ff-only -q && systemctl restart ym_player", "notes": "",
                   "health": "sleep 5; systemctl is-active -q ym_player",
                   "hours": _hours("PORING_UPDATE_YM_PLAYER_HOURS", "")},
     "bookoasis_assistant": {"label": "짐꾼(bookoasis_assistant)", "facility": "도서관 두루마리 운반 정령",
-                            "company": worldcfg.BOOK,
+                            "company": worldcfg.BOOK, "system": "assistant", "affects": ["bookoasis"],
                             "dir": os.getenv("PORING_UPDATE_BOOKOASIS_ASSISTANT_DIR", waitfree.DIR),
                             "run": "git pull --ff-only -q && systemctl restart bookoasis_assistant", "notes": "",
                             "health": "sleep 5; systemctl is-active -q bookoasis_assistant",
@@ -180,16 +182,19 @@ def _decide(key: str, info: dict, who: str, decide=None) -> dict:
     facts = (f"앱: {app['label']} (마을 시설: {app['facility']})\n"
              f"지금 버전: {info.get('version') or info['head'][:7]} → 새 버전: {info.get('new_version') or info['up'][:7]}\n"
              f"새 커밋 {len(info.get('log') or [])}개\n변경 내용:\n{_changes(info)}")
-    if decide is None:
-        from .llm import llm_json
-        return llm_json(DECIDE_SYSTEM, facts, temperature=0.3, timeout=60, tag="시설 정비", agent=who) or {}
+    if decide is None:   # 그 앱 담당이 제안하고, 영향을 받는 시설 담당이 따진 뒤 조정자가 정한다
+        from . import stewards
+        res = stewards.council(f"{app['label']} 새 버전 정비", facts, [app["system"]] + app["affects"],
+                               DECIDE_SYSTEM.split("\n", 1)[1])
+        return res["decision"]
     return decide(facts) or {}
 
 
-def _who(company: str) -> str:
+def _who(system: str) -> str:
+    """그 앱 담당 (stewards)"""
     try:
-        from .agents import load_agents
-        return next((a["name"] for a in load_agents() if a.get("company") == company), loadshed.ACTOR)
+        from . import stewards
+        return stewards.steward(system)
     except Exception:  # noqa: BLE001
         return loadshed.ACTOR
 
@@ -216,7 +221,7 @@ def step(now: datetime | None = None, checker=None, decide=None, runner=None, pl
         if info["head"] == info["up"]:
             a.pop("pending", None)
             continue
-        who = _who(app["company"])
+        who = _who(app["system"])
         pend = a.get("pending") or {}
         if pend.get("up") != info["up"]:                      # 이 새 버전은 처음 본다 → 판단
             d = _decide(key, info, who, decide)
@@ -275,9 +280,9 @@ def reflect(events: list[dict], react=None) -> None:
         if e["kind"] == "deferred" and not e.get("story"):
             continue
         detail = e.get("story") or e["text"]
-        company = APPS[e["key"]]["company"]
         try:
-            people = [e["who"]] + [a["name"] for a in ag.load_agents() if a.get("company") == company and a["name"] != e["who"]][:1]
+            from . import stewards
+            people = list(dict.fromkeys([e["who"]] + [stewards.steward(k) for k in APPS[e["key"]]["affects"]]))
             react(detail, e["title"], people)
         except Exception as ex:  # noqa: BLE001
             print(f"[시설 정비] 세계 반영 실패: {ex}")
@@ -324,6 +329,6 @@ def update_now(key: str, now: datetime | None = None) -> list[dict]:
         return [{"text": f"지금은 안 해요: {why}"}]
     st = _state()
     st.setdefault(key, {})["pending"] = {"up": info["up"], "update": True, "reason": "관리자 요청", "story": "",
-                                         "who": _who(APPS[key]["company"]), "at": now.isoformat(timespec="minutes")}
+                                         "who": _who(APPS[key]["system"]), "at": now.isoformat(timespec="minutes")}
     _save(st)
     return step(now, checker=lambda k: info, only=key, force=True)
