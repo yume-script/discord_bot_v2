@@ -1,0 +1,34 @@
+/* 좋은 글귀 설정 화면의 간격과 스위치·미리보기를 표현합니다. */
+.gq-quote-settings{margin-top:0;padding-top:0;border-top:0;font:inherit;color:var(--app-text-primary,#e6e8ef)}
+.gq-quote-settings h3{margin:0 0 12px;font-size:17px}
+.gq-quote-settings p{margin:12px 0;color:var(--app-text-muted,#aab0bf);font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.gq-quote-settings a{color:var(--app-accent,#ad93ed);text-underline-offset:3px}
+.gq-quote-settings fieldset{min-width:0;margin:24px 0;padding:18px 0;border:0;border-top:1px solid var(--app-border,#ffffff26)}
+.gq-quote-settings legend{padding-right:12px;font-weight:650;font-size:14px}
+.gq-quote-settings label{display:flex;align-items:center;gap:10px;font-size:13px;line-height:1.6;min-width:0}
+.gq-quote-provider-row{display:flex;justify-content:space-between;align-items:center;gap:16px;max-width:450px;margin:12px 0}
+.gq-quote-provider-row input[type=number]{width:70px}
+.gq-quote-settings .gq-quote-confirm{font-size:12px;align-items:start;margin:12px 0;color:var(--app-text-muted,#aab0bf)}
+.gq-quote-settings input:not([type=checkbox]),.gq-quote-settings select{box-sizing:border-box;min-width:0;max-width:100%;min-height:40px;padding:8px 10px;border:1px solid var(--app-border,#ffffff30);border-radius:7px;background:var(--app-bg-card,#25252d);color:inherit;font:inherit;font-size:13px}
+.gq-quote-settings input[type=checkbox]{appearance:none;position:relative;box-sizing:border-box;flex:none;width:34px;height:20px;margin:1px 0 0;border:1px solid #8e879f;border-radius:12px;background:#625d6d;cursor:pointer}
+.gq-quote-settings input[type=checkbox]::before{content:"";position:absolute;left:3px;top:3px;width:12px;height:12px;border-radius:50%;background:#fff}
+.gq-quote-settings input[type=checkbox]:checked{background:#7953ed;border-color:#aa88ff}
+.gq-quote-settings input[type=checkbox]:checked::before{transform:translateX(14px)}
+.gq-quote-settings :is(input,select,button):focus-visible{outline:2px solid #b597fa;outline-offset:3px}
+.gq-quote-setting-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:14px 0 20px}
+.gq-quote-setting-grid>label{display:flex;flex-direction:column;align-items:stretch;gap:6px;font-size:12px}
+.gq-quote-appearance{display:flex;flex-wrap:wrap;align-items:flex-start;gap:24px;margin:14px 0 20px}
+.gq-quote-appearance>.gq-quote-setting-grid{flex:2 1 560px;min-width:0;margin:0}
+.gq-quote-preview{box-sizing:border-box;flex:1 1 260px;min-width:0;padding:16px 18px;border:1px solid var(--app-border,#ffffff26);border-radius:10px;background:var(--app-bg-card,#25252d)}
+.gq-quote-preview h4{margin:0 0 16px;font-size:14px}
+.gq-quote-preview>div+div{margin-top:16px;padding-top:16px;border-top:1px solid var(--app-border,#ffffff20)}
+.gq-quote-preview [data-quote-preview-label]{margin:0 0 8px;font-size:11px}
+.gq-quote-preview [data-quote-preview]{max-height:180px;overflow:auto;margin:0;color:var(--app-text-primary,#e6e8ef);font-family:inherit;font-size:32px;line-height:1.3;overflow-wrap:anywhere}
+.gq-quote-preview [data-quote-preview=author]{font-size:15px}
+.gq-quote-preview .gq-quote-preview-help{margin:16px 0 0;font-size:11px}
+.gq-quote-settings button{min-height:44px;padding:9px 14px;border:1px solid #86709e80;border-radius:7px;background:color-mix(in srgb,#7953ed 20%,var(--app-bg-card,#25252d));color:inherit;font:inherit;font-size:12px;cursor:pointer}
+.gq-quote-settings button:disabled{opacity:.45;cursor:default}
+.gq-quote-toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:14px 0}
+.gq-quote-management-status{padding-top:16px;border-top:1px solid var(--app-border,#ffffff26)}
+.gq-quote-translation progress{display:block;width:100%;max-width:500px;height:16px;accent-color:var(--app-accent,#ad93ed)}
+@media(max-width:600px){.gq-quote-setting-grid{grid-template-columns:1fr}.gq-quote-provider-row{gap:8px}.gq-quote-settings fieldset{padding-bottom:8px}}

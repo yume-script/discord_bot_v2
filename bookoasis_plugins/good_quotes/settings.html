@@ -1,0 +1,68 @@
+<!-- 좋은 글귀의 공급원·언어·글꼴·배경·번역 설정입니다. -->
+<section class="gq-quote-settings" aria-label="좋은 글귀 설정">
+  <h3>좋은 글귀 상세 설정</h3>
+  <p>홈 화면의 좋은 글귀 위젯에 적용됩니다. 내 설정에서 홈 화면 플러그인 배치 모드를 켠 뒤 ‘위젯 추가 → 좋은 글귀’를 선택하세요.</p>
+  <fieldset><legend>글귀 공급원</legend>
+    <p>한국어는 Korean Advice API를 기본으로 사용하며, 사용할 수 있는 공급원 안에서 가중치를 재계산합니다.</p>
+    <div class="gq-quote-provider-row"><label><input type="checkbox" role="switch" name="korean_enabled" checked> Korean Advice API</label><label>가중치 <input type="number" name="korean_weight" min="0" max="100" value="60"></label></div>
+    <p>Korean Advice는 비상업적 이용이 무료이며 카드에 출처를 표시합니다. 상업적 이용은 권리자에게 문의하세요. <a href="https://github.com/gwongibeom/korean-advice-open-api/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">공식 라이선스</a></p>
+    <div class="gq-quote-provider-row"><label><input type="checkbox" role="switch" name="zen_enabled"> ZenQuotes</label><label>가중치 <input type="number" name="zen_weight" min="0" max="100" value="35"></label></div>
+    <label class="gq-quote-confirm"><input type="checkbox" role="switch" name="zen_terms"> ZenQuotes의 앱 표시·원문과 번역 캐시 저장 이용 범위를 확인했습니다.</label>
+    <div class="gq-quote-provider-row"><label><input type="checkbox" role="switch" name="positive_enabled"> PositiveQuotation</label><label>가중치 <input type="number" name="positive_weight" min="0" max="100" value="5"></label></div>
+    <label class="gq-quote-confirm"><input type="checkbox" role="switch" name="positive_terms"> 공식 30개 속담 API의 국내 이용 범위와 원전 표시 조건을 확인했습니다.</label>
+    <p><a href="https://docs.zenquotes.io/zenquotes-documentation/" target="_blank" rel="noopener noreferrer">ZenQuotes API 안내</a> · <a href="https://docs.zenquotes.io/terms-and-conditions/" target="_blank" rel="noopener noreferrer">약관</a> · <a href="https://positivequotation.com/developers/public-domain-quotes-api" target="_blank" rel="noopener noreferrer">PositiveQuotation 안내</a></p>
+    <button type="button" data-quote-refresh>공급원 상태 확인</button>
+    <p data-quote-provider-state>공급원 상태 확인을 눌러 현재 상태와 가중치를 확인하세요.</p>
+  </fieldset>
+  <fieldset><legend>언어·글꼴·배경</legend>
+    <div class="gq-quote-appearance">
+    <div class="gq-quote-setting-grid">
+      <label>기본 언어<select name="quote_language"><option value="both">한·영 병기</option><option value="ko">한국어만</option><option value="en">영어만</option></select></label>
+      <label>배경 사진<select name="photo_provider"><option value="gradient">그라데이션</option><option value="met">The Met · 오픈 액세스(CC0)</option><option value="unsplash">Unsplash · 무료 사진</option><option value="pexels">Pexels</option></select></label>
+      <label>한국어 글꼴<select name="quote_font" aria-describedby="gq-quote-font-status"><option value="">코어 글꼴 상속</option></select></label>
+      <label>한국어 글자 크기 · px<span style="display:flex;align-items:center;gap:10px"><input type="range" data-quote-font-size min="16" max="96" step="1" value="32" aria-label="한국어 글자 크기 슬라이더" style="flex:1;width:0"><input name="quote_font_size" type="number" min="16" max="96" step="1" value="32" aria-label="한국어 글자 크기 픽셀" style="width:76px"></span></label>
+      <label>영어 글꼴<select name="quote_en_font" aria-describedby="gq-quote-font-status"><option value="">코어 글꼴 상속</option></select></label>
+      <label>영어 글자 크기 · px<span style="display:flex;align-items:center;gap:10px"><input type="range" data-quote-en-font-size min="16" max="96" step="1" value="32" aria-label="영어 글자 크기 슬라이더" style="flex:1;width:0"><input name="quote_en_font_size" type="number" min="16" max="96" step="1" value="32" aria-label="영어 글자 크기 픽셀" style="width:76px"></span></label>
+      <label>저자 글꼴<select name="quote_author_font" aria-describedby="gq-quote-font-status"><option value="">코어 글꼴 상속</option></select></label>
+      <label>저자 글자 크기 · px<span style="display:flex;align-items:center;gap:10px"><input type="range" data-quote-author-font-size min="8" max="31" step="1" value="15" aria-label="저자 글자 크기 슬라이더" style="flex:1;width:0"><input name="quote_author_font_size" type="number" min="8" max="31" step="1" value="15" aria-label="저자 글자 크기 픽셀" style="width:76px"></span></label>
+      <label>Unsplash Access Key<input name="unsplash_key" type="password" autocomplete="new-password"></label>
+      <label>Pexels API 키<input name="pexels_key" type="password" autocomplete="new-password"></label>
+    </div>
+    <aside class="gq-quote-preview" aria-label="글꼴과 크기 미리보기">
+      <h4>글꼴 미리보기</h4>
+      <div><p data-quote-preview-label="ko">한국어</p><p data-quote-preview="ko" lang="ko">책 속의 한 문장</p></div>
+      <div><p data-quote-preview-label="en">영어</p><p data-quote-preview="en" lang="en">A moment to read.</p></div>
+      <div><p data-quote-preview-label="author">저자</p><p data-quote-preview="author">- 저자 이름 -</p></div>
+      <p class="gq-quote-preview-help">선택한 설정 크기입니다. 홈 위젯에서는 공간에 맞춰 줄어들 수 있습니다.</p>
+    </aside>
+    </div>
+    <label>배경 자동 변경 주기 · 시간<input name="photo_refresh_hours" type="number" min="1" max="24" step="1" value="3" aria-describedby="gq-photo-refresh-help" style="width:76px"></label>
+    <p id="gq-photo-refresh-help">문구 새로고침은 배경을 유지하고, 배경 변경 버튼은 즉시 새 사진을 요청합니다. 자동 변경은 1~24시간, 기본 3시간입니다.</p>
+    <p id="gq-quote-font-status" data-quote-font-status role="status">코어에 설치된 글꼴을 불러오는 중입니다.</p>
+    <p>한국어·영어·저자의 글꼴과 크기를 각각 설정합니다. 한국어와 영어는 각각 16~96px이며 기본 크기는 32px입니다. 모바일에서는 약 80%로 표시하고 카드 높이에 맞춰 더 줄어들 수 있습니다. 저자는 8px 이상, 한국어 본문 설정값보다 작게 선택하며 실제 표시되는 본문보다 작게 자동 조정합니다.</p>
+    <p>The Met는 공식 API에서 공개 영역으로 표시되고 이미지가 있는 작품만 사용하며, API 키와 별도 사진 검수가 필요하지 않습니다.</p>
+    <p><a href="https://www.metmuseum.org/ko/policies/image-resources" target="_blank" rel="noopener noreferrer">The Met 이미지 이용 안내</a> · <a href="https://metmuseum.github.io/" target="_blank" rel="noopener noreferrer">공식 Collection API</a></p>
+    <label class="gq-quote-confirm"><input type="checkbox" role="switch" name="unsplash_terms"> Unsplash 무료 사진 API의 출처 링크·원본 URL 표시·선택 시 다운로드 추적 조건을 확인했습니다.</label>
+    <label class="gq-quote-confirm"><input type="checkbox" role="switch" name="pexels_terms"> Pexels API의 이용 범위와 출처 표시 조건을 확인했습니다.</label>
+    <p>사진 API 키는 관리자 설정과 서버 요청에만 사용합니다. Unsplash+ 이미지는 사용하지 않습니다.</p>
+    <p><a href="https://unsplash.com/developers" target="_blank" rel="noopener noreferrer">Unsplash 개발자 등록</a> · <a href="https://www.pexels.com/api/" target="_blank" rel="noopener noreferrer">Pexels API</a></p>
+  </fieldset>
+  <fieldset class="gq-quote-translation">
+    <legend>DeepL 사전 번역</legend>
+    <div class="gq-quote-setting-grid"><label>DeepL API 키<input name="deepl_key" type="password" autocomplete="new-password"></label></div>
+    <p>ZenQuotes·PositiveQuotation을 활성화하고 이용 범위를 확인한 뒤 아래 설정 저장 버튼을 누르세요. 대상 확인을 누르면 영문 문구를 서버에 자동 수집합니다. 파일 임포트 없이 미번역 일괄 번역을 실행할 수 있습니다.</p>
+    <p>DeepL 키를 입력하거나 바꾼 뒤에도 아래 코어 설정 저장 버튼을 눌러야 적용됩니다. 두 영문 공급원의 한국어 없는 문구만 번역하며, Korean Advice와 기존 한국어 번역은 전송하지 않습니다.</p>
+    <p>신규 Developer의 무료 제공량은 총 100만 자이며 자동 갱신되지 않습니다. 기존 API Free는 월 50만 자입니다. 실제 사용·잔여량은 대상 확인 시 조회합니다.</p>
+    <div class="gq-quote-toolbar">
+      <button type="button" data-quote-translation-check>대상 확인</button>
+      <button type="button" data-quote-translation-start>미번역 일괄 번역</button>
+      <button type="button" data-quote-translation-stop disabled>중지</button>
+    </div>
+    <p data-quote-translation-target>대상 확인을 눌러 미번역 건수와 예상 문자량을 확인하세요.</p>
+    <p data-quote-translation-usage>DeepL 사용량은 아직 조회하지 않았습니다.</p>
+    <progress data-quote-translation-progress value="0" max="1" aria-label="DeepL 사전 번역 진행률"></progress>
+    <p data-quote-translation-progress-text>진행 0건</p>
+    <p data-quote-translation-status role="status">완료된 묶음은 즉시 저장됩니다. 중지는 진행 중인 묶음이 끝난 뒤 적용되며, 다시 실행하면 남은 항목만 번역합니다.</p>
+  </fieldset>
+  <p class="gq-quote-management-status" data-quote-management-status role="status">공급원·표시·글꼴·크기·키를 바꾼 뒤 아래 설정 저장 버튼을 누르세요. 사전 번역은 완료된 묶음마다 즉시 저장됩니다.</p>
+</section>
