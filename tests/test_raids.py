@@ -59,7 +59,7 @@ def test_raid_damages_board_pays_loot_and_remembers(monkeypatch, fake_llm):
     who = rec["fighters"][0]
     assert any("침입" in m["text"] for m in memory.store.memories(who))
     assert any("몬스터 침입" in r.get("reason", "") for r in life.get(who).get("recent", []))
-    assert "지난밤 몬스터 침입" in raids.prompt_block(datetime(2026, 10, 26, 9))
+    assert "최근 몬스터 침입" in raids.prompt_block(datetime(2026, 10, 26, 9))
     assert "늑대 떼" in raids.summary(datetime(2026, 10, 26, 9)) and "전투 레벨" in raids.summary(datetime(2026, 10, 26, 9))
     from poring_food import levels
     assert levels.get(who)["battles"] == 1 and (levels.get(who)["xp"] > 0 or levels.level(who) > 1)
@@ -67,6 +67,7 @@ def test_raid_damages_board_pays_loot_and_remembers(monkeypatch, fake_llm):
 
 
 def test_forecast_shown_in_afternoon(monkeypatch):
+    monkeypatch.setattr(raids, "MODE", "nightly")
     monkeypatch.setattr(raids, "gather", lambda now=None: {"date": "x"})
     monkeypatch.setattr(raids, "danger", lambda x: (70, ["불 꺼진 감시탑 1곳"]))
     block = raids.prompt_block(datetime(2026, 10, 25, 15))
@@ -102,3 +103,33 @@ def test_defenders_include_awake_helpers_and_scale_with_level():
     levels.gain({"베니마루": levels.need(1)})
     assert raids.defenders(ag, characters.load_roster(), 22, lambda n: 1.0)[0]["power"] > before
     _ = agents
+
+
+def test_surge_detection():
+    calm = [["t", 30.0, False]] * 12
+    assert raids.surge(calm + [["t", 85.0, False]] * 2, playing=2) == {"peak": 85.0, "base": 30.0, "rise": 55.0, "playing": 2}
+    assert raids.surge(calm + [["t", 85.0, False]] * 2, playing=0) is None          # 재생이 없으면 습격 아님
+    assert raids.surge([["t", 70.0, False]] * 14, playing=1) is None               # 원래 높았던 건 급등이 아님
+    assert raids.surge(calm + [["t", 60.0, False]] * 2, playing=1) is None          # 70% 미만
+    assert raids.surge(calm[:4], playing=1) is None                                 # 기록이 모자람
+    x = {"date": "d", "surge": {"peak": 90.0, "base": 35.0, "rise": 55.0, "playing": 2}}
+    score, why = raids.danger(x)
+    assert score > raids.danger({"date": "d"})[0] + 30 and "급등" in why[0]
+
+
+def test_surge_due_cooldown_and_run(monkeypatch, fake_llm):
+    monkeypatch.setattr(raids, "MODE", "surge")
+    data = {"hosts": {"plex01": {"playing": 1, "samples": [["t", 30.0, False]] * 12 + [["t", 88.0, False]] * 2}}}
+    t = datetime(2026, 10, 31, 15, 0)
+    got = raids.surge_due(t, data)
+    assert got and got["host"] == "plex01"
+    monkeypatch.setattr(raids, "gather", lambda now=None: {"date": "x"})
+    posts = []
+    rec = raids.run(t, post=posts.append, inject=lambda *a: [], surge_info=got)
+    assert rec["raid"] and rec["surge"] and "불시 습격" in posts[0] and "30%→88%" in posts[0]
+    assert raids.surge_due(t.replace(hour=16), data) is None                       # 쿨다운 (180분)
+    t2 = t.replace(hour=19)
+    rec2 = raids.run(t2, post=posts.append, inject=lambda *a: [], surge_info=raids.surge_due(t2, data))
+    assert rec2 and len([r for r in raids._load()["days"].values() if r.get("raid")]) == 2   # 같은 날 두 번째 습격도 따로 기록
+    assert not raids.should_run(datetime(2026, 11, 1, raids.RAID_HOUR))            # surge 모드에선 밤 고정 침입 없음
+    assert "불시" in raids.summary(t2)
