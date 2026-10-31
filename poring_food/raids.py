@@ -1,8 +1,12 @@
 """
-몬스터 침입 - 밤마다 몬스터가 성벽으로 쳐들어온다. 검은 숲의 위험도가 어떤 몬스터가 얼마나 세게 오는지를 정한다.
+몬스터 침입 - 예기치 않은 습격. 환영극(Plex/YM_PLAYER 영상 재생)이 상영되는 중에 결계 부하(CPU)가 갑자기 치솟으면,
+결계 마나가 극장으로 쏠려 성벽이 얇아진 틈을 타 검은 숲의 몬스터가 불시에 덮친다.
 
-- 언제: 매일 밤 RAID_HOUR(기본 22시) 회차에 한 번 (agents.tick -> agents._handle_raid). 하루 한 번만.
-- 위험도(0~100, danger): 실제 수치로 정한다 - 지어내지 않는다.
+- 언제 (PORING_RAID_MODE=surge, 기본): 결계 조절(loadshed)이 매분 잰 부하 지수로 판단한다 - 지금 재생 중이고,
+  최근 2분 평균이 SURGE_MIN(기본 70%) 이상이며 5~15분 전 평균보다 SURGE_RISE(기본 20%p) 넘게 뛰었으면 습격.
+  습격 뒤 RAID_COOLDOWN_MIN(기본 180분)은 다시 오지 않고, 하루 최대 RAID_DAILY_MAX(기본 3)번. 봇 load_guard가 매분 확인.
+  PORING_RAID_MODE=nightly면 예전처럼 매일 밤 RAID_HOUR 회차에 한 번 (agents.tick).
+- 위험도(0~100, danger): 실제 수치로 정한다 - 지어내지 않는다. 습격이면 치솟은 지수/오른 폭/상영 중인 수가 크게 더한다.
   · 결계 부하 = 서버 CPU % (signals facility_numbers "cpu"와 loadshed가 잰 plex01 중 높은 쪽)
   · 결계 균열 = 멈춘 서비스 수("down") / 최근 재가동(가동 1일 미만)
   · 불 꺼진 감시탑 = facilities.py가 기록한 멈춘 컨테이너 수
@@ -36,6 +40,11 @@ from .josa import j
 
 ENABLED = os.getenv("PORING_RAIDS", "1") not in ("0", "false", "False", "")
 RAID_HOUR = int(os.getenv("PORING_RAID_HOUR", "22"))
+MODE = os.getenv("PORING_RAID_MODE", "surge").strip().lower()      # surge(재생 중 부하 급상승 = 불시 습격) / nightly
+SURGE_MIN = float(os.getenv("PORING_RAID_SURGE_MIN", "70"))        # 최근 2분 평균 지수가 이 이상이고
+SURGE_RISE = float(os.getenv("PORING_RAID_SURGE_RISE", "20"))      # 5~15분 전 평균보다 이만큼(%p) 넘게 뛰면
+RAID_COOLDOWN_MIN = int(os.getenv("PORING_RAID_COOLDOWN_MIN", "180"))
+RAID_DAILY_MAX = int(os.getenv("PORING_RAID_DAILY_MAX", "3"))
 THRESHOLD = int(os.getenv("PORING_RAID_THRESHOLD", "0"))   # 0 = 매일 밤 침입
 RAIDS_PATH = os.path.join(STATE_DIR, "raids.json")
 KEEP_DAYS = 60
@@ -121,7 +130,11 @@ def danger(x: dict) -> tuple[int, list[str]]:
     elif w == "cold":
         score += 6
         why.append("한파에 먹이가 없는 숲")
-    luck = random.Random(f"raid|{x.get('date', '')}").randint(0, 25)
+    sg = x.get("surge")
+    if sg:
+        score += int(max(0.0, sg["peak"] - 60) * 0.6 + sg["rise"] * 0.5) + 5 * min(int(sg.get("playing") or 0), 4)
+        why.insert(0, f"환영극 {sg.get('playing')}편 상영 중 결계 부하 {sg['base']:g}%→{sg['peak']:g}% 급등 - 마나가 극장으로 쏠려 성벽이 얇아짐")
+    luck = random.Random(f"raid|{x.get('date', '')}").randint(0, 10 if sg else 25)
     score += luck
     if luck >= 20:
         why.append("숲이 유난히 술렁임")
@@ -188,6 +201,47 @@ def outcome_for(ratio: float) -> tuple:
 
 
 # ===================================================================== 예보 / 기록
+def surge(samples: list, playing: int | None) -> dict | None:
+    """재생 중 부하 급상승인지 (순수 - 테스트용). samples = loadshed 매분 기록 [[시각, 지수, psi], ...] (오래된 것부터).
+    반환 {"peak", "base", "rise", "playing"} 또는 None."""
+    if not playing:
+        return None
+    vals = [float(x[1]) for x in samples if len(x) >= 2 and isinstance(x[1], (int, float))]
+    if len(vals) < 7:
+        return None
+    cur = sum(vals[-2:]) / 2
+    before = vals[-15:-5] if len(vals) >= 15 else vals[:-5]
+    base = sum(before) / len(before)
+    rise = cur - base
+    if cur >= SURGE_MIN and rise >= SURGE_RISE:
+        return {"peak": round(cur, 1), "base": round(base, 1), "rise": round(rise, 1), "playing": int(playing)}
+    return None
+
+
+def surge_due(now: datetime | None = None, data: dict | None = None) -> dict | None:
+    """[매분, load_guard] 지금 불시 습격이 와야 하면 그 급등 정보 (쿨다운/하루 최대 안에서). 가장 크게 뛴 서버 기준."""
+    if not ENABLED or MODE != "surge":
+        return None
+    now = now or now_kst()
+    days = _load().get("days") or {}
+    today = [r for d, r in days.items() if d.startswith(now.strftime("%Y-%m-%d")) and r.get("raid")]
+    if len(today) >= RAID_DAILY_MAX:
+        return None
+    last_at = max((r.get("at", "") for r in days.values() if r.get("raid")), default="")
+    if last_at and last_at > (now - timedelta(minutes=RAID_COOLDOWN_MIN)).isoformat(timespec="minutes"):
+        return None
+    from . import loadshed
+    data = data if data is not None else loadshed._load()
+    hosts = data.get("hosts") or {}
+    playing = (hosts.get("plex01") or {}).get("playing")
+    best = None
+    for host, st in hosts.items():
+        got = surge(st.get("samples") or [], playing)
+        if got and (best is None or got["rise"] > best["rise"]):
+            best = dict(got, host=host)
+    return best
+
+
 def forecast(now: datetime | None = None, x: dict | None = None) -> dict:
     now = now or now_kst()
     score, why = danger(x if x is not None else gather(now))
@@ -206,7 +260,8 @@ def done_today(now: datetime) -> bool:
 
 
 def should_run(now: datetime) -> bool:
-    return ENABLED and now.hour == RAID_HOUR and not done_today(now)
+    """매일 밤 회차에 침입 (nightly 모드만 - surge 모드는 load_guard가 surge_due로)"""
+    return ENABLED and MODE == "nightly" and now.hour == RAID_HOUR and not done_today(now)
 
 
 def prompt_block(now: datetime | None = None) -> str:
@@ -218,11 +273,15 @@ def prompt_block(now: datetime | None = None) -> str:
     r = last(now)
     if r:
         if r.get("raid"):
-            parts.append(f"[지난밤 몬스터 침입 - {r['at'][5:16].replace('T', ' ')}] {r['monster']} → {r['outcome']}. {r.get('summary', '')}"
+            parts.append(f"[최근 몬스터 {'불시 습격' if r.get('surge') else '침입'} - {r['at'][5:16].replace('T', ' ')}] "
+                         f"{r['monster']} → {r['outcome']}. {r.get('summary', '')}"
                          + (f" 다친 사람: {', '.join(r['injured'])}." if r.get("injured") else ""))
         else:
             parts.append(f"[지난밤] 조용한 밤이었다 (숲의 기척 {r['level']}).")
-    if 12 <= now.hour < RAID_HOUR and not done_today(now):
+    if MODE == "surge":
+        parts.append("[숲의 기척] 환영극이 상영되는 중에 결계 마나가 갑자기 극장으로 쏠리면(부하 급등) 성벽이 얇아져 몬스터가 "
+                     "예고 없이 덮친다 - 언제 올지 모른다. 방어 시설을 손보고, 상영 중엔 성벽 근처를 비우지 마라.")
+    elif 12 <= now.hour < RAID_HOUR and not done_today(now):
         f = forecast(now)
         mon = next(m for s_, m, _ in reversed(MONSTERS) if f["score"] >= s_)
         parts.append(f"[오늘 밤 숲의 기척 - {f['level']}] " + (", ".join(f["why"]) or "특별한 조짐은 없다")
@@ -259,12 +318,16 @@ def _story(res: dict, fighters: list[dict], hit: list[str], now: datetime, ups: 
     out = llm_json(
         "너는 마법 판타지 변경 마을 '오아시스 마을'의 밤을 기록하는 음유시인이다. 주어진 사실만으로 짧고 생생하게 쓴다. "
         "죽은 사람은 없다. 지어낸 인물/수치를 넣지 마라.\n" + worldcfg.WORLD_RULE,
-        f"[{now:%m/%d %H:%M}] 몬스터 침입\n- 몬스터: {res['monster']} (전력 {res['strength']})\n"
+        f"[{now:%m/%d %H:%M}] 몬스터 " + ("불시 습격 (예고 없이 - 환영극 상영 중 결계 마나가 극장으로 쏠려 성벽이 얇아진 틈)"
+                                          if res.get("surge") else "침입") + "\n"
+        f"- 몬스터: {res['monster']} (전력 {res['strength']})\n"
         f"- 조짐: {', '.join(res['why']) or '없음'}\n- 성벽에 선 사람: {names}\n"
         f"- 방어: 시설 {res['structures']} + 수비 {res['fighters']} + 민병 {res['militia']} + 사기 {res['morale']}\n"
         f"- 결과: {res['outcome']}\n- 부서진 시설: {', '.join(hit) or '없음'}\n- 다친 사람: {', '.join(res['injured']) or '없음'}\n"
         f"- 전리품(마석 판 돈): {res['loot']:,}원\n- 이번 싸움으로 레벨이 오른 사람: {grow}\n\n"
-        "이 밤의 싸움을 3~5문장으로 써라 (누가 무엇을 했는지 1~2명은 이름을 들어서). "
+        + ("이 불시 습격을 3~5문장으로 써라 - 갑자기 결계가 흔들린 순간과 허둥지둥 성벽으로 달려간 모습으로 시작하고, "
+           "누가 무엇을 했는지 1~2명은 이름을 들어서. 상영 중인 환영극(손님)은 끝까지 지켜 냈다. " if res.get("surge") else
+           "이 밤의 싸움을 3~5문장으로 써라 (누가 무엇을 했는지 1~2명은 이름을 들어서). ") +
         '반드시 JSON으로만 응답: {"story": "이야기", "summary": "한 줄 요약(40자 이내)"}',
         temperature=0.85, timeout=60, tag="몬스터 침입")
     story = str((out or {}).get("story") or "").strip()
@@ -300,22 +363,25 @@ def _award(res: dict, fighters: list[dict], agents: list[dict], now: datetime) -
     return ups
 
 
-def run(now: datetime | None = None, force: bool = False, inject=None, post=None) -> dict | None:
+def run(now: datetime | None = None, force: bool = False, inject=None, post=None, surge_info: dict | None = None) -> dict | None:
     """[매일 밤 RAID_HOUR, 잠금 안에서] 예보를 계산하고, 위험하면 침입을 치른다. force=True면 위험도와 상관없이 침입.
     inject(targets, detail, title), post(text) - 기본은 agents.inject_event / agents._post_as. 반환: 기록."""
     from . import agents as ag, characters, chronicle, decor, levels, life, memory
     now = now or now_kst()
-    if not ENABLED or (done_today(now) and not force):
+    if not ENABLED or (done_today(now) and not force and not surge_info):
         return None
     inject = inject or ag.inject_event
     post = post or (lambda text: ag._post_as(NAME, text))
     x = gather(now)
+    if surge_info:
+        x["surge"] = surge_info
     score, why = danger(x)
-    day = now.strftime("%Y-%m-%d")
+    day = now.strftime("%Y-%m-%d") + (f"#{now:%H%M}" if surge_info and done_today(now) else "")
     data = _load()
     days = data.setdefault("days", {})
-    rec = {"at": now.isoformat(timespec="minutes"), "score": score, "level": level_word(score), "why": why}
-    if score < THRESHOLD and not force:
+    rec = {"at": now.isoformat(timespec="minutes"), "score": score, "level": level_word(score), "why": why,
+           "surge": surge_info}
+    if score < THRESHOLD and not force and not surge_info:
         rec["raid"] = False
         days[day] = rec
         data["days"] = {d: v for d, v in days.items() if d >= (now - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")}
@@ -334,6 +400,7 @@ def run(now: datetime | None = None, force: bool = False, inject=None, post=None
     if res["loot"]:
         decor.add_fund(res["loot"])
     ups = _award(res, fighters, agents, now)
+    res["surge"] = surge_info
     story = _story(res, fighters, hit, now, ups)
     win = res["outcome"] in ("대승", "격퇴")
     for f in fighters:
@@ -356,7 +423,9 @@ def run(now: datetime | None = None, force: bool = False, inject=None, post=None
         print(f"[침입] 마을 사건 전달 실패: {e}")
     chronicle.record_event("침입", title, detail, [f["name"] for f in fighters])
     icon = {"대승": "🏆", "격퇴": "🛡️", "고전": "🩹", "성벽 돌파": "🔥"}[res["outcome"]]
-    post(f"-# ⚔️ {now:%H:%M} 몬스터 침입 · 숲의 기척 {rec['level']}({score})\n{story}\n"
+    post(f"-# ⚔️ {now:%H:%M} 몬스터 {'불시 습격' if surge_info else '침입'} · 숲의 기척 {rec['level']}({score})"
+         + (f" · 결계 부하 {surge_info['base']:g}%→{surge_info['peak']:g}% (상영 {surge_info['playing']}편)" if surge_info else "")
+         + f"\n{story}\n"
          f"-# {icon} {res['outcome']} · {res['monster']}(전력 {res['strength']}) vs 방어 {res['defense']} "
          f"(시설 {res['structures']} · 수비 {res['fighters']} · 민병 {res['militia']} · 사기 {res['morale']})"
          + (f" · 부서짐 {len(hit)}" if hit else "") + (f" · 다침 {', '.join(res['injured'])}" if res["injured"] else "")
@@ -372,7 +441,7 @@ def run(now: datetime | None = None, force: bool = False, inject=None, post=None
     days[day] = rec
     data["days"] = {d: v for d, v in days.items() if d >= (now - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")}
     _save(data)
-    print(f"[침입] {title} (위험도 {score}, 방어 {res['defense']} vs {res['strength']})")
+    print(f"[침입] {'불시 습격 ' if surge_info else ''}{title} (위험도 {score}, 방어 {res['defense']} vs {res['strength']})")
     return rec
 
 
@@ -383,14 +452,16 @@ def summary(now: datetime | None = None, limit: int = 7) -> str:
     f = forecast(now, x)
     lines = [f"⚔️ **몬스터 침입** ({now:%m/%d %H:%M})",
              f"오늘 밤 숲의 기척: **{f['level']}** (위험도 {f['score']}, 예상 몬스터 "
-             f"{next(m for s_, m, _ in reversed(MONSTERS) if f['score'] >= s_)}) · 매일 {RAID_HOUR}시",
+             f"{next(m for s_, m, _ in reversed(MONSTERS) if f['score'] >= s_)}) · "
+             + (f"불시 습격 (재생 중 부하 {SURGE_MIN:g}% 이상 + {SURGE_RISE:g}%p 급등, {RAID_COOLDOWN_MIN}분 쿨다운, 하루 최대 {RAID_DAILY_MAX})"
+                if MODE == "surge" else f"매일 {RAID_HOUR}시"),
              "조짐: " + (", ".join(f["why"]) or "없음")]
     recs = sorted((_load().get("days") or {}).items(), reverse=True)[:limit]
     if recs:
         lines.append("\n**최근 밤**")
         for d, r in recs:
             if r.get("raid"):
-                lines.append(f"• {d[5:].replace('-', '/')} {r['monster']} → **{r['outcome']}** (방어 {r['defense']} vs {r['strength']})"
+                lines.append(f"• {r['at'][5:16].replace('-', '/').replace('T', ' ')}{' 불시' if r.get('surge') else ''} {r['monster']} → **{r['outcome']}** (방어 {r['defense']} vs {r['strength']})"
                              + (f" · 부서짐 {len(r.get('hit') or [])}" if r.get("hit") else "")
                              + (f" · 다침 {', '.join(r['injured'])}" if r.get("injured") else ""))
             else:

@@ -178,6 +178,15 @@ class PoringFood(commands.Cog):
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 결계 조절 실패")
             return
+        # 몬스터 불시 습격: 재생 중에 결계 부하(CPU)가 갑자기 치솟으면 (poring_food/raids.py surge 모드)
+        from poring_food import raids
+        try:
+            sg = await asyncio.to_thread(raids.surge_due)
+            if sg:
+                async with self._lock:
+                    await asyncio.to_thread(raids.run, None, False, None, None, sg)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 몬스터 불시 습격 실패")
         # 사람이 직접 끄고 켠 컨테이너도 방금 잰 목록으로 바로 잡는다 (감시탑 - 원래는 매시 회차에만 봤다)
         from poring_food import facilities
         try:
