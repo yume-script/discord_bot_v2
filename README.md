@@ -196,7 +196,7 @@ python app.py
   판 그림에는 지금 깨어 있는 사람이 어디 있는지도 나온다 - 장소/마을 길마다 인원 배지, 오른쪽 "지금 어디에"에 인물 이름(배경 인물은 수만).
   이 판이 밤마다 몬스터 침입을 막는 방어력이 된다(아래 몬스터 침입).
 - **몬스터 침입** (`poring_food/raids.py`): **예기치 않은 습격** - Plex/YM_PLAYER로 환영극(영상)이 상영되는 중에 결계 부하(CPU 지수)가
-  갑자기 치솟으면(최근 2분 평균 ≥ `PORING_RAID_SURGE_MIN` 70%이고 5~15분 전보다 `PORING_RAID_SURGE_RISE` 20%p 넘게 상승) 결계 마나가
+  갑자기 치솟으면(최근 1분 값 ≥ `PORING_RAID_SURGE_MIN` 70%이고 5~15분 전보다 `PORING_RAID_SURGE_RISE` 20%p 넘게 상승) 결계 마나가
   극장으로 쏠려 성벽이 얇아진 틈에 몬스터가 불시에 덮친다. 봇 load_guard가 매분 확인, 습격 뒤 `PORING_RAID_COOLDOWN_MIN`(180)분은 쉬고
   하루 최대 `PORING_RAID_DAILY_MAX`(3)번. 위험도에 치솟은 지수·오른 폭·상영 수가 크게 더해진다. 예전처럼 매일 밤 고정 침입을 원하면
   `PORING_RAID_MODE=nightly`(`PORING_RAID_HOUR` 기본 22시).
@@ -223,7 +223,7 @@ python app.py
     Plex 스캐너 nice, tautulli 정지는 배포 직후 첫 측정에서 원래대로 되돌린다.
   - 부하 지수 = max(CPU us+sy(nice 제외), 메모리 %, I/O 압박 PSI some avg10) - etc는 이 서버 `/proc`, plex01은 ssh. 
     `PORING_LOADSHED_ZEEPS_SSH`가 있으면 호스트 zeeps도 재서 함께 반영(읽기만).
-  - 단계: 5분 평균, 재생 여부(Plex 세션)에 따라 기준 두 벌.
+  - 단계: 5분 평균(재생 중이면 1분 값, 1분마다 한 단계씩 올림 - 내릴 땐 10분 평균), 재생 여부(Plex 세션)에 따라 기준 두 벌.
     | 단계 | 재생 없음 (`PORING_LOADSHED_STAGES`) | 재생 중 (`PORING_LOADSHED_STAGES_PLAY`) | 하는 일 |
     | --- | --- | --- | --- |
     | 0 | 70% 미만 | 65% 미만 | 아무것도 안 함 (자료 등록 최대) |

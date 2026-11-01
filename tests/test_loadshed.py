@@ -383,3 +383,15 @@ def test_ymplayer_stalls_and_retries_count_as_struggling(monkeypatch):
     assert loadshed._viewing() == (1, None)                                 # 잘 나오면 버벅임 없음
     text = loadshed.watching_text(T0, {"plex": 0, "plex_kinds": {}, "ym": act, "total": 1, "struggle": 0})
     assert "최근 5분 끊김 2 / 재연결 1" in text
+
+
+def test_playing_checks_every_minute():
+    t = T0
+    one = [[(t - timedelta(minutes=1)).isoformat(timespec="seconds"), 30.0, False], [t.isoformat(timespec="seconds"), 72.0, False]]
+    # 재생 중: 최근 1분 값(72%)으로 바로 판단 - 재생 중 기준 70% = 2단계, 한 단계씩이라 1단계로
+    assert loadshed.next_stage(one, 0, "", True, t)[0] == 1
+    # 1분 뒤 다시 한 단계 (5분 기다리지 않음)
+    changed = (t - timedelta(minutes=1)).isoformat(timespec="seconds")
+    assert loadshed.next_stage(one, 1, changed, True, t)[0] == 2
+    # 재생이 없으면 예전처럼 5분 평균 + 표본 3개 이상
+    assert loadshed.next_stage(one, 0, "", False, t)[0] == 0
