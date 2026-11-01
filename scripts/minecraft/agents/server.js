@@ -30,6 +30,7 @@ let nextId = 1;
 
 function emit(name, kind, data = {}) {
   events.push({ id: nextId++, at: new Date().toISOString(), name, kind, ...data });
+  console.log(`[${new Date().toISOString().slice(11, 19)}] ${name} ${kind} ${Object.keys(data).length ? JSON.stringify(data) : ''}`);   // docker logs mc-agents 로 보이게
   if (events.length > 500) events.splice(0, events.length - 500);
 }
 
@@ -250,6 +251,7 @@ http.createServer(async (req, res) => {
       if (url.pathname === '/task') {
         if (!['gather', 'build', 'patrol', 'rest'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
         if (!bots.has(name)) return send(res, 409, { error: '접속 안 함' });
+        console.log(`[${new Date().toISOString().slice(11, 19)}] ${name} 일 받음: ${b.kind} ${JSON.stringify(b.args || {})}`);
         runTask(name, b.kind, b.args || {}, b.say);
         return send(res, 202, { ok: true });
       }
