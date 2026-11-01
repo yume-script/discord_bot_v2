@@ -89,6 +89,58 @@ class Api:
         return r.json() if r.content else {}
 
 
+# ===================================================================== 서버 상황 (이야기에 섞는다)
+def server_line() -> str:
+    """지금 실제 서버 사정을 마을 말로 한 줄 - 결계 단계, 환영극(영상) 손님, 최근 몬스터 습격"""
+    from . import loadshed, raids
+    try:
+        stage = loadshed.stage()
+        p = (loadshed._load().get("hosts") or {}).get("plex01") or {}
+        bits = [f"결계 경보 {stage}단계({loadshed.STAGE_NAMES.get(stage, '')})"]
+        if p.get("playing"):
+            bits.append(f"환영극장에 손님 {p['playing']}명이 상영 중" + (" - 화면이 버벅임" if p.get("struggling") else ""))
+        r = raids.last()
+        if r and r.get("raid"):
+            bits.append(f"최근 몬스터 습격({r['at'][11:16]}): {r['monster']} {r['outcome']}")
+        return " / ".join(bits)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _remember_line(st: dict, name: str, line: str, now: datetime) -> None:
+    rec = st.setdefault("recent", {})
+    rec[name] = (rec.get(name) or [])[-4:] + [f"{now:%m/%d %H:%M} {line}"]
+
+
+def prompt_block(name: str, now: datetime | None = None) -> str:
+    """인물 판단 프롬프트용 - 마인크래프트 마을 사정 + 내가 거기서 한 일 + 서버 사정과 엮어 말하라는 안내"""
+    if not ENABLED:
+        return ""
+    st = _load()
+    if not st:
+        return ""
+    built = ", ".join(f"{BLUEPRINTS[b][1]} {n}" for b, n in (st.get("built") or {}).items()) or "아직 없음"
+    online = [k for k, v in MC_NAMES.items() if v in (st.get("online") or [])]
+    mine = (st.get("recent") or {}).get(name) or []
+    lines = [f"[마인크래프트 마을 - 숲 너머 새 개척지] 창고 통나무 {st.get('stock', 0)}개 · 지은 것 {built} · "
+             f"잡은 몬스터 {st.get('kills', 0)}마리 · 지금 개척지에 나가 있는 사람: {', '.join(online) or '없음'}"
+             + (f" · 개척 쉬는 중({st['why'][6:]})" if str(st.get('why', '')).startswith("쉬는 중") else "")]
+    if mine:
+        lines.append("내가 개척지에서 한 일: " + " / ".join(mine[-3:]))
+    lines.append("개척지 일은 결계가 높거나 환영극 손님이 버벅이면 멈춘다 - 서버 사정(결계, 환영극 손님, 몬스터 습격)과 "
+                 "개척지 일(나무, 건물, 밤 순찰)을 엮어서 얘기해도 된다.")
+    return "\n".join(lines)
+
+
+def _react(detail: str, title: str, people: list[str], react=None) -> None:
+    """마을 사건으로 남기고 관련 인물이 바로 반응 (회차 잠금 안에서 불린다)"""
+    try:
+        from . import agents as ag
+        (react or ag.react_now)(detail, title, people, kind="개척지")
+    except Exception as e:  # noqa: BLE001
+        print(f"[마인크래프트] 세계 반영 실패: {e}")
+
+
 # ===================================================================== 판단 재료
 def busy() -> str | None:
     """지금 마인크래프트를 쉬어야 하는 이유 (시청·독서가 먼저)"""
@@ -156,7 +208,8 @@ DECIDE_SYSTEM = """너는 마법 판타지 마을 '오아시스 마을' 사람�
 사람마다 성격대로 할 일을 하나씩 고른다: gather(숲에서 나무 모으기) / build(마을에 건물 짓기 - hut 오두막, farm 밭,
 tower 감시탑, wall 성벽 한 칸) / patrol(마을 둘레를 돌며 몬스터 잡기) / rest(광장에서 쉬기).
 밤에는 몬스터가 나오니 싸울 줄 아는 사람은 순찰을, 낮에는 나무를 모으고 짓는다. 창고 통나무가 모자란 건물은 고르지 않는다.
-say는 그 사람이 게임 채팅에 칠 짧은 한마디(그 사람 말투, 20자 안팎, 실제 서버/사람 이름 금지).
+say는 그 사람이 게임 채팅에 칠 짧은 한마디(그 사람 말투, 20자 안팎, 실제 서버/사람 이름 금지). 마을 서버 사정
+(결계 경보, 환영극 손님, 몬스터 습격)이 있으면 한마디에 자연스럽게 엮어도 된다 - 예: 극장 손님 많으니 조용히 베자.
 JSON으로만: {"tasks": [{"name": "이름", "task": "gather|build|patrol|rest", "blueprint": "hut|farm|tower|wall 또는 빈칸", "say": "한마디"}]}"""
 
 
@@ -166,7 +219,8 @@ def decide(people: list[dict], st: dict, day: bool | None, llm=None) -> list[dic
     if not people:
         return []
     stock = st.get("stock", 0)
-    facts = (f"지금: {'낮' if day else '밤' if day is False else '모름'} / 마을 창고 통나무 {stock}개 / "
+    facts = ((f"[마을 서버 사정] {server}\n" if (server := server_line()) else "")
+             + f"지금: {'낮' if day else '밤' if day is False else '모름'} / 마을 창고 통나무 {stock}개 / "
              f"지은 것: " + (", ".join(f"{BLUEPRINTS[b][1]} {n}" for b, n in (st.get('built') or {}).items()) or "아직 없음")
              + " / 건물 값(통나무): " + ", ".join(f"{v[1]} {v[0]}" for v in BLUEPRINTS.values())
              + "\n사람들:\n" + "\n".join(f"- {p['name']}: {str(p.get('profile', ''))[:90]}" for p in people))
@@ -205,7 +259,7 @@ def _note(st: dict, why: str) -> None:
 
 
 def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=None, agents: list[dict] | None = None,
-         force: bool = False) -> dict:
+         force: bool = False, react=None) -> dict:
     """[봇, TICK_MIN분마다, 스레드에서] 반환 {"busy"|"down"|"assigned": ...}"""
     if not ENABLED:
         return {}
@@ -230,10 +284,12 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         evs = []
     for who, line in apply_events(st, evs, by_mc):
         post(who, f"-# {NAME} · {now:%H:%M}\n{line}")
+        _remember_line(st, who, line, now)
         try:
-            memory.remember(who, f"마인크래프트 마을에서 {line}", 4, [], "마인크래프트")
+            memory.remember(who, f"숲 너머 개척지(마인크래프트 마을)에서 {line}", 4, [], "마인크래프트")
             if "지었다" in line:
                 chronicle.record_event("마인크래프트", f"{who}: {line}", line, [who])
+                _react(f"{who}이(가) 숲 너머 개척지에 {line.split('에 ', 1)[-1]}", "개척지에 새 건물", [who, "리그루드"], react)
         except Exception as e:  # noqa: BLE001
             print(f"[마인크래프트] 기록 실패: {e}")
     online = list(health.get("bots") or [])
@@ -242,7 +298,11 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
     if why:
         if online:
             api.post("/leave", {"name": "*"})
-            post(NAME, f"-# {NAME} · {now:%H:%M}\n{why} - 모두 마을 일을 멈추고 돌아왔다")
+            post(NAME, f"-# {NAME} · {now:%H:%M}\n{why} - 개척지에 나가 있던 사람들이 일을 멈추고 마을로 돌아왔다")
+            back = [by_mc.get(n, n) for n in online]
+            from . import stewards
+            _react(f"{why} - 숲 너머 개척지에서 일하던 {', '.join(back)}이(가) 일을 멈추고 마을로 돌아왔다",
+                   "개척지 일 중단", [stewards.steward("loadshed")] + back[:2], react)
         st["online"] = []
         _save(st)
         return {"busy": why}
@@ -281,6 +341,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         api.post("/task", {"name": mc, "kind": t["task"], "args": args, "say": t["say"]})
         what = TASKS[t["task"]] + (f" ({BLUEPRINTS[t['blueprint']][1]})" if t["blueprint"] else "")
         post(t["name"], f"-# {NAME} · {now:%H:%M} · {what}\n{t['say'] or '…'}")
+        _remember_line(st, t["name"], f"{what} 하러 감", now)
     st["online"] = sorted(want)
     _save(st)
     print(f"[마인크래프트] 접속 {', '.join(sorted(want)) or '없음'} · 일 {[(t['name'], t['task']) for t in plan]}")

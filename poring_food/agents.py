@@ -907,6 +907,7 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         street_mail.prompt_block(now),
         decor.prompt_block(now),
         raids.prompt_block(now),
+        _minecraft_block(name, now),
         levels.prompt_block(name),
         book_watch.prompt_block(agent.get("company", ""), now),
         hobbies.prompt_block(agent, now),
@@ -916,6 +917,16 @@ def _perception(agent: dict, st: dict, routine_hint: str, kakao: list[str], othe
         signals.format_block(signals.for_company(signals.collect(include_factory=False), agent.get("company", ""))),
     ]
     return "\n\n".join(p for p in parts if p)
+
+
+def _minecraft_block(name: str, now) -> str:
+    """숲 너머 개척지(마인크래프트 마을) 사정 - 서버 사정과 엮어 말하게 (poring_food/minecraft.py)"""
+    try:
+        from . import minecraft
+        return minecraft.prompt_block(name, now)
+    except Exception as e:  # noqa: BLE001
+        print(f"[경고] 개척지 정보 실패: {e}")
+        return ""
 
 
 def _system(agent: dict) -> str:

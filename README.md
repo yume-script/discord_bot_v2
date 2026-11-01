@@ -303,6 +303,10 @@ python app.py
   설치(etc): `cd scripts/minecraft && MC_RCON_PASSWORD=... docker compose up -d --build` → `.env` `PORING_MINECRAFT=1`
   (`PORING_MC_API` 기본 `http://127.0.0.1:3010`). 서버 2GB 메모리·CPU 2개 상한, 봇 서비스 768MB·CPU 1개 상한.
   구경은 같은 집 안에서 Java 클라이언트로 `etc:25565` (온라인 인증 꺼짐이라 바깥에 포트를 열지 말 것).
+  **서버 사정과 엮기**: 마을에서는 '숲 너머 개척지'. 인물 매시 판단에 개척지 사정(창고/건물/처치/지금 나가 있는 사람/쉬는 이유)과
+  내가 거기서 한 일이 들어가고, 서버 사정(결계 단계·환영극 손님·몬스터 습격)과 엮어 말하라고 안내한다. 개척지 일을 정할 때도
+  서버 사정을 같이 줘서 게임 속 한마디에 섞이고, 결계가 올라 모두 돌아오면 결계 담당(슈나)과 돌아온 사람이, 새 건물이 서면
+  지은 사람과 촌장이 바로 반응한다(마을 사건).
 - **인물 초상화 아바타** (`poring_food/avatars.py`): 기본 DiceBear 낙서 그림 대신 인물 프로필에 맞춘 사실적인 판타지 초상화.
   봇이 15분마다 아직 없는 사람 한 명씩 - LLM이 프로필을 영어 외모 묘사로 바꾸고 AI Horde(`PORING_AVATAR_MODEL`, 기본 Realistic
   Vision, 없으면 기본 모델)로 그려 `storage/poring_food/avatars/`에 256x256으로 저장. 디스코드 웹훅은 공개 주소로만 아바타를 받으므로

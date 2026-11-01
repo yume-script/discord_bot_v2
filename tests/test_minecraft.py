@@ -77,8 +77,15 @@ def test_tick_assigns_and_backs_off(monkeypatch, tmp_path):
     assert sum(1 for p, b in api.calls if p == "/task") == minecraft.MAX_BOTS and posts
     # 결계 2단계 -> 모두 나감
     monkeypatch.setattr(loadshed, "stage", lambda now=None, fresh_min=15: 2)
-    out = minecraft.tick(datetime(2026, 11, 1, 21, 10), api=api, agents=agents, post=lambda n, t: posts.append((n, t)))
+    reacted = []
+    out = minecraft.tick(datetime(2026, 11, 1, 21, 10), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
+                         react=lambda d, t, people, kind="": reacted.append((t, people, d)))
     assert out == {"busy": "결계 경보 2단계"} and ("/leave", {"name": "*"}) in api.calls and api.bots == []
+    assert reacted and reacted[0][0] == "개척지 일 중단" and "결계 경보 2단계" in reacted[0][2]   # 서버 사정이 이야기로
+    # 인물 판단 프롬프트에 개척지 사정 + 내가 한 일 + 서버 사정과 엮으라는 안내
+    who = "페른"
+    block = minecraft.prompt_block(who)
+    assert "개척지" in block and "결계" in block
 
 
 def test_off_and_down(monkeypatch):
@@ -90,3 +97,10 @@ def test_off_and_down(monkeypatch):
         def get(self, path):
             raise OSError("connection refused")
     assert "down" in minecraft.tick(api=Down(), agents=[])
+
+
+def test_server_line_goes_into_decision(monkeypatch):
+    monkeypatch.setattr(minecraft, "server_line", lambda: "결계 경보 3단계(방어) / 환영극장에 손님 2명이 상영 중")
+    seen = []
+    minecraft.decide([_ag("페른")], {"stock": 0}, day=True, llm=lambda s, u: seen.append(u) or {"tasks": []})
+    assert "환영극장에 손님 2명" in seen[0] and "[마을 서버 사정]" in seen[0]
