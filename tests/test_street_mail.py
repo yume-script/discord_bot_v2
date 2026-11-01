@@ -47,3 +47,13 @@ def test_town_event_once_per_kind():
         assert sent == ["통신석 중계탑 마나 바닥", "통신석 중계탑 마나 바닥"]
     finally:
         ag.inject_event = orig
+
+
+def test_hidden_signal(monkeypatch):
+    p = street_mail.parse
+    assert p("포링 우편함", "poring-mail kind=trash count=12") == {"kind": "trash", "count": 12}
+    assert p("아무 이름", "poring-mail kind=registered count=2") == {"kind": "registered", "count": 2}
+    assert p("포링 우편함", "poring-mail kind=rm_rf count=1") is None             # 모르는 종류
+    assert p("포링 우편함", "poring-mail kind=trash count=12\n제목: 비밀") == {"kind": "trash", "count": 12}
+    monkeypatch.setattr(street_mail, "HIDDEN_CHANNEL_ID", 42)
+    assert street_mail.channels() == {street_mail.CHANNEL_ID, 42}
