@@ -294,6 +294,12 @@ python app.py
   회차가 도는 중이어도 기다리지 않음), 2) 회차 잠금 안에서 바로 이어서 인물 세계에 반영한다 - 마을 사건으로 기록하고 범위 안 사람
   모두의 받은편지함에 조용히 넣고, 관련 인물(슈나, 베니마루, 그 시설 기관 사람 2명) 중 깨어 있는 사람은 다음 회차를 기다리지 않고
   지금 반응한다(파급 라운드 - 연락/통신방 글/계획 변경이 실시간 대화로 이어짐).
+- **인물 초상화 아바타** (`poring_food/avatars.py`): 기본 DiceBear 낙서 그림 대신 인물 프로필에 맞춘 사실적인 판타지 초상화.
+  봇이 15분마다 아직 없는 사람 한 명씩 - LLM이 프로필을 영어 외모 묘사로 바꾸고 AI Horde(`PORING_AVATAR_MODEL`, 기본 Realistic
+  Vision, 없으면 기본 모델)로 그려 `storage/poring_food/avatars/`에 256x256으로 저장. 디스코드 웹훅은 공개 주소로만 아바타를 받으므로
+  봇 웹 서버(`PORING_WEBHOOK_PORT`)가 `GET /avatars/<파일>`로 내보내고 바깥 주소를 `PORING_AVATAR_BASE_URL`에 넣는다(nginx proxy
+  manager 등). 주소가 없으면 꺼짐(기존 아바타 그대로). 봇 계정 인물(애순이/소라)은 계정 사진. 다시 그리기:
+  `python -m poring_food.avatars --force 이름`.
 - **성벽 잔해 치우기/전령 우편함** (`poring_food/street_mail.py`): 메일 관리 Apps Script가 📣│알림방(`PORING_MAIL_CHANNEL_ID`)에 올리는
   웹훅 알림을 봇(아메하나)이 읽어 마을 일로 바꾼다. 스크립트는 `scripts/gas/mail_manage.gs` - `NOTICE_MODE="01"`은 기존처럼 알림방에
   사람이 보는 알림, `"02"`는 알림방엔 아무것도 안 올리고 봇만 보는 비공개 채널(`PORING_MAIL_HIDDEN_CHANNEL_ID`)에
