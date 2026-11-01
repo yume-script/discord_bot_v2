@@ -2,7 +2,13 @@
 성벽 잔해 치우기/전령 우편함 - 메일 관리 Apps Script가 📣│알림방(PORING_MAIL_CHANNEL_ID)에 올리는 알림을 오아시스 마을의 일로 바꾼다.
 
 봇(아메하나 계정, cogs/poring_food.py on_message)이 그 채널의 웹훅 메시지 중 정해진 보낸 이름/문구만 알아본다.
-Apps Script는 고치지 않는다. 메일 제목/미리보기/인증 코드는 절대 이야기에 넣지 않는다 - 종류와 개수만 쓴다.
+메일 제목/미리보기/인증 코드는 절대 이야기에 넣지 않는다 - 종류와 개수만 쓴다.
+
+Apps Script(scripts/gas/mail_manage.gs)의 NOTICE_MODE:
+- "01" 기존 방식: 📣│알림방에 사람이 보는 알림 그대로 (봇은 그 글을 읽어 이야기로도 쓴다).
+- "02" 숨김: 사람이 보는 알림은 안 올리고, 봇만 보는 비공개 채널(PORING_MAIL_HIDDEN_CHANNEL_ID)에
+  `poring-mail kind=<종류> count=<개수>` 한 줄만 보낸다(제목/미리보기는 아예 안 보냄). 봇은 읽은 뒤 그 글을 지우고
+  (PORING_MAIL_DELETE=0이면 남김) 거리 청소/우편함 이야기로만 남긴다.
 
 | 알림방 메시지                                   | 오아시스 마을                                                    |
 |------------------------------------------------|-----------------------------------------------------------------|
@@ -39,7 +45,16 @@ SAME_KIND_HOURS = 3
 KEEP_DAYS = 14
 MAIL_PATH = os.path.join(STATE_DIR, "street_mail.json")
 
+HIDDEN_CHANNEL_ID = int(os.getenv("PORING_MAIL_HIDDEN_CHANNEL_ID", "0") or 0)
+DELETE_HIDDEN = os.getenv("PORING_MAIL_DELETE", "1") not in ("0", "false", "False", "")
+KINDS = ("trash", "traffic", "nas", "takeout", "server_down", "registered", "mail")
+
 _TRASH = re.compile(r"(\d+)\s*개의 메일을 휴지통")
+_SIGNAL = re.compile(r"^\s*poring-mail\s+kind=([a-z_]+)\s+count=(\d+)\s*$", re.M)
+
+
+def channels() -> set[int]:
+    return {c for c in (CHANNEL_ID, HIDDEN_CHANNEL_ID) if c}
 
 
 def _load() -> dict:
@@ -62,6 +77,10 @@ def _save(data: dict) -> None:
 def parse(author: str, content: str) -> dict | None:
     """알림방 웹훅 메시지 하나 -> {"kind", "count"} (모르는 메시지면 None). 제목/본문은 돌려주지 않는다."""
     author, content = author or "", content or ""
+    sig = _SIGNAL.search(content)                     # 02 숨김 방식: 정해진 한 줄 신호
+    if sig:
+        kind, count = sig.group(1), int(sig.group(2))
+        return {"kind": kind, "count": max(1, min(count, 10000))} if kind in KINDS else None
     if "메일 정리" in author:
         m = _TRASH.search(content)
         return {"kind": "trash", "count": int(m.group(1))} if m else None

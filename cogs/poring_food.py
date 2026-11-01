@@ -261,11 +261,16 @@ class PoringFood(commands.Cog):
         """📣│알림방의 메일 관리 Apps Script 알림 -> 성벽 잔해 치우기/전령 우편함 (poring_food/street_mail.py). 웹훅 메시지만 본다."""
         from poring_food import street_mail
         if (not settings.PORING_FOOD_ENABLED or not street_mail.ENABLED or not message.webhook_id
-                or message.channel.id != street_mail.CHANNEL_ID):
+                or message.channel.id not in street_mail.channels()):
             return
         ev = street_mail.parse(message.author.name, message.content)
         if ev:
             asyncio.create_task(self._street_mail(ev))
+        if message.channel.id == street_mail.HIDDEN_CHANNEL_ID and street_mail.DELETE_HIDDEN:
+            try:   # 02 숨김 방식: 신호 글은 읽은 뒤 지운다 (메시지 관리 권한 필요 - 없으면 그냥 둔다)
+                await message.delete()
+            except discord.HTTPException:
+                pass
 
     async def _street_mail(self, ev: dict) -> None:
         from poring_food import street_mail
