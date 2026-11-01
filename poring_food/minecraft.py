@@ -194,6 +194,15 @@ def decide(people: list[dict], st: dict, day: bool | None, llm=None) -> list[dic
 
 
 # ===================================================================== 한 바퀴
+def _note(st: dict, why: str) -> None:
+    """쉬거나 못 붙는 이유가 바뀔 때만 로그 한 줄 (매번 찍지 않게)"""
+    if why != st.get("why", ""):
+        print(f"[마인크래프트] {why or '다시 움직임'}")
+        st["why"] = why
+        _save(st)
+
+
+
 def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=None, agents: list[dict] | None = None) -> dict:
     """[봇, TICK_MIN분마다, 스레드에서] 반환 {"busy"|"down"|"assigned": ...}"""
     if not ENABLED:
@@ -201,11 +210,12 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
     from . import agents as ag, chronicle, memory
     now = now or now_kst()
     api = api or Api()
+    st = _load()
     try:
         health = api.get("/health")
     except Exception as e:  # noqa: BLE001
+        _note(st, f"봇 서비스(mc-agents)에 연결 못 함: {str(e)[:100]}")
         return {"down": str(e)[:120]}
-    st = _load()
     agents = agents if agents is not None else ag.load_agents()
     by_name = {a["name"]: a for a in agents}
     by_mc = {mc_name(a["name"]): a["name"] for a in agents}
@@ -226,6 +236,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
             print(f"[마인크래프트] 기록 실패: {e}")
     online = list(health.get("bots") or [])
     why = busy()
+    _note(st, f"쉬는 중 - {why}" if why else "")
     if why:
         if online:
             api.post("/leave", {"name": "*"})
