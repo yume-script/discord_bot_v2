@@ -78,6 +78,7 @@ class PoringFood(commands.Cog):
             self.waitfree_pilot.start()
             self.app_updater.start()
             self.avatar_maker.start()
+            self.minecraft_tick.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -96,6 +97,7 @@ class PoringFood(commands.Cog):
         self.waitfree_pilot.cancel()
         self.app_updater.cancel()
         self.avatar_maker.cancel()
+        self.minecraft_tick.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -258,6 +260,22 @@ class PoringFood(commands.Cog):
             await avatars.make_next()
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 인물 초상화 만들기 실패")
+
+    @tasks.loop(minutes=10)
+    async def minecraft_tick(self) -> None:
+        """마인크래프트 마을 - 인물들이 봇으로 들어가 나무 모으기/짓기/몬스터 순찰 (poring_food/minecraft.py, PORING_MINECRAFT=1)"""
+        from poring_food import minecraft
+        if not minecraft.ENABLED:
+            return
+        try:
+            async with self._lock:   # 결과를 인물 기억/연대기에 쓰므로 회차와 겹치지 않게
+                await asyncio.to_thread(minecraft.tick)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 마인크래프트 마을 실패")
+
+    @minecraft_tick.before_loop
+    async def _before_minecraft(self) -> None:
+        await self.bot.wait_until_ready()
 
     @avatar_maker.before_loop
     async def _before_avatar(self) -> None:

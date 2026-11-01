@@ -1,0 +1,59 @@
+# 오아시스 마을 마인크래프트 (Java) - 인물(LLM 에이전트)들이 봇으로 접속해 마을을 짓고 몬스터를 잡는다.
+#   cd /mnt/discord_bot_v2/scripts/minecraft && docker compose up -d --build
+# 봇(poring_food/minecraft.py)은 agents 서비스의 HTTP API(127.0.0.1:3010)로만 일을 시킨다.
+# 아무도 없으면 서버가 1분 뒤 스스로 멈춘다(PAUSE_WHEN_EMPTY_SECONDS) - 결계 단계가 높거나 영상 재생이 버벅이면
+# 봇이 모두 나가므로 그때는 CPU를 거의 쓰지 않는다. 사람이 구경하려면 25565 포트로 접속 (ONLINE_MODE=FALSE라
+# 아무 이름으로나 들어올 수 있으니 공유기에서 이 포트를 바깥에 열지 말 것 - 집 안에서만).
+services:
+  mc-village:
+    image: itzg/minecraft-server:latest
+    container_name: mc-village
+    restart: unless-stopped
+    environment:
+      EULA: "TRUE"
+      TYPE: PAPER
+      VERSION: "1.21.4"
+      MEMORY: "2G"
+      ONLINE_MODE: "FALSE"          # 봇은 마이크로소프트 계정이 없다
+      DIFFICULTY: "easy"
+      MODE: "survival"
+      MOTD: "Oasis Village"
+      LEVEL: "oasis"
+      VIEW_DISTANCE: "6"
+      SIMULATION_DISTANCE: "4"
+      MAX_PLAYERS: "10"
+      SPAWN_PROTECTION: "0"
+      PAUSE_WHEN_EMPTY_SECONDS: "60"
+      ENABLE_RCON: "TRUE"
+      RCON_PASSWORD: "${MC_RCON_PASSWORD:-change-me}"
+      OPS: "${MC_OPS:-Aesun,Benimaru,Shuna,Stark,Fern,Kazuma,Souei,Gabiru,Ubel,Elaina}"
+      TZ: "Asia/Seoul"
+    ports:
+      - "25565:25565"
+    volumes:
+      - ./data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 3G
+
+  mc-agents:
+    build: ./agents
+    container_name: mc-agents
+    restart: unless-stopped
+    depends_on: [mc-village]
+    environment:
+      MC_HOST: mc-village
+      MC_PORT: "25565"
+      MC_VERSION: "1.21.4"
+      API_PORT: "3010"
+      VILLAGE_X: "${MC_VILLAGE_X:-0}"
+      VILLAGE_Z: "${MC_VILLAGE_Z:-0}"
+    ports:
+      - "127.0.0.1:3010:3010"       # 봇(같은 서버)만 부른다
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
