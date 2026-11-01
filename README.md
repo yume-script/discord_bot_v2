@@ -311,6 +311,8 @@ python app.py
   설치(etc): `cd scripts/minecraft && MC_RCON_PASSWORD=... docker compose up -d --build` → `.env` `PORING_MINECRAFT=1`
   (`PORING_MC_API` 기본 `http://127.0.0.1:3010`). 서버 2GB 메모리·CPU 2개 상한, 봇 서비스 768MB·CPU 1개 상한.
   구경은 같은 집 안에서 Java 클라이언트로 `etc:25565` (온라인 인증 꺼짐이라 바깥에 포트를 열지 말 것).
+  **웹 지도**: BlueMap 플러그인(`MODRINTH_PROJECTS: bluemap`)으로 브라우저 `http://etc:8100`에서 개척지를 3D로 본다. 처음 한 번
+  `bash scripts/minecraft/bluemap-setup.sh`(리소스 내려받기 동의 + 그리기 스레드 1개 + 다시 불러오기). 서버가 비어 멈추면 그리기도 멈춘다.
   **서버 사정과 엮기**: 마을에서는 '숲 너머 개척지'. 인물 매시 판단에 개척지 사정(창고/건물/처치/지금 나가 있는 사람/쉬는 이유)과
   내가 거기서 한 일이 들어가고, 서버 사정(결계 단계·환영극 손님·몬스터 습격)과 엮어 말하라고 안내한다. 개척지 일을 정할 때도
   서버 사정을 같이 줘서 게임 속 한마디에 섞이고, 결계가 올라 모두 돌아오면 결계 담당(슈나)과 돌아온 사람이, 새 건물이 서면
