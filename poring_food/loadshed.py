@@ -17,11 +17,12 @@
 부하 지수 = max(CPU us+sy+irq+steal (nice 제외 - nice된 작업은 바로 양보하므로), 메모리 사용 %, I/O 압박 PSI some avg10).
 - 서버별로 매분 잰다: etc = 이 서버 /proc, plex01 = `ssh <host>`. PORING_LOADSHED_ZEEPS_SSH가 있으면 호스트(zeeps)도 재서
   두 서버 지수에 같이 반영한다(호스트 부하는 모든 CT에 걸리므로).
-- 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만). 기준은 재생 여부로 두 벌:
+- 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만). 단 재생 중(Plex/YM_PLAYER)이면 최근 1분 값으로 바로 정하고 1분마다
+  한 단계씩 올린다(PORING_LOADSHED_PLAY_AVG_MIN / _PLAY_UP_MIN) - 시청이 먼저라 5분 기다리지 않는다. 기준은 재생 여부로 두 벌:
   재생 없음 70/75/80/93/96% = 1~5단계 (PORING_LOADSHED_STAGES) - 아무도 안 볼 땐 짐꾼을 93%까지 그대로 둔다,
   재생 중   65/70/75/85/90% = 1~5단계 (PORING_LOADSHED_STAGES_PLAY) - 볼 때는 시청이 먼저라 더 일찍 양보.
   재생 여부는 Plex 세션 + YM_PLAYER /api/activity(텔레그램/IPTV·라디오 중계, PORING_YMPLAYER_URL/_TOKEN)로 본다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
-- 한 번에 한 단계씩 올리고(5분 간격), 5분 평균이 5단계 기준(96%, 재생 중 90%) 이상이면 바로 5단계.
+- 한 번에 한 단계씩 올리고(5분 간격, 재생 중 1분), 평균이 5단계 기준(96%, 재생 중 90%) 이상이면 바로 5단계.
 - 내릴 때는 10분 평균이 지금 단계 기준보다 3%p 낮아야 한 단계 내린다 (히스테리시스).
 
 단계별 조치 (STAGE_PLAN, .env로 바꿈 - 보호 목록은 못 넘는다):
@@ -68,7 +69,9 @@ TOP = len(STAGES)
 DOWN_GAP = 3.0                              # 내릴 때 기준보다 이만큼 더 낮아야 (단계 간격이 4%p라)
 UP_EVERY_MIN = 5                            # 한 단계 올린 뒤 다음 단계까지 (조치 효과 검증 시간)
 DOWN_MIN = 10                               # 낮은 값이 이만큼 이어져야 한 단계 내림
-AVG_MIN = 5                                 # 단계 판단은 최근 5분 평균
+AVG_MIN = 5                                 # 단계 판단은 최근 5분 평균 (재생 없을 때)
+AVG_MIN_PLAY = int(os.getenv("PORING_LOADSHED_PLAY_AVG_MIN", "1"))      # 재생 중(Plex/YM_PLAYER)엔 최근 1분 값으로 바로
+UP_EVERY_MIN_PLAY = int(os.getenv("PORING_LOADSHED_PLAY_UP_MIN", "1"))  # 재생 중엔 1분마다 한 단계씩 올릴 수 있다
 ALERT = 95.0
 IDLE_CPU = float(os.getenv("PORING_LOADSHED_IDLE_CPU", "5"))
 STOP_TTL_H = float(os.getenv("PORING_LOADSHED_MAX_OFF_HOURS", "6"))
@@ -431,16 +434,18 @@ def stage_of(value: float, playing: bool) -> int:
 
 def next_stage(samples: list, current: int, changed_at: str, playing: bool, now: datetime) -> tuple[int, str]:
     """최근 기록으로 다음 단계와 이유. samples = [[시각, 지수, psi경보(bool)]]. 순수 함수 (테스트용)."""
-    since5 = (now - timedelta(minutes=AVG_MIN)).isoformat()
-    recent = [s for s in samples if s[0] >= since5]
-    if len(recent) < 3:
+    # 재생 중엔 1분 값으로 바로 판단하고 1분마다 올린다 (영상 재생으로 부하가 오르면 5분 기다리지 않게) - 내릴 때는 그대로 10분 평균
+    win, up_every = (AVG_MIN_PLAY, UP_EVERY_MIN_PLAY) if playing else (AVG_MIN, UP_EVERY_MIN)
+    since = (now - timedelta(minutes=win)).isoformat()
+    recent = [s for s in samples if (s[0] > since if playing else s[0] >= since)]   # 재생 중: 마지막 1분(이번 측정)만
+    if len(recent) < (1 if playing else 3):
         return current, ""
     avg = sum(s[1] for s in recent) / len(recent)
     alarm = bool(recent[-1][2]) if len(recent[-1]) > 2 else False
     target = min(TOP, stage_of(avg, playing) + (1 if alarm else 0))
     lv = levels(playing)
-    tag = f"5분 평균 {avg:.0f}%" + (" · 재생 중 기준" if playing else "") + (" · 지연(PSI) 감지" if alarm else "")
-    waited = not changed_at or changed_at <= (now - timedelta(minutes=UP_EVERY_MIN)).isoformat()
+    tag = f"{win}분 평균 {avg:.0f}%" + (" · 재생 중 기준" if playing else "") + (" · 지연(PSI) 감지" if alarm else "")
+    waited = not changed_at or changed_at <= (now - timedelta(minutes=up_every)).isoformat()
     if target > current:
         if avg >= lv[-1]:
             return TOP, tag + f" - 급등이라 바로 {TOP}단계"

@@ -3,7 +3,7 @@
 결계 마나가 극장으로 쏠려 성벽이 얇아진 틈을 타 검은 숲의 몬스터가 불시에 덮친다.
 
 - 언제 (PORING_RAID_MODE=surge, 기본): 결계 조절(loadshed)이 매분 잰 부하 지수로 판단한다 - 지금 재생 중이고,
-  최근 2분 평균이 SURGE_MIN(기본 70%) 이상이며 5~15분 전 평균보다 SURGE_RISE(기본 20%p) 넘게 뛰었으면 습격.
+  최근 1분 값이 SURGE_MIN(기본 70%) 이상이며 5~15분 전 평균보다 SURGE_RISE(기본 20%p) 넘게 뛰었으면 습격.
   습격 뒤 RAID_COOLDOWN_MIN(기본 180분)은 다시 오지 않고, 하루 최대 RAID_DAILY_MAX(기본 3)번. 봇 load_guard가 매분 확인.
   PORING_RAID_MODE=nightly면 예전처럼 매일 밤 RAID_HOUR 회차에 한 번 (agents.tick).
 - 위험도(0~100, danger): 실제 수치로 정한다 - 지어내지 않는다. 습격이면 치솟은 지수/오른 폭/상영 중인 수가 크게 더한다.
@@ -41,7 +41,7 @@ from .josa import j
 ENABLED = os.getenv("PORING_RAIDS", "1") not in ("0", "false", "False", "")
 RAID_HOUR = int(os.getenv("PORING_RAID_HOUR", "22"))
 MODE = os.getenv("PORING_RAID_MODE", "surge").strip().lower()      # surge(재생 중 부하 급상승 = 불시 습격) / nightly
-SURGE_MIN = float(os.getenv("PORING_RAID_SURGE_MIN", "70"))        # 최근 2분 평균 지수가 이 이상이고
+SURGE_MIN = float(os.getenv("PORING_RAID_SURGE_MIN", "70"))        # 최근 1분 지수가 이 이상이고
 SURGE_RISE = float(os.getenv("PORING_RAID_SURGE_RISE", "20"))      # 5~15분 전 평균보다 이만큼(%p) 넘게 뛰면
 RAID_COOLDOWN_MIN = int(os.getenv("PORING_RAID_COOLDOWN_MIN", "180"))
 RAID_DAILY_MAX = int(os.getenv("PORING_RAID_DAILY_MAX", "3"))
@@ -209,7 +209,7 @@ def surge(samples: list, playing: int | None) -> dict | None:
     vals = [float(x[1]) for x in samples if len(x) >= 2 and isinstance(x[1], (int, float))]
     if len(vals) < 7:
         return None
-    cur = sum(vals[-2:]) / 2
+    cur = vals[-1]                     # 최근 1분 값 (재생 중 부하는 1분 단위로 본다)
     before = vals[-15:-5] if len(vals) >= 15 else vals[:-5]
     base = sum(before) / len(before)
     rise = cur - base
