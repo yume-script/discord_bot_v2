@@ -77,6 +77,7 @@ class PoringFood(commands.Cog):
             self.load_guard.start()
             self.waitfree_pilot.start()
             self.app_updater.start()
+            self.avatar_maker.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -94,6 +95,7 @@ class PoringFood(commands.Cog):
         self.load_guard.cancel()
         self.waitfree_pilot.cancel()
         self.app_updater.cancel()
+        self.avatar_maker.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -248,6 +250,19 @@ class PoringFood(commands.Cog):
             except Exception:  # noqa: BLE001
                 log.exception("포링푸드 시설 정비 세계 반영 실패")
 
+    @tasks.loop(minutes=15)
+    async def avatar_maker(self) -> None:
+        """아직 초상화가 없는 인물 한 명씩 (poring_food/avatars.py - PORING_AVATAR_BASE_URL이 있을 때만)"""
+        from poring_food import avatars
+        try:
+            await avatars.make_next()
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 인물 초상화 만들기 실패")
+
+    @avatar_maker.before_loop
+    async def _before_avatar(self) -> None:
+        await self.bot.wait_until_ready()
+
     @app_updater.before_loop
     async def _before_updater(self) -> None:
         await self.bot.wait_until_ready()
@@ -283,10 +298,18 @@ class PoringFood(commands.Cog):
     async def _start_webhook(self) -> None:
         """Tautulli 웹훅 수신 (PORING_WEBHOOK_PORT + PORING_WEBHOOK_TOKEN이 있을 때만).
         POST /plex, 헤더 X-Poring-Token - 재생 시작 순간 상영 알림 (poring_food/plex_watch.py)."""
-        from poring_food import plex_watch
-        if not plex_watch.webhook_enabled():
+        from poring_food import avatars, plex_watch
+        hook_on = plex_watch.webhook_enabled()
+        if not hook_on and not (avatars.BASE_URL and plex_watch.WEBHOOK_PORT > 0):
             return
         from aiohttp import web
+
+        async def avatar_file(request: web.Request) -> web.Response:
+            """인물 초상화 (디스코드가 웹훅 아바타로 가져간다 - 공개, 파일 이름은 해시라 목록은 안 보인다)"""
+            path = avatars.path_for(request.match_info["file"])
+            if not path:
+                return web.Response(status=404)
+            return web.FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
 
         async def plex_hook(request: web.Request) -> web.Response:
             if request.headers.get("X-Poring-Token", "") != plex_watch.WEBHOOK_TOKEN:
@@ -301,7 +324,9 @@ class PoringFood(commands.Cog):
             return web.Response(text="ok")
 
         app = web.Application()
-        app.router.add_post("/plex", plex_hook)
+        if hook_on:
+            app.router.add_post("/plex", plex_hook)
+        app.router.add_get("/avatars/{file}", avatar_file)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         try:
@@ -311,7 +336,7 @@ class PoringFood(commands.Cog):
             await runner.cleanup()
             return
         self._web_runner = runner
-        log.info("포링푸드 웹훅 수신 시작 (포트 %s, POST /plex)", plex_watch.WEBHOOK_PORT)
+        log.info("포링푸드 웹 서버 시작 (포트 %s%s, GET /avatars)", plex_watch.WEBHOOK_PORT, ", POST /plex" if hook_on else "")
 
     async def _plex_from_hook(self, session: dict) -> None:
         from poring_food import plex_watch

@@ -187,6 +187,8 @@ def load_agents() -> list[dict]:
         return []
     agents = [a for a in data.get("agents", []) if isinstance(a, dict) and a.get("name")]
     agents = rotation.apply(agents)  # 하루 한 번 배경 인물과 자리를 바꾼 것 반영
+    from . import avatars
+    agents = avatars.apply(agents)   # 만든 초상화가 있으면 그 아바타로
     if len(agents) > MAX_AGENTS:
         print(f"[경고] 에이전트는 최대 {MAX_AGENTS}명 - 앞의 {MAX_AGENTS}명만 쓴다.")
     return agents[:MAX_AGENTS]
