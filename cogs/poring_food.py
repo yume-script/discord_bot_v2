@@ -18,6 +18,7 @@
   · /포링푸드연대기 [날짜] - 그날 세계에서 있었던 일(하루 요약/원본 사건)과 진행 중인 일을 본다
   · /포링푸드명단 [소속] - 지금 스스로 사는 인물들의 소속/자리/맡은 일/고정 여부/지금 하는 일, 최근 교체
   · /포링푸드침입 [지금] - 몬스터 침입 예보(위험도)와 최근 밤들, 지금=True면 바로 침입 (시험용)
+  · /포링푸드마크 [지금] - 마인크래프트 마을 장부(창고/건물/처치)와 접속 중인 인물, 지금=True면 결계 단계와 상관없이 한 바퀴 (시험용)
   · /시청현황 - 지금 재생 중인 수 (Plex 종류별 + YM_PLAYER 텔레그램/IPTV, 숫자만 - 제목·계정 없음)
   · /포링푸드골목 - 마을 방어 배치 판 그림 + 방어 기금/놓인 것과 상태/손봐야 할 것/최근 기록
   · /포링푸드이웃 [작품] - 애니메이션 인물들을 지금 바로 마을로 이사 오게 한다 (원래는 주 1회 자동)
@@ -673,6 +674,26 @@ class PoringFood(commands.Cog):
             await interaction.followup.send(text, file=discord.File(path), ephemeral=True)
         else:
             await interaction.followup.send(text + "\n-# (판 그림은 글꼴/Pillow가 없어서 못 그렸어요)", ephemeral=True)
+
+    @app_commands.command(name="포링푸드마크", description="[관리자] 마인크래프트 마을 - 장부와 접속 중인 인물 (지금 한 바퀴 돌리기도 가능)")
+    @app_commands.describe(지금="True면 결계 단계와 상관없이 지금 인물들을 접속시키고 일을 맡긴다 (시험용 - 재생 중이면 피하기)")
+    async def minecraft_view(self, interaction: Interaction, 지금: bool = False):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        from poring_food import minecraft
+        line = ""
+        if 지금:
+            async with self._lock:
+                try:
+                    out = await asyncio.to_thread(minecraft.tick, None, None, None, None, None, True)
+                    line = "\n" + (f"맡긴 일: {', '.join(t['name'] + '-' + minecraft.TASKS[t['task']] for t in out.get('assigned', []))}"
+                                    if out.get("assigned") is not None else f"결과: {out}")
+                except Exception as e:  # noqa: BLE001
+                    log.exception("포링푸드 마인크래프트 실행 실패")
+                    line = f"\n실패: {e}"
+        await interaction.followup.send(minecraft.summary() + line, ephemeral=True)
 
     @app_commands.command(name="포링푸드침입", description="[관리자] 몬스터 침입 - 오늘 밤 숲의 기척(위험도)과 최근 밤들 (지금 침입시키기도 가능)")
     @app_commands.describe(지금="True면 위험도와 상관없이 지금 바로 몬스터가 쳐들어온다 (시험용)")

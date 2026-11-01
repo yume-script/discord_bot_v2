@@ -10,6 +10,7 @@
   5) 채널(⛏️ 마인크래프트 마을)에 그 인물 이름으로 한마디 + 끝난 일 소식, 기억/연대기에 남긴다
 - 마인크래프트 이름은 영문이어야 해서 MC_NAMES (없으면 V+해시)
 - 켜기: .env PORING_MINECRAFT=1 (서버를 띄운 뒤). API 주소 PORING_MC_API (기본 http://127.0.0.1:3010).
+- 시험: 디스코드 /포링푸드마크 지금:True (봇 안에서 돌아야 채널에 올라간다 - 터미널에서 직접 부르면 로그에만 찍힌다)
 저장: storage/poring_food/minecraft.json
 """
 from __future__ import annotations
@@ -203,7 +204,8 @@ def _note(st: dict, why: str) -> None:
 
 
 
-def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=None, agents: list[dict] | None = None) -> dict:
+def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=None, agents: list[dict] | None = None,
+         force: bool = False) -> dict:
     """[봇, TICK_MIN분마다, 스레드에서] 반환 {"busy"|"down"|"assigned": ...}"""
     if not ENABLED:
         return {}
@@ -235,7 +237,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         except Exception as e:  # noqa: BLE001
             print(f"[마인크래프트] 기록 실패: {e}")
     online = list(health.get("bots") or [])
-    why = busy()
+    why = None if force else busy()      # force: 관리자 시험 (/포링푸드마크 지금)
     _note(st, f"쉬는 중 - {why}" if why else "")
     if why:
         if online:
