@@ -82,7 +82,7 @@ class Api:
 
     def post(self, path: str, body: dict) -> dict:
         import requests
-        r = requests.post(self.base + path, json=body, timeout=5)
+        r = requests.post(self.base + path, json=body, timeout=75 if path == "/task" else 5)
         if r.status_code >= 500:
             r.raise_for_status()
         return r.json() if r.content else {}

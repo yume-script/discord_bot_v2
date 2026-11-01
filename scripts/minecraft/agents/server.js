@@ -97,15 +97,27 @@ async function goNear(bot, x, z, range = 3) {
 // ------------------------------------------------------------------ 일
 async function doGather(entry, count) {
   const bot = entry.bot;
-  const logIds = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log']
+  const logIds = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log']
     .map((n) => bot.registry.blocksByName[n] && bot.registry.blocksByName[n].id).filter(Boolean);
+  try { await bot.waitForChunksToLoad(); } catch (e) { /* 일부만 불러와도 진행 */ }
   let got = 0;
-  for (let i = 0; i < count; i++) {
-    if (entry.cancel) break;
-    const block = bot.findBlock({ matching: logIds, maxDistance: 48 });
-    if (!block) break;
-    try { await bot.collectBlock.collect(block); got++; } catch (e) { break; }
+  let misses = 0;
+  while (got < count && !entry.cancel && misses < 5) {
+    const block = bot.findBlock({ matching: logIds, maxDistance: 64 });
+    if (!block) {
+      // 근처에 나무가 없으면 아무 쪽으로나 40칸 걸어가서 다시 찾는다 (최대 4번)
+      misses++;
+      const a = Math.random() * Math.PI * 2;
+      const p = bot.entity.position;
+      await goNear(bot, Math.round(p.x + 40 * Math.cos(a)), Math.round(p.z + 40 * Math.sin(a)), 4);
+      try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+      continue;
+    }
+    try { await bot.collectBlock.collect(block); got++; } catch (e) { misses++; }
   }
+  // 모은 통나무는 마을 창고로 (가방에서 빼서 장부로 - 실제 건물은 /fill)
+  if (got) bot.chat(`/clear @s #minecraft:logs ${got}`);
+  await goNear(bot, VX, VZ, 6);
   return { logs: got };
 }
 
@@ -174,6 +186,26 @@ async function runTask(name, kind, args, say) {
 }
 
 // ------------------------------------------------------------------ 접속
+// 같은 IP에서 몇 초 안에 여러 명이 들어가면 서버가 "Connection throttled"로 쫓아낸다 - 한 명씩 6초 간격으로
+const joinQueue = [];
+let joining = false;
+async function pumpJoins() {
+  if (joining) return;
+  joining = true;
+  while (joinQueue.length) {
+    const name = joinQueue.shift();
+    if (!bots.has(name)) join(name);
+    await sleep(6000);
+  }
+  joining = false;
+}
+
+function queueJoin(name) {
+  if (bots.has(name) || joinQueue.includes(name)) return;
+  joinQueue.push(name);
+  pumpJoins();
+}
+
 function join(name) {
   if (bots.has(name)) return;
   const bot = mineflayer.createBot({ host: MC_HOST, port: MC_PORT, username: name, version: MC_VERSION || undefined, auth: 'offline' });
@@ -247,9 +279,14 @@ http.createServer(async (req, res) => {
       const name = String(b.name || '');
       if (url.pathname === '/leave') { leave(name === '*' ? '*' : name); return send(res, 200, { ok: true }); }
       if (!NAME_RE.test(name)) return send(res, 400, { error: '이름은 영문/숫자/_ 3~16자' });
-      if (url.pathname === '/join') { join(name); return send(res, 200, { ok: true }); }
+      if (url.pathname === '/join') { queueJoin(name); return send(res, 200, { ok: true }); }
       if (url.pathname === '/task') {
         if (!['gather', 'build', 'patrol', 'rest'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
+        if (!bots.has(name) && joinQueue.includes(name)) {
+          // 아직 접속 차례를 기다리는 중 - 들어가면 바로 하게 잠깐 기다렸다가 맡긴다
+          const until = Date.now() + 60000;
+          while (!bots.has(name) && Date.now() < until) await sleep(500);
+        }
         if (!bots.has(name)) return send(res, 409, { error: '접속 안 함' });
         console.log(`[${new Date().toISOString().slice(11, 19)}] ${name} 일 받음: ${b.kind} ${JSON.stringify(b.args || {})}`);
         runTask(name, b.kind, b.args || {}, b.say);
