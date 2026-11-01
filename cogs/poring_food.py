@@ -72,9 +72,11 @@ class PoringFood(commands.Cog):
         if settings.PORING_FOOD_ENABLED:
             self.hourly.start()
             self.drain_outbox.start()
-            self.live_runner.start()
-            self.plex_watch.start()
-            self.book_watch.start()
+            from poring_food import minecraft
+            if not minecraft.mc_world():   # 개척지 모드에선 오아시스 마을 실시간 대화/상영·도서관 이야기를 멈춘다
+                self.live_runner.start()
+                self.plex_watch.start()
+                self.book_watch.start()
             self.load_guard.start()
             self.waitfree_pilot.start()
             self.app_updater.start()
@@ -188,8 +190,13 @@ class PoringFood(commands.Cog):
         try:
             sg = await asyncio.to_thread(raids.surge_due)
             if sg:
+                from poring_food import minecraft
                 async with self._lock:
-                    await asyncio.to_thread(raids.run, None, False, None, None, sg)
+                    if minecraft.mc_world():   # 개척지 둘레에 실제 몬스터 (아무도 없으면 기록만 - 쿨다운용)
+                        got = await asyncio.to_thread(minecraft.surge_raid, sg)
+                        await asyncio.to_thread(raids.note_surge, None, sg, got)
+                    else:
+                        await asyncio.to_thread(raids.run, None, False, None, None, sg)
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 몬스터 불시 습격 실패")
         # 사람이 직접 끄고 켠 컨테이너도 방금 잰 목록으로 바로 잡는다 (감시탑 - 원래는 매시 회차에만 봤다)
@@ -210,6 +217,10 @@ class PoringFood(commands.Cog):
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 결계 조절/감시탑 알림 실패")
         # 2) 인물 세계엔 잠금 안에서 바로 이어서 (마을 사건 + 관련 인물이 다음 회차를 기다리지 않고 지금 반응)
+        #    개척지 모드에선 오아시스 마을 반응은 없다 (결계 사정은 개척지 철수/회의로 이어진다)
+        from poring_food import minecraft
+        if minecraft.mc_world():
+            return
         async with self._lock:
             try:
                 if done:
@@ -297,8 +308,9 @@ class PoringFood(commands.Cog):
         if (not settings.PORING_FOOD_ENABLED or not street_mail.ENABLED or not message.webhook_id
                 or message.channel.id not in street_mail.channels()):
             return
+        from poring_food import minecraft
         ev = street_mail.parse(message.author.name, message.content)
-        if ev:
+        if ev and not minecraft.mc_world():   # 개척지 모드에선 오아시스 거리 이야기를 쓰지 않는다
             asyncio.create_task(self._street_mail(ev))
         if message.channel.id == street_mail.HIDDEN_CHANNEL_ID and street_mail.DELETE_HIDDEN:
             try:   # 02 숨김 방식: 신호 글은 읽은 뒤 지운다 (메시지 관리 권한 필요 - 없으면 그냥 둔다)
@@ -580,6 +592,14 @@ class PoringFood(commands.Cog):
 
     @tasks.loop(time=RUN_TIMES)
     async def hourly(self) -> None:
+        from poring_food import minecraft
+        if minecraft.mc_world():   # 개척지 모드: 오아시스 마을 회차 대신 개척지 회의
+            async with self._lock:
+                try:
+                    await asyncio.to_thread(minecraft.hourly)
+                except Exception:  # noqa: BLE001
+                    log.exception("포링푸드 개척지 회의 실패")
+            return
         if self._lock.locked():
             log.info("모임/관리자 개입이 진행 중 - 끝나면 이번 회차를 이어서 실행")
         await self._run_once(wait=True)
@@ -595,6 +615,12 @@ class PoringFood(commands.Cog):
             return
         if self._lock.locked():
             await interaction.response.send_message("⏳ 이미 한 회차가 실행 중이에요.", ephemeral=True)
+            return
+        from poring_food import minecraft
+        if minecraft.mc_world():
+            await interaction.response.send_message("▶️ 개척지 회의를 지금 열게요. 에이전트 채널로 나가요.", ephemeral=True)
+            async with self._lock:
+                await asyncio.to_thread(minecraft.hourly)
             return
         await interaction.response.send_message("▶️ 포링푸드 회차를 실행할게요. 결과는 방송 채널/카톡방으로 나가요.", ephemeral=True)
         await self._run_once()

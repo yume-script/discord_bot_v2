@@ -4,7 +4,9 @@
 //   GET  /state                   {day, time, bots:[{name, health, food, pos, task}]}
 //   POST /join  {name}            접속 (이름은 영문 3~16자)
 //   POST /leave {name|"*"}        나가기
-//   POST /task  {name, kind, args, say}   kind: gather(args.count) / build(args.blueprint, args.slot) / patrol(args.seconds) / rest
+//   POST /task  {name, kind, args, say}   kind: gather(args.count) / mine(args.count) / build(args.blueprint, args.slot) / patrol(args.seconds) / rest
+//   POST /say   {name, text}          게임 채팅 한마디 (개척지 회의)
+//   POST /raid  {count, mob}          몬스터 습격 - 마을 둘레에 몬스터 소환
 //   GET  /events?after=N          [{id, at, name, kind, ...}] - 끝난 일, 잡은 몬스터, 죽음
 // 건물은 마을 중심(VILLAGE_X/Z) 둘레의 자리(slot)에 /fill 명령으로 세운다 (봇은 OP - docker-compose OPS).
 // 재료(통나무)는 봇 쪽(poring_food)이 마을 창고 장부로 세고, 모자라면 짓기를 시키지 않는다.
@@ -37,7 +39,8 @@ function emit(name, kind, data = {}) {
 // ------------------------------------------------------------------ 건물 (마을 중심 기준 자리마다)
 // 자리: 반지름 18 둘레에 8칸 (건물 종류마다 같은 자리 목록을 따로 쓴다 - slot은 poring_food가 센다)
 function slotOrigin(blueprint, slot, groundY) {
-  const ring = { hut: 18, farm: 26, tower: 34, wall: 40 }[blueprint] || 18;
+  const ring = { hut: 18, well: 8, smithy: 22, hall: 0, farm: 26, tower: 34, wall: 40 }[blueprint] || 18;
+  if (blueprint === 'hall') return { x: VX - 4, y: groundY, z: VZ + 10 };   // 마을회관은 광장 북쪽 한가운데
   const n = 8;
   const a = (2 * Math.PI * (slot % n)) / n + (blueprint === 'farm' ? 0.4 : blueprint === 'tower' ? 0.2 : 0);
   return { x: Math.round(VX + ring * Math.cos(a)), y: groundY, z: Math.round(VZ + ring * Math.sin(a)) };
@@ -69,6 +72,39 @@ const BLUEPRINTS = {
     `setblock ${o.x + 1} ${o.y + 2} ${o.z} air`,
     `setblock ${o.x - 1} ${o.y + 9} ${o.z - 1} torch`,
     `setblock ${o.x + 3} ${o.y + 9} ${o.z + 3} torch`,
+  ],
+  // 우물 3x3
+  well: (o) => [
+    `fill ${o.x} ${o.y} ${o.z} ${o.x + 2} ${o.y + 1} ${o.z + 2} cobblestone hollow`,
+    `setblock ${o.x + 1} ${o.y} ${o.z + 1} water`,
+    `fill ${o.x} ${o.y + 2} ${o.z} ${o.x} ${o.y + 3} ${o.z} oak_fence`,
+    `fill ${o.x + 2} ${o.y + 2} ${o.z + 2} ${o.x + 2} ${o.y + 3} ${o.z + 2} oak_fence`,
+    `fill ${o.x} ${o.y + 4} ${o.z} ${o.x + 2} ${o.y + 4} ${o.z + 2} spruce_slab`,
+  ],
+  // 대장간 6x4x5: 돌 바닥/벽, 화로·모루·용광로
+  smithy: (o) => [
+    `fill ${o.x} ${o.y} ${o.z} ${o.x + 5} ${o.y} ${o.z + 4} stone_bricks`,
+    `fill ${o.x} ${o.y + 1} ${o.z} ${o.x + 5} ${o.y + 3} ${o.z + 4} cobblestone hollow`,
+    `fill ${o.x} ${o.y + 4} ${o.z} ${o.x + 5} ${o.y + 4} ${o.z + 4} dark_oak_slab`,
+    `fill ${o.x + 2} ${o.y + 1} ${o.z} ${o.x + 3} ${o.y + 2} ${o.z} air`,
+    `setblock ${o.x + 1} ${o.y + 1} ${o.z + 3} blast_furnace`,
+    `setblock ${o.x + 4} ${o.y + 1} ${o.z + 3} anvil`,
+    `setblock ${o.x + 2} ${o.y + 1} ${o.z + 3} smithing_table`,
+    `setblock ${o.x + 3} ${o.y + 1} ${o.z + 3} campfire`,
+  ],
+  // 마을회관 9x6x9: 돌기둥 + 통나무 벽 + 종
+  hall: (o) => [
+    `fill ${o.x} ${o.y} ${o.z} ${o.x + 8} ${o.y} ${o.z + 8} polished_andesite`,
+    `fill ${o.x} ${o.y + 1} ${o.z} ${o.x + 8} ${o.y + 5} ${o.z + 8} spruce_planks hollow`,
+    `fill ${o.x} ${o.y + 1} ${o.z} ${o.x} ${o.y + 5} ${o.z} stone_bricks`,
+    `fill ${o.x + 8} ${o.y + 1} ${o.z} ${o.x + 8} ${o.y + 5} ${o.z} stone_bricks`,
+    `fill ${o.x} ${o.y + 1} ${o.z + 8} ${o.x} ${o.y + 5} ${o.z + 8} stone_bricks`,
+    `fill ${o.x + 8} ${o.y + 1} ${o.z + 8} ${o.x + 8} ${o.y + 5} ${o.z + 8} stone_bricks`,
+    `fill ${o.x - 1} ${o.y + 6} ${o.z - 1} ${o.x + 9} ${o.y + 6} ${o.z + 9} dark_oak_slab`,
+    `fill ${o.x + 3} ${o.y + 1} ${o.z} ${o.x + 5} ${o.y + 3} ${o.z} air`,
+    `setblock ${o.x + 4} ${o.y + 5} ${o.z + 1} bell[attachment=ceiling]`,
+    `setblock ${o.x + 4} ${o.y + 1} ${o.z + 7} lectern`,
+    `fill ${o.x + 1} ${o.y + 4} ${o.z + 1} ${o.x + 7} ${o.y + 4} ${o.z + 7} lantern replace air`,
   ],
   // 성벽 한 칸 9x3
   wall: (o) => [
@@ -119,6 +155,45 @@ async function doGather(entry, count) {
   if (got) bot.chat(`/clear @s #minecraft:logs ${got}`);
   await goNear(bot, VX, VZ, 6);
   return { logs: got };
+}
+
+async function doMine(entry, count) {
+  // 돌 캐기 - 땅 위나 얕은 곳의 돌을 캐서 마을 창고로 (조약돌로 셈)
+  const bot = entry.bot;
+  const ids = ['stone', 'cobblestone', 'andesite', 'diorite', 'granite', 'deepslate', 'tuff']
+    .map((n) => bot.registry.blocksByName[n] && bot.registry.blocksByName[n].id).filter(Boolean);
+  try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+  let got = 0;
+  let misses = 0;
+  while (got < count && !entry.cancel && misses < 5) {
+    const block = bot.findBlock({ matching: ids, maxDistance: 32,
+      useExtraInfo: (b) => b.position.y >= bot.entity.position.y - 6 });   // 너무 깊이는 안 판다
+    if (!block) {
+      misses++;
+      const a = Math.random() * Math.PI * 2;
+      const p = bot.entity.position;
+      await goNear(bot, Math.round(p.x + 32 * Math.cos(a)), Math.round(p.z + 32 * Math.sin(a)), 4);
+      continue;
+    }
+    try { await bot.collectBlock.collect(block); got++; } catch (e) { misses++; }
+  }
+  if (got) bot.chat(`/clear @s #minecraft:stone_tool_materials ${got}`);
+  await goNear(bot, VX, VZ, 6);
+  return { stone: got };
+}
+
+async function doRaid(count, mob) {
+  // 몬스터 습격 - 마을 둘레(반지름 30) 여기저기에 몬스터가 나타난다 (서버 부하 급등 = 결계가 얇아진 틈)
+  const any = [...bots.values()][0];
+  if (!any) throw new Error('개척지에 아무도 없음');
+  for (let i = 0; i < count; i++) {
+    const a = (2 * Math.PI * i) / count;
+    const x = Math.round(VX + 30 * Math.cos(a));
+    const z = Math.round(VZ + 30 * Math.sin(a));
+    any.bot.chat(`/execute positioned ${x} 0 ${z} positioned over motion_blocking_no_leaves run summon ${mob} ~ ~ ~`);
+    await sleep(300);
+  }
+  return { count, mob };
 }
 
 async function doBuild(entry, blueprint, slot) {
@@ -175,6 +250,7 @@ async function runTask(name, kind, args, say) {
     let result = {};
     if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8));
     else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0);
+    else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8));
     else if (kind === 'patrol') result = await doPatrol(entry, Math.min(900, args.seconds || 300));
     else if (kind === 'rest') { await goNear(entry.bot, VX, VZ, 4); result = {}; }
     emit(name, 'done', { task: kind, result });
@@ -219,6 +295,8 @@ function join(name) {
     const moves = new Movements(bot);
     moves.canDig = true;
     bot.pathfinder.setMovements(moves);
+    // 맨손으로는 돌이 안 나온다 - 개척지 공용 도구 (봇은 OP)
+    for (const item of ['iron_pickaxe', 'iron_axe', 'iron_sword', 'bread 8']) bot.chat(`/give @s ${item}`);
     emit(name, 'joined');
   });
   bot.on('entityDead', (e) => {
@@ -278,10 +356,21 @@ http.createServer(async (req, res) => {
       const b = await body(req);
       const name = String(b.name || '');
       if (url.pathname === '/leave') { leave(name === '*' ? '*' : name); return send(res, 200, { ok: true }); }
+      if (url.pathname === '/raid') {
+        const mob = /^[a-z_]{3,24}$/.test(String(b.mob || '')) ? b.mob : 'zombie';
+        const result = await doRaid(Math.max(1, Math.min(12, b.count || 4)), mob);
+        emit('*', 'raid', result);
+        return send(res, 200, { ok: true, ...result });
+      }
+      if (url.pathname === '/say') {
+        const e = bots.get(name);
+        if (e && b.text) e.bot.chat(String(b.text).replace(/^\//, '').slice(0, 200));   // 명령(/)으로 시작하지 않게
+        return send(res, 200, { ok: !!e });
+      }
       if (!NAME_RE.test(name)) return send(res, 400, { error: '이름은 영문/숫자/_ 3~16자' });
       if (url.pathname === '/join') { queueJoin(name); return send(res, 200, { ok: true }); }
       if (url.pathname === '/task') {
-        if (!['gather', 'build', 'patrol', 'rest'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
+        if (!['gather', 'mine', 'build', 'patrol', 'rest'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
         if (!bots.has(name) && joinQueue.includes(name)) {
           // 아직 접속 차례를 기다리는 중 - 들어가면 바로 하게 잠깐 기다렸다가 맡긴다
           const until = Date.now() + 60000;
