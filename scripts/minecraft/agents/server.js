@@ -4,7 +4,10 @@
 //   GET  /state                   {day, time, bots:[{name, health, food, pos, task}]}
 //   POST /join  {name}            접속 (이름은 영문 3~16자)
 //   POST /leave {name|"*"}        나가기
-//   POST /task  {name, kind, args, say}   kind: gather(args.count) / mine(args.count) / build(args.blueprint, args.slot) / patrol(args.seconds) / rest
+//   POST /task  {name, kind, args, say}   kind: gather(args.count) / mine(args.count) / farm(args.plots) / ore(args.count) /
+//                                         build(args.blueprint, args.slot) / patrol(args.seconds) / rest
+//     결과(events done.result): gather {logs} / mine {stone} / farm {food} / ore {coal, iron} / build {blueprint, ...} / patrol {kills}
+//     짓기는 세운 뒤 블록을 다시 확인해서 실제로 서 있을 때만 done (아니면 failed - 장부/연대기에 거짓이 안 남게)
 //   POST /say   {name, text}          게임 채팅 한마디 (개척지 회의)
 //   POST /raid  {count, mob}          몬스터 습격 - 마을 둘레에 몬스터 소환
 //   GET  /events?after=N          [{id, at, name, kind, ...}] - 끝난 일, 잡은 몬스터, 죽음
@@ -182,6 +185,61 @@ async function doMine(entry, count) {
   return { stone: got };
 }
 
+async function doFarm(entry, plots) {
+  // 밭 수확 - 지은 밭(자리 0..plots-1)을 돌며 다 익은 밀(age=7)을 거두고 그 자리에 다시 심는다. 거둔 밀 한 포기 = 식량 1
+  const bot = entry.bot;
+  let food = 0;
+  for (let slot = 0; slot < plots && !entry.cancel; slot++) {
+    const probe = slotOrigin('farm', slot, 0);
+    await goNear(bot, probe.x + 3, probe.z + 3, 4);
+    try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+    const y = groundY(bot, probe.x + 1, probe.z + 1);
+    for (let dx = 0; dx < 7; dx++) {
+      for (let dz = 0; dz < 7; dz++) {
+        const b = bot.blockAt(new Vec3(probe.x + dx, y + 1, probe.z + dz));
+        if (b && b.name === 'wheat' && (b.getProperties().age === 7 || b.metadata === 7)) {
+          bot.chat(`/setblock ${probe.x + dx} ${y + 1} ${probe.z + dz} wheat[age=0]`);
+          food++;
+          await sleep(120);
+        }
+      }
+    }
+    // 비어 버린 칸(밟혀 망가진 곳)은 다시 심는다
+    bot.chat(`/fill ${probe.x} ${y + 1} ${probe.z} ${probe.x + 6} ${y + 1} ${probe.z + 6} wheat[age=0] replace air`);
+    bot.chat(`/setblock ${probe.x + 3} ${y + 1} ${probe.z + 3} air`);
+    await sleep(400);
+  }
+  await goNear(bot, VX, VZ, 6);
+  return { food };
+}
+
+async function doOre(entry, count) {
+  // 광석 캐기 - 둘레(아래 포함)의 석탄/철광석을 찾아 캔다 (pathfinder가 땅을 파고 내려간다). 캔 만큼 창고로
+  const bot = entry.bot;
+  const names = ['coal_ore', 'deepslate_coal_ore', 'iron_ore', 'deepslate_iron_ore'];
+  const ids = names.map((n) => bot.registry.blocksByName[n] && bot.registry.blocksByName[n].id).filter(Boolean);
+  try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+  const got = { coal: 0, iron: 0 };
+  let misses = 0;
+  while (got.coal + got.iron < count && !entry.cancel && misses < 4) {
+    const block = bot.findBlock({ matching: ids, maxDistance: 48 });
+    if (!block) {
+      misses++;
+      const a = Math.random() * Math.PI * 2;
+      const p = bot.entity.position;
+      await goNear(bot, Math.round(p.x + 40 * Math.cos(a)), Math.round(p.z + 40 * Math.sin(a)), 4);
+      try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+      continue;
+    }
+    const kind = block.name.includes('iron') ? 'iron' : 'coal';
+    try { await bot.collectBlock.collect(block); got[kind]++; } catch (e) { misses++; }
+  }
+  if (got.coal) bot.chat(`/clear @s coal ${got.coal}`);
+  if (got.iron) bot.chat(`/clear @s raw_iron ${got.iron}`);
+  await goNear(bot, VX, VZ, 6);
+  return got;
+}
+
 async function doRaid(count, mob) {
   // 몬스터 습격 - 마을 둘레(반지름 30) 여기저기에 몬스터가 나타난다 (서버 부하 급등 = 결계가 얇아진 틈)
   const any = [...bots.values()][0];
@@ -204,11 +262,15 @@ async function doBuild(entry, blueprint, slot) {
   await goNear(bot, probe.x, probe.z, 4);
   const o = slotOrigin(blueprint, slot, groundY(bot, probe.x, probe.z));
   for (const cmd of plan(o)) {
-    if (entry.cancel) break;
+    if (entry.cancel) throw new Error('짓다가 멈춤');
     bot.chat(`/${cmd}`);
     await sleep(400);
   }
-  return { blueprint, slot, x: o.x, y: o.y, z: o.z };
+  // 검증: 모든 건물은 (o.x, o.y+1, o.z)에 블록이 있다 - 정말 서 있는지 확인 (청크가 안 보이면 확인 못 함 = 믿는다)
+  await sleep(800);
+  const check = bot.blockAt(new Vec3(o.x, o.y + 1, o.z));
+  if (check && check.name === 'air') throw new Error('명령은 보냈지만 건물이 서 있지 않음 (권한/위치 확인)');
+  return { blueprint, slot, x: o.x, y: o.y, z: o.z, verified: !!check };
 }
 
 function isHostile(e) {
@@ -251,6 +313,8 @@ async function runTask(name, kind, args, say) {
     if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8));
     else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0);
     else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8));
+    else if (kind === 'farm') result = await doFarm(entry, Math.max(1, Math.min(8, args.plots || 1)));
+    else if (kind === 'ore') result = await doOre(entry, Math.min(16, args.count || 4));
     else if (kind === 'patrol') result = await doPatrol(entry, Math.min(900, args.seconds || 300));
     else if (kind === 'rest') { await goNear(entry.bot, VX, VZ, 4); result = {}; }
     emit(name, 'done', { task: kind, result });
@@ -370,7 +434,7 @@ http.createServer(async (req, res) => {
       if (!NAME_RE.test(name)) return send(res, 400, { error: '이름은 영문/숫자/_ 3~16자' });
       if (url.pathname === '/join') { queueJoin(name); return send(res, 200, { ok: true }); }
       if (url.pathname === '/task') {
-        if (!['gather', 'mine', 'build', 'patrol', 'rest'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
+        if (!['gather', 'mine', 'farm', 'ore', 'build', 'patrol', 'rest'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
         if (!bots.has(name) && joinQueue.includes(name)) {
           // 아직 접속 차례를 기다리는 중 - 들어가면 바로 하게 잠깐 기다렸다가 맡긴다
           const until = Date.now() + 60000;

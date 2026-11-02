@@ -719,7 +719,7 @@ class PoringFood(commands.Cog):
                 except Exception as e:  # noqa: BLE001
                     log.exception("포링푸드 마인크래프트 실행 실패")
                     line = f"\n실패: {e}"
-        await interaction.followup.send(minecraft.summary() + line, ephemeral=True)
+        await interaction.followup.send((minecraft.summary() + line)[:1990], ephemeral=True)
 
     @app_commands.command(name="포링푸드침입", description="[관리자] 몬스터 침입 - 오늘 밤 숲의 기척(위험도)과 최근 밤들 (지금 침입시키기도 가능)")
     @app_commands.describe(지금="True면 위험도와 상관없이 지금 바로 몬스터가 쳐들어온다 (시험용)")
