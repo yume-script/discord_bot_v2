@@ -59,6 +59,10 @@ SYSTEMS = {
                  "wants": "바깥으로 나가는 전령이 필요할 때 오갈 수 있게 한다 (놀 때는 쉬어도 됨)"},
     "clamav": {"label": "ClamAV (호스트 바이러스 검사)", "facility": "방역관의 정화 의식", "steward": "팔린",
                "wants": "정화 의식(정기 검사)을 너무 오래 거르지 않게 한다"},
+    "minecraft": {"label": "마인크래프트 개척지 (mc-village 서버, mc-agents 봇 서비스)", "facility": "숲 너머 개척지 작업장",
+                  "steward": "카이진",
+                  "wants": "개척지 일꾼들의 손발(봇 서비스·명령·밭)이 고장 없이 움직여 문명이 멈추지 않게 한다 - 고장은 스스로 고치고 "
+                           "못 고치는 것만 사람에게 알린다"},
     "upload": {"label": "rclone zeeps_member 업로드 (로컬 스테이징)", "facility": "왕도로 가는 두루마리 짐마차",
                "steward": "카즈마", "wants": "로컬에 쌓인 짐을 제때 왕도(드라이브)로 올려 창고가 넘치지 않게 한다"},
 }
@@ -68,7 +72,8 @@ NAME_TO_SYSTEM = {"bookoasis_assistant.service": "assistant", "upload": "upload"
                   "clamav": "clamav", "clamav-risk-scan.service": "clamav", "clamav-deep-scan.service": "clamav",
                   "bookoasis": "bookoasis", "bookoasis_mariadb": "bookoasis", "bookoasis_redis": "bookoasis",
                   "tautulli": "tautulli", "flaskfarm": "ff", "litellm-proxy": "litellm", "litellm-db": "litellm",
-                  "vaultwarden": "vaultwarden", "결계 경보": "loadshed"}
+                  "vaultwarden": "vaultwarden", "결계 경보": "loadshed",
+                  "mc-agents": "minecraft", "mc-village": "minecraft"}
 
 
 def _overrides() -> dict[str, str]:
