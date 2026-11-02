@@ -10,6 +10,8 @@
 //     짓기는 세운 뒤 블록을 다시 확인해서 실제로 서 있을 때만 done (아니면 failed - 장부/연대기에 거짓이 안 남게)
 //   POST /say   {name, text}          게임 채팅 한마디 (개척지 회의)
 //   POST /raid  {count, mob}          몬스터 습격 - 마을 둘레에 몬스터 소환
+//   POST /rations {ok}                마을 창고에 식량이 있는지 - 있으면 배고픈 봇이 먹고('ate' 이벤트, 장부에서 식량을 뺀다),
+//                                     없으면 굶는다 (쉬움 난이도라 굶어 죽지는 않지만 체력이 안 찬다)
 //   GET  /events?after=N          [{id, at, name, kind, ...}] - 끝난 일, 잡은 몬스터, 죽음
 // 건물은 마을 중심(VILLAGE_X/Z) 둘레의 자리(slot)에 /fill 명령으로 세운다.
 // 명령(/fill /give /clear /effect /summon ...)은 RCON(MC_RCON_PASSWORD)으로 서버에 직접 보낸다 - 봇이 OP가 아니어도 되고
@@ -131,6 +133,8 @@ async function run(bot, cmd) {
 const bots = new Map();      // 이름 -> {bot, task, kills}
 let forest = null;           // 마지막으로 나무를 벤 곳 (모두가 같이 쓴다)
 let worldReady = false;      // 게임 규칙을 한 번 맞췄는지
+let rations = true;          // 마을 창고에 식량이 있는지 (poring_food가 바퀴마다 알려 준다)
+const farmAt = new Map();    // 밭 자리 -> 마지막으로 돌본 시각 (밭 일을 이어서 할 때 자란 만큼 계산)
 const events = [];           // 최근 500개
 let nextId = 1;
 
@@ -318,7 +322,7 @@ async function doMine(entry, count) {
   return { stone: got };
 }
 
-async function doFarm(entry, plots, grow) {
+async function doFarm(entry, plots, grow, growMin) {
   // 밭 수확 - 지은 밭(자리 0..plots-1)을 돌며 다 익은 밀(age=7)을 거두고 그 자리에 다시 심는다. 거둔 밀 한 포기 = 식량 1
   // grow: 지난 수확 뒤 흐른 시간만큼 자란 단계 (poring_food가 계산). 밭 청크는 사람이 근처에 있을 때만 시간이 흘러서
   // (봇은 보통 숲/채석장에 있다) 실제 무작위 성장만 기다리면 거의 안 자란다 - 그만큼 나이를 올려 준 뒤 거둔다
@@ -333,6 +337,8 @@ async function doFarm(entry, plots, grow) {
     if (!bot.blockAt(new Vec3(probe.x + 1, 60, probe.z + 1))) continue;   // 청크가 안 보이면 건드리지 않는다
     const y = groundY(bot, probe.x + 1, probe.z + 1);
     const before = crops;
+    if (growMin && farmAt.has(slot)) grow = Math.max(0, Math.min(7, Math.floor((Date.now() - farmAt.get(slot)) / (growMin * 60000))));
+    farmAt.set(slot, Date.now());
     for (let dx = 0; dx < 7; dx++) {
       for (let dz = 0; dz < 7; dz++) {
         const b = bot.blockAt(new Vec3(probe.x + dx, y + 1, probe.z + dz));
@@ -482,21 +488,28 @@ async function runTask(name, kind, args, say) {
   if (say) entry.bot.chat(String(say).slice(0, 200));
   // repeat: 모으는 일(gather/mine/ore)은 다음 일을 받을 때까지 이어서 한다 (한 번 끝날 때마다 done) -
   // 일을 10분마다 나눠 주므로 금방 끝나면 남는 시간 동안 놀던 것을 없앤다. 빈손이면 멈춘다 (같은 헛수고 반복 X)
-  const repeat = args.repeat && ['gather', 'mine', 'ore'].includes(kind);
+  // 농부(farm repeat)는 밭을 돌고 잠깐 기다렸다가(밀이 자라게) 다시 돈다 - 빈손이어도 계속 (밀은 자라는 중)
+  const repeat = args.repeat && ['gather', 'mine', 'ore', 'farm'].includes(kind);
   try {
     for (let round = 0; ; round++) {
       let result = {};
       if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8));
       else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0);
       else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8));
-      else if (kind === 'farm') result = await doFarm(entry, Math.max(1, Math.min(8, args.plots || 1)), Math.max(0, Math.min(7, args.grow || 0)));
+      else if (kind === 'farm') {
+        if (round) { for (let w = 0; w < 36 && !entry.cancel; w++) await sleep(5000); }   // 3분 기다렸다 다시
+        if (entry.cancel) break;
+        result = await doFarm(entry, Math.max(1, Math.min(8, args.plots || 1)), Math.max(0, Math.min(7, args.grow || 0)),
+          Math.max(0, args.grow_min || 0));
+      }
       else if (kind === 'ore') result = await doOre(entry, Math.min(16, args.count || 4));
       else if (kind === 'patrol') result = await doPatrol(entry, Math.min(900, args.seconds || 300));
       else if (kind === 'rest') { await goNear(entry.bot, VX, VZ, 4); result = {}; }
       else if (kind === 'audit') result = await doAudit(entry, args.slots || {});
       emit(name, 'done', { task: kind, result, round });
       const gained = Object.values(result).some((v) => typeof v === 'number' && v > 0);
-      if (!repeat || !gained || entry.cancel || round >= 5) break;
+      if (!repeat || entry.cancel) break;
+      if (kind === 'farm' ? round >= 7 : (!gained || round >= 5)) break;
     }
   } catch (e) {
     emit(name, 'failed', { task: kind, error: String(e.message || e).slice(0, 200) });
@@ -552,8 +565,12 @@ function join(name) {
     emit(name, 'joined');
   });
   // 배고픔 (봇은 스스로 먹지 않는다) - 배가 고프면 포만감을 채워 굶어서 쓰러지거나 체력이 안 차는 일이 없게
+  // 배가 고프면 마을 창고 식량(농부가 거둔 밀)을 먹는다 - 창고가 비었으면(rations false) 굶는다. 2분에 한 번까지
   entry.feeder = setInterval(() => {
-    if (bot.entity && typeof bot.food === 'number' && bot.food < 14) run(bot, 'effect give @s saturation 2 1 true').catch(() => {});
+    if (!bot.entity || typeof bot.food !== 'number' || bot.food >= 14 || !rations) return;
+    if (Date.now() - (entry.ateAt || 0) < 120000) return;
+    entry.ateAt = Date.now();
+    run(bot, 'effect give @s saturation 2 1 true').then(() => emit(name, 'ate')).catch(() => {});
   }, 30000);
   bot.on('entityDead', (e) => {
     if (isHostile(e) && bot.pvp.target === e) { entry.kills++; emit(name, 'kill', { mob: e.name }); }
@@ -617,6 +634,7 @@ http.createServer(async (req, res) => {
       const b = await body(req);
       const name = String(b.name || '');
       if (url.pathname === '/leave') { leave(name === '*' ? '*' : name); return send(res, 200, { ok: true }); }
+      if (url.pathname === '/rations') { rations = !!b.ok; return send(res, 200, { ok: true, rations }); }
       if (url.pathname === '/raid') {
         const mob = /^[a-z_]{3,24}$/.test(String(b.mob || '')) ? b.mob : 'zombie';
         const result = await doRaid(Math.max(1, Math.min(12, b.count || 4)), mob);

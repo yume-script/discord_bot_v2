@@ -92,8 +92,21 @@ TASKS = {"gather": "나무 베기", "mine": "돌 캐기", "farm": "밭 수확", 
 TASK_RES = {"gather": "logs", "mine": "stone", "farm": "food", "ore": "iron"}   # 일 -> 주로 얻는 자원
 RES_TASK = {"logs": "gather", "stone": "mine", "food": "farm", "coal": "ore", "iron": "ore"}
 ROLES = {"gather": "나무꾼", "mine": "광부", "farm": "농부", "ore": "광산꾼", "build": "건축가", "patrol": "경비"}
-ROLE_AFTER = 3            # 이만큼 해내면 그 일이 직업이 된다
+ROLE_AFTER = 3            # (직업이 없을 때) 이만큼 해내면 그 일이 직업이 된다
 SPECIALIST_COUNT = 18     # 직업에 맞는 일을 맡으면 (보통 12)
+# 직업 - 사람마다 하나. 처음 개척지에 올 때 프로필(말/설정)을 보고 정하고(없으면 모자란 직업으로), 자기 직업 일을 되풀이한다.
+#   농부: 밭을 일구고(없으면 짓고) 다 익은 밀을 거둔다 - 마을 식량 / 나무꾼: 나무 / 광부: 돌, 시대가 석탄·철을 원하면 광석 /
+#   건축가: 재료가 되면 이번 시대 건물을 짓고, 모자라면 그 재료를 모은다 / 경비: 밤에 순찰, 낮엔 나무를 돕는다.
+# 배가 고프면 마을 창고의 식량(농부가 거둔 밀)을 먹는다 (MEAL) - 창고가 비면 굶는다(봇 서비스에 배급 끊김).
+# 매시 회의 뒤 의장이 한 사람의 직업을 바꿀 수 있다 (job_change - 식량이 모자라면 농부 하나 더 등).
+JOBS = {"farm": "농부", "gather": "나무꾼", "mine": "광부", "build": "건축가", "patrol": "경비"}
+JOB_SHARE = {"farm": 0.3, "gather": 0.3, "mine": 0.2, "build": 0.1, "patrol": 0.1}   # 직업이 없는 사람 나눌 때 목표 비율
+JOB_WORDS = {"farm": ("농", "요리", "밭", "약초", "식", "주방", "빵", "엘프"),
+             "mine": ("드워프", "대장", "광", "채굴", "철", "광산", "석공"),
+             "build": ("건축", "목수", "장인", "기술", "설계", "공방"),
+             "patrol": ("기사", "검", "전사", "궁수", "용병", "경비", "민병", "정찰", "무사", "레인저"),
+             "gather": ("나무", "숲", "사냥", "벌목", "목재")}
+MEAL = 3                  # 한 번 먹을 때 쓰는 마을 식량 (밀 3 = 빵 1)
 START_FOOD = 24           # 처음 들고 온 식량
 EAT = 1                   # 한 바퀴(TICK_MIN분)에 일하는 사람 한 명이 먹는 식량
 # 시대: 이름, 다음 시대로 가려면 지어야 할 것(누적 개수), 풀어야 할 조건 {"stock": 창고에 있어야 할 양, "made": 지금까지 만든 양}
@@ -229,10 +242,43 @@ def ledger(st: dict) -> str:
 
 # ===================================================================== 자율 운영 (문제, 직업, 교훈, 목표, 연대기)
 def role(st: dict, name: str) -> str:
-    """그 사람 직업 일(task 키) - 가장 많이 해낸 일이 ROLE_AFTER번 이상이면. 없으면 ''"""
+    """그 사람 직업 일(task 키) - 정해진 직업(jobs)이 먼저, 없으면 가장 많이 해낸 일이 ROLE_AFTER번 이상일 때. 없으면 ''"""
+    if (st.get("jobs") or {}).get(name) in JOBS:
+        return st["jobs"][name]
     sk = (st.get("skill") or {}).get(name) or {}
     best = max(sk, key=sk.get, default="")
     return best if best in ROLES and sk.get(best, 0) >= ROLE_AFTER else ""
+
+
+def give_job(st: dict, agent: dict, now: datetime | None = None) -> tuple[str, str | None]:
+    """직업이 없으면 정한다 (프로필 말 -> 없으면 모자란 직업). 반환: (직업, 새로 정했으면 연대기 말)"""
+    from . import raids
+    jobs = st.setdefault("jobs", {})
+    name = agent["name"]
+    if jobs.get(name) in JOBS:
+        return jobs[name], None
+    text = f"{agent.get('profile', '')} {agent.get('speech', '')}"
+    hits = [j for j, words in JOB_WORDS.items() if any(w in text for w in words)]
+    if not hits and raids.DEFENDERS.get(name, 0) >= 4:
+        hits = ["patrol"]
+    count = {j: sum(1 for v in jobs.values() if v == j) for j in JOBS}
+    total = max(1, len(jobs))
+
+    def lack(j):              # 목표 비율보다 얼마나 모자란지 (클수록 먼저)
+        return JOB_SHARE[j] - count[j] / total
+    job = max(hits, key=lack) if hits else max(JOBS, key=lack)
+    jobs[name] = job
+    return job, history(st, now or now_kst(), f"{name}이(가) 개척지의 {JOBS[job]}이(가) 되었다")
+
+
+def change_job(st: dict, name: str, job: str, now: datetime, why: str = "") -> str | None:
+    """직업 바꾸기 (의장 결정). 반환: 연대기 말"""
+    jobs = st.setdefault("jobs", {})
+    if job not in JOBS or jobs.get(name) == job:
+        return None
+    old = jobs.get(name)
+    jobs[name] = job
+    return history(st, now, f"{name}이(가) {JOBS.get(old, '일꾼')}에서 {JOBS[job]}(으)로 바뀌었다" + (f" - {why}" if why else ""))
 
 
 def lesson(st: dict, text: str) -> None:
@@ -324,7 +370,9 @@ PLAN_SYSTEM = """너는 숲 너머 개척지(마인크래프트 마을)의 회�
 다음 한 시간 동안 마을이 집중할 목표 하나를 정한다. focus: food(밭 수확으로 식량) / logs / stone / ore(석탄·철) /
 build(건물) / defense(몬스터). target은 한 시간 동안 늘릴 양(식량·자원은 개수, build는 채 수, defense는 마리 수) -
 지난 결과와 교훈을 보고 해낼 만큼만. 급한 문제(식량 부족)가 있으면 그것부터.
-JSON으로만: {"focus": "food|logs|stone|ore|build|defense", "target": 숫자, "why": "한 문장"}"""
+[직업]을 보고, 문제를 풀려면 한 사람의 직업을 바꿀 수 있다(예: 식량이 계속 모자라면 나무꾼 하나를 농부로). 바꿀 필요 없으면 비운다.
+JSON으로만: {"focus": "food|logs|stone|ore|build|defense", "target": 숫자, "why": "한 문장",
+ "job_change": {"name": "이름 또는 빈칸", "job": "farm|gather|mine|build|patrol", "why": "한 문장"}}"""
 
 
 def set_plan(st: dict, now: datetime, meeting: list[dict] | None = None, llm=None) -> dict | None:
@@ -333,6 +381,7 @@ def set_plan(st: dict, now: datetime, meeting: list[dict] | None = None, llm=Non
     facts = (f"[장부] {ledger(st)}\n[지금 문제] " + (" / ".join(probs) or "없음")
              + "\n[교훈] " + (" / ".join(f"{x['text']}({x['n']})" for x in (st.get("lessons") or [])[-5:]) or "없음")
              + f"\n[지난 목표 성적] {st.get('plans') or '처음'}"
+             + "\n[직업] " + (", ".join(f"{n}={JOBS[j]}" for n, j in (st.get("jobs") or {}).items() if j in JOBS) or "아직 없음")
              + "\n[방금 회의] " + (" / ".join(f"{x['speaker']}: {x['line'][:60]}" for x in (meeting or [])) or "없음"))
     if llm is None:
         from .llm import llm_json
@@ -353,6 +402,11 @@ def set_plan(st: dict, now: datetime, meeting: list[dict] | None = None, llm=Non
     target = target or {"food": 12, "logs": 24, "stone": 24, "ore": 6, "build": 1, "defense": 3}[focus]
     st["plan"] = {"focus": focus, "target": target, "why": str(out.get("why") or "")[:120],
                   "base": focus_metric(st, focus), "at": f"{now:%Y-%m-%d %H:%M}"}
+    jc = out.get("job_change") if isinstance(out.get("job_change"), dict) else {}
+    if jc.get("name") in (st.get("jobs") or {}):
+        line = change_job(st, jc["name"], str(jc.get("job")), now, str(jc.get("why") or "")[:60])
+        if line:
+            st["plan"]["job_change"] = line
     return st["plan"]
 
 
@@ -536,7 +590,8 @@ def hourly(now: datetime | None = None, speak=None, post=None, llm=None) -> list
         except Exception:  # noqa: BLE001
             chair = NAME
         post(chair, f"-# {NAME} · {now:%H:%M} · 다음 한 시간 목표\n"
-             f"🎯 {FOCUS[plan['focus']]} +{plan['target']}" + (f" - {plan['why']}" if plan.get("why") else ""))
+             f"🎯 {FOCUS[plan['focus']]} +{plan['target']}" + (f" - {plan['why']}" if plan.get("why") else "")
+             + (f"\n{plan['job_change']}" if plan.get("job_change") else ""))
     _save(st)
     print(f"[개척지] 매시 회의 {len(out)}마디 ({', '.join(people)}) · 목표 {plan and plan['focus']}")
     return out
@@ -649,6 +704,8 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
             if k:
                 gained = {"kills": k}
                 out.append((who, f"개척지 둘레를 돌며 몬스터 {k}마리를 쓰러뜨렸다 (모두 {st['kills']}마리)"))
+        elif kind == "ate":                     # 배고파서 마을 식량을 먹음 (농부가 거둔 밀)
+            res["food"] = max(0, res.get("food", START_FOOD) - MEAL)
         elif kind == "died":
             st["deaths"] = st.get("deaths", 0) + 1
             out.append((who, "몬스터에게 당해 쓰러졌다가 광장에서 다시 일어났다"))
@@ -678,11 +735,9 @@ def grow_stages(st: dict, now: datetime) -> int:
 
 
 def eat(st: dict, people: int, now: datetime) -> str | None:
-    """일하는 사람들이 식량을 먹는다 (바퀴마다). 반환: 부족이 시작되거나 풀렸을 때 연대기 말"""
+    """식량 사정 (먹는 건 봇이 배고플 때 'ate' 이벤트로 MEAL씩 - apply_events). 반환: 부족이 시작되거나 풀렸을 때 연대기 말"""
     res = st.setdefault("res", {})
     res.setdefault("food", START_FOOD)
-    if people:
-        res["food"] = max(0, res["food"] - people * EAT)
     if res["food"] <= 0 and not st.get("hungry"):
         st["hungry"] = f"{now:%Y-%m-%d %H:%M}"
         lesson(st, "식량이 바닥남 - 밭을 늘리고 수확을 맡겨야")
@@ -693,8 +748,29 @@ def eat(st: dict, people: int, now: datetime) -> str | None:
     return None
 
 
-def pick(agents: list[dict], online: list[str], day: bool | None, k: int = MAX_BOTS, rnd=None) -> list[dict]:
-    """접속할 사람 (깨어 있는 사람 중 - 이미 들어가 있던 사람 먼저, 밤이면 싸움꾼 먼저)"""
+def needed_jobs(st: dict, day: bool | None) -> list[str]:
+    """지금 개척지에 먼저 필요한 직업 순서 (식량 > 지을 수 있는 건물 > 모자란 재료 > 밤 순찰 > 나무/돌)"""
+    res = st.get("res") or {}
+    out = []
+    if res.get("food", START_FOOD) < MAX_BOTS * MEAL * 3 or not (st.get("built") or {}).get("farm"):
+        out.append("farm")
+    if day is False:
+        out.append("patrol")
+    need = needed(st)
+    if any(can_afford(st, b) for b in need):
+        out.append("build")
+    for b in need:
+        j = RES_TASK.get(short_of(st, b), "gather")
+        out.append("mine" if j == "ore" else j)
+    if any(h < n and k in ("coal", "iron") for kd, k, h, n in conditions(st)):
+        out.append("mine")
+    return list(dict.fromkeys(out + ["gather", "mine", "farm", "build", "patrol"]))
+
+
+def pick(agents: list[dict], online: list[str], day: bool | None, k: int = MAX_BOTS, rnd=None,
+         st: dict | None = None) -> list[dict]:
+    """접속할 사람 (깨어 있는 사람 중). 이미 들어가 있던 사람은 되도록 그대로 두고, 빈자리는 지금 필요한 직업 사람으로 채운다
+    (가장 급한 직업이 아무도 없으면 한 사람을 바꾼다). 직업 장부(st)가 없으면 예전처럼 들어가 있던 사람 먼저, 밤엔 싸움꾼 먼저"""
     from . import raids
     from .agents import _asleep
     rnd = rnd or random.Random()
@@ -705,18 +781,38 @@ def pick(agents: list[dict], online: list[str], day: bool | None, k: int = MAX_B
     def rank(a):
         fighter = a["name"] in raids.DEFENDERS
         return (0 if mc_name(a["name"]) in online else 1, 0 if (fighter and day is False) else 1)
-    return sorted(awake, key=rank)[:k]
+    pool = sorted(awake, key=rank)
+    if st is None:
+        return pool[:k]
+    job = lambda a: role(st, a["name"]) or give_job(st, a)[0]  # noqa: E731
+    need = needed_jobs(st, day)
+    chosen = [a for a in pool if mc_name(a["name"]) in online][:k]
+    if chosen and len(chosen) >= k and need[0] not in {job(a) for a in chosen}:
+        # 가장 급한 직업(예: 식량이 없는데 농부가 없음)이 비었다 - 직업이 겹치거나 덜 급한 사람 하나를 바꾼다
+        prio = {j: i for i, j in enumerate(need)}
+        drop = max(chosen, key=lambda a: (sum(job(b) == job(a) for b in chosen), prio.get(job(a), 99)))
+        if any(job(a) == need[0] for a in pool if a not in chosen):
+            chosen.remove(drop)
+    for j in need:
+        if len(chosen) >= k:
+            break
+        if j in {job(a) for a in chosen}:
+            continue
+        c = next((a for a in pool if a not in chosen and job(a) == j), None)
+        if c:
+            chosen.append(c)
+    for a in pool:
+        if len(chosen) >= k:
+            break
+        if a not in chosen:
+            chosen.append(a)
+    return chosen[:k]
 
 
-DECIDE_SYSTEM = """너는 숲 너머 개척지(마인크래프트 세계)에서 문명을 키우는 사람들의 일을 정한다.
-사람마다 하나씩 고른다: gather(숲에서 나무 베기 - 통나무) / mine(돌 캐기 - 돌) / farm(지은 밭에서 다 익은 밀 수확 - 식량) /
-ore(땅속 광석 캐기 - 석탄·철) / build(건물 짓기 - blueprint) / patrol(개척지 둘레를 돌며 몬스터 잡기) / rest(광장에서 쉬기).
-[지금 문제]와 [이번 시간 목표]를 먼저 풀고, 그다음 이번 시대 목표 건물과 모자란 자원. 직업이 있는 사람은 되도록 그 일을 맡긴다
-(직업 일을 하면 더 많이 해 온다). [교훈]에 되풀이되는 실패가 있으면 같은 방식을 고집하지 말고 다른 일을 고른다.
-밤에는 몬스터가 나오니 싸울 줄 아는 사람은 순찰을 한다. 식량이 바닥나면 일하는 사람들이 굶는다.
-say는 그 사람이 게임 채팅에 칠 짧은 한마디(그 사람 말투, 20자 안팎, 실제 서버/사람 이름 금지). 마을 서버 사정
-(결계 경보, 환영극 손님, 몬스터 습격)이 있으면 한마디에 자연스럽게 엮어도 된다 - 예: 극장 손님 많으니 조용히 베자.
-JSON으로만: {"tasks": [{"name": "이름", "task": "gather|mine|farm|ore|build|patrol|rest", "blueprint": "건물 키 또는 빈칸", "say": "한마디"}]}"""
+DECIDE_SYSTEM = """너는 숲 너머 개척지(마인크래프트 세계)의 일꾼들이 각자 직업 일을 하러 나가며 게임 채팅에 칠 한마디를 쓴다.
+사람마다 [할 일]이 정해져 있다 - 그 일에 맞게, 그 사람 말투로 20자 안팎 (실제 서버/사람 이름 금지). [지금 문제]나 마을 서버 사정
+(결계 경보, 환영극 손님, 몬스터 습격)이 있으면 자연스럽게 엮어도 된다 - 예: 밀이 바닥났대, 내가 얼른 거둘게.
+JSON으로만: {"says": [{"name": "이름", "say": "한마디"}]}"""
 
 
 def _gather_for(sim: dict, bp: str) -> str:
@@ -724,50 +820,52 @@ def _gather_for(sim: dict, bp: str) -> str:
     return RES_TASK.get(short_of(sim, bp), "gather")
 
 
+def job_task(st: dict, name: str, sim: dict, day: bool | None) -> tuple[str, str]:
+    """그 사람이 직업대로 지금 할 일 (task, blueprint) - sim은 이번 바퀴에 예약한 재료를 뺀 장부"""
+    job = role(st, name) or "gather"
+    farms = (sim.get("built") or {}).get("farm", 0)
+    if job == "farm":
+        if farms:
+            return "farm", ""
+        if can_afford(sim, "farm"):
+            return "build", "farm"
+        return "gather", ""                      # 밭 지을 통나무부터
+    if job == "build":
+        for b in needed(sim) or allowed(sim):
+            if can_afford(sim, b):
+                return "build", b
+        need = needed(sim) or ["hut"]
+        return _gather_for(sim, need[0]), ""     # 재료가 모자라면 그 재료를 모은다
+    if job == "mine":
+        want_ore = any(h < n and k in ("coal", "iron") for kd, k, h, n in conditions(sim)) or any(
+            short_of(sim, b) in ("coal", "iron") for b in needed(sim) if not can_afford(sim, b))
+        return ("ore" if want_ore else "mine"), ""
+    if job == "patrol":
+        return ("patrol" if day is False else "gather"), ""
+    return "gather", ""
+
+
 def decide(people: list[dict], st: dict, day: bool | None, llm=None, now: datetime | None = None) -> list[dict]:
-    """할 일 정하기 (LLM 한 번) + 규칙으로 바로잡기 - 자원은 예약한 만큼 st['res']에서 미리 뺀 것처럼 계산.
-    규칙: 못 짓는 건물 -> 모자란 자원 모으기 / 밭이 없으면 farm 대신 밭 짓기(또는 나무) / 식량이 바닥났거나 목표가 식량이면
-    한 명은 밭 수확 / 목표 일을 아무도 안 맡으면 한 명에게 / 밤엔 가장 센 사람이 순찰"""
+    """할 일 정하기 - 각자 직업대로 (job_task), 재료는 이번 바퀴에 예약한 만큼 미리 뺀 장부(sim)로 계산.
+    규칙으로 바로잡기: 굶는데 밭 일을 하는 사람이 없으면 한 명이 거든다 / 목표 일을 아무도 안 하면 한 명이 거든다 /
+    자가 점검이 쉬게 한 일은 다른 일로 / 밤엔 가장 센 사람이 순찰. 한마디(say)만 LLM 한 번"""
     from . import raids
     if not people:
         return []
-    ok = allowed(st)
+    for p in people:
+        give_job(st, p, now)
     plan = st.get("plan") if (st.get("plan") or {}).get("focus") in FOCUS else None
-    probs = problems(st, len(people))
-    facts = ((f"[마을 서버 사정] {server}\n" if (server := server_line()) else "")
-             + f"지금: {'낮' if day else '밤' if day is False else '모름'}\n[개척지 장부] {ledger(st)}\n"
-             + "[지금 문제] " + (" / ".join(probs) or "없음") + "\n"
-             + (f"[이번 시간 목표] {FOCUS[plan['focus']]} +{plan['target']} ({plan.get('why', '')})\n" if plan else "")
-             + "[교훈] " + (" / ".join(f"{x['text']}({x['n']}번)" for x in (st.get("lessons") or [])[-4:]) or "없음") + "\n"
-             + f"밭: {(st.get('built') or {}).get('farm', 0)}곳\n"
-             + "지을 수 있는 건물(키: 이름 값): " + ", ".join(
-                 f"{b}: {BLUEPRINTS[b][0]} " + "+".join(f"{RESOURCES[k]}{v}" for k, v in BLUEPRINTS[b][1].items()) for b in ok)
-             + "\n사람들:\n" + "\n".join(
-                 f"- {p['name']}" + (f" [직업: {ROLES[r]}]" if (r := role(st, p["name"])) else "")
-                 + f": {str(p.get('profile', ''))[:90]}" for p in people))
-    if llm is None:
-        from .llm import llm_json
-        llm = lambda s, u: llm_json(s, u, temperature=0.8, timeout=60, tag="개척지")  # noqa: E731
-    out = (llm(DECIDE_SYSTEM, facts) or {}).get("tasks") or []
-    by = {str(t.get("name")): t for t in out if isinstance(t, dict)}
-    sim = {"res": dict(st.get("res") or {}), "built": dict(st.get("built") or {}), "era": st.get("era", 0)}
-    farms = sim["built"].get("farm", 0)
+    sim = {"res": dict(st.get("res") or {}), "built": dict(st.get("built") or {}), "era": st.get("era", 0),
+           "made": dict(st.get("made") or {})}
+    farms = sim["built"].get("farm", 0)       # 이번 바퀴 전에 이미 있는 밭 (짓는 중인 밭은 아직 수확 못 함)
     tasks = []
     for p in people:
-        t = by.get(p["name"]) or {}
-        task = t.get("task") if t.get("task") in TASKS else (role(st, p["name"]) or "gather")
-        bp = t.get("blueprint") if t.get("blueprint") in ok else ""
-        if task == "farm" and not farms:          # 밭이 없으면 수확 대신 밭 짓기
-            task, bp = "build", "farm"
+        task, bp = job_task(st, p["name"], sim, day)
         if task == "build":
-            bp = bp or (needed(sim) or ok)[0]
-            if not can_afford(sim, bp):
-                task, bp = _gather_for(sim, bp), ""
-            else:
-                for k, v in BLUEPRINTS[bp][1].items():
-                    sim["res"][k] = sim["res"].get(k, 0) - v
-        tasks.append({"name": p["name"], "task": task, "blueprint": bp if task == "build" else "",
-                      "say": str(t.get("say") or "").strip()[:60]})
+            for k, v in BLUEPRINTS[bp][1].items():
+                sim["res"][k] = sim["res"].get(k, 0) - v
+            sim["built"][bp] = sim["built"].get(bp, 0) + 1          # 같은 건물을 둘이 짓지 않게
+        tasks.append({"name": p["name"], "task": task, "blueprint": bp, "say": "", "job": role(st, p["name"])})
 
     avoid = avoided(st, now)
     for t in tasks:          # 자가 점검이 잠시 쉬게 한 일은 다른 일로
@@ -776,14 +874,15 @@ def decide(people: list[dict], st: dict, day: bool | None, llm=None, now: dateti
                      blueprint="")
 
     def assign(task: str, bp: str = "") -> None:
-        """그 일을 아무도 안 맡았으면, 직업이 맞는 사람(없으면 맨 뒤 사람)에게 (순찰 중인 사람은 빼고)"""
+        """그 일을 아무도 안 하면 한 명이 거든다 (그 직업 사람이 아니면 직업이 덜 급한 사람, 순찰 중인 사람은 빼고)"""
         if any(t["task"] == task for t in tasks):
             return
-        cand = [t for t in tasks if t["task"] != "patrol"] or tasks
-        who = next((t for t in cand if role(st, t["name"]) == task), cand[-1])
-        who.update(task=task, blueprint=bp)
+        cand = [t for t in tasks if t["task"] not in ("patrol", "build")] or [t for t in tasks if t["task"] != "patrol"]
+        if not cand:
+            return
+        cand[-1].update(task=task, blueprint=bp)
 
-    hungry = (st.get("res") or {}).get("food", START_FOOD) < len(people) * EAT * 6
+    hungry = (st.get("res") or {}).get("food", START_FOOD) < len(people) * MEAL * 2
     if hungry or (plan and plan["focus"] == "food"):
         if farms:
             assign("farm")
@@ -792,8 +891,32 @@ def decide(people: list[dict], st: dict, day: bool | None, llm=None, now: dateti
     elif plan and plan["focus"] in ("logs", "stone", "ore"):
         assign(RES_TASK.get(plan["focus"], "ore"))
     if day is False and not any(t["task"] == "patrol" for t in tasks):
-        fighter = max(tasks, key=lambda t: raids.DEFENDERS.get(t["name"], 0))   # 가장 센 사람이 순찰
+        # 경비 > (짓기·밭이 아닌) 나무/돌 하던 사람 > 가장 센 사람
+        fighter = max(tasks, key=lambda t: (t["job"] == "patrol", t["task"] in ("gather", "mine", "ore", "rest"),
+                                            raids.DEFENDERS.get(t["name"], 0)))
         fighter.update(task="patrol", blueprint="")
+
+    # 한마디 (LLM 한 번 - 실패해도 일은 그대로)
+    facts = ((f"[마을 서버 사정] {server}\n" if (server := server_line()) else "")
+             + f"지금: {'낮' if day else '밤' if day is False else '모름'}\n[개척지 장부] {ledger(st)}\n"
+             + "[지금 문제] " + (" / ".join(problems(st, len(people))) or "없음") + "\n"
+             + (f"[이번 시간 목표] {FOCUS[plan['focus']]} +{plan['target']}\n" if plan else "")
+             + "[할 일]\n" + "\n".join(
+                 f"- {t['name']} ({JOBS.get(t['job'], '일꾼')}): {TASKS[t['task']]}"
+                 + (f" {BLUEPRINTS[t['blueprint']][0]}" if t["blueprint"] else "")
+                 + f" / {str(next((p.get('profile', '') for p in people if p['name'] == t['name']), ''))[:60]}"
+                 for t in tasks))
+    if llm is None:
+        from .llm import llm_json
+        llm = lambda s, u: llm_json(s, u, temperature=0.8, timeout=60, tag="개척지")  # noqa: E731
+    try:
+        says = {str(x.get("name")): str(x.get("say") or "").strip()[:60]
+                for x in ((llm(DECIDE_SYSTEM, facts) or {}).get("says") or []) if isinstance(x, dict)}
+    except Exception as e:  # noqa: BLE001
+        print(f"[개척지] 한마디 실패: {e}")
+        says = {}
+    for t in tasks:
+        t["say"] = says.get(t["name"], "")
     return tasks
 
 
@@ -1075,7 +1198,8 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         day = api.get("/state").get("day") if online else None
     except Exception:  # noqa: BLE001
         day = None
-    chosen = pick(agents, online, day, k=1 if lite else MAX_BOTS)
+    hist_before = len(st.get("history") or [])
+    chosen = pick(agents, online, day, k=1 if lite else MAX_BOTS, st=st)
     if lite and (not st.get("lite")):
         post(NAME, f"-# {NAME} · {now:%H:%M}\n결계가 높아 개척지는 한 사람만 남아 마을 안 일(밭, 짓기, 순찰)만 한다")
     st["lite"] = lite
@@ -1091,6 +1215,13 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         working = set()
     idle = [a for a in chosen if mc_name(a["name"]) not in working]
     plan = decide(idle, st, day, llm, now)
+    for h in (st.get("history") or [])[hist_before:]:     # 새로 정해진 직업 (연대기)
+        if "되었다" in h["text"]:
+            post(NAME, f"-# {NAME} · {now:%H:%M}\n📜 {h['text']}")
+    try:
+        api.post("/rations", {"ok": (st.get("res") or {}).get("food", START_FOOD) >= MEAL})   # 창고가 비면 배급 끊김
+    except Exception:  # noqa: BLE001
+        pass
     if plan and not st.get("audited") and (st.get("built") or {}):
         # 한 번: 장부의 건물이 실제로 서 있는지 둘러보기 (명령이 RCON으로 바뀌기 전엔 권한이 없어 장부에만 지어진 건물이 있다)
         t = plan[-1]
@@ -1113,7 +1244,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
                 args["count"] = max(4, args["count"] // 3)          # 광석은 드물다
         elif t["task"] == "farm":
             args = {"plots": min(8, max(slots.get("farm", 0), (st.get("built") or {}).get("farm", 0))),
-                    "grow": grow_stages(st, now)}
+                    "grow": grow_stages(st, now), "repeat": True, "grow_min": GROW_MIN}
             st["farm_at"] = f"{now:%Y-%m-%d %H:%M}"
         elif t["task"] == "build":
             cost = BLUEPRINTS[t["blueprint"]][1]
@@ -1127,7 +1258,8 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         elif t["task"] == "audit":
             args = {"slots": {bp: max(n, slots.get(bp, 0)) for bp, n in (st.get("built") or {}).items()}}
         api.post("/task", {"name": mc, "kind": t["task"], "args": args, "say": t["say"]})
-        what = TASKS[t["task"]] + (f" ({BLUEPRINTS[t['blueprint']][0]})" if t["blueprint"] else "")
+        what = (f"{JOBS[t['job']]} · " if t.get("job") in JOBS else "") + TASKS[t["task"]] + (
+            f" ({BLUEPRINTS[t['blueprint']][0]})" if t["blueprint"] else "")
         post(t["name"], f"-# {NAME} · {now:%H:%M} · {what}\n{t['say'] or '…'}")
         _remember_line(st, t["name"], f"{what} 하러 감", now)
     st["online"] = sorted(want)
@@ -1164,7 +1296,8 @@ def surge_raid(surge: dict, api: Api | None = None, post=None) -> dict | None:
 
 def summary() -> str:
     st = _load()
-    roles = ", ".join(f"{n}({ROLES[r]})" for n in (st.get("skill") or {}) if (r := role(st, n)))
+    roles = ", ".join(f"{n}({JOBS.get(r) or ROLES[r]})"
+                      for n in dict.fromkeys(list(st.get("jobs") or {}) + list(st.get("skill") or {})) if (r := role(st, n)))
     pl = st.get("plan") if (st.get("plan") or {}).get("focus") in FOCUS else None
     return (f"{NAME}: {ledger(st)} · 쓰러짐 {st.get('deaths', 0)} · "
             f"지금 접속 {', '.join(st.get('online') or []) or '없음'}"

@@ -78,24 +78,6 @@ def test_eras():
     assert "돌담 마을" in minecraft.ledger(st)
 
 
-def test_decide_rules():
-    people = [_ag("페른"), _ag("베니마루"), _ag("게르도")]
-    st = {"res": {"logs": 25, "stone": 0}, "built": {}}
-    got = minecraft.decide(people, st, day=False, llm=lambda s, u: {"tasks": [
-        {"name": "페른", "task": "build", "blueprint": "hut", "say": "지을게요"},
-        {"name": "베니마루", "task": "gather", "say": "나무"},
-        {"name": "게르도", "task": "build", "blueprint": "hut", "say": "나도"}]})
-    assert got[0]["task"] == "build" and got[0]["blueprint"] == "hut"   # 통나무 25 -> 오두막 하나는 된다
-    assert got[2]["task"] == "gather"                                  # 남은 5개로는 두 번째 오두막을 못 지음 -> 나무
-    assert got[1]["task"] == "patrol"                                  # 밤엔 가장 센 사람이 순찰
-    got = minecraft.decide([_ag("페른")], {"res": {"logs": 50}, "built": {}, "era": 1}, day=True,
-                           llm=lambda s, u: {"tasks": [{"name": "페른", "task": "build", "blueprint": "well"}]})
-    assert got[0]["task"] == "mine"                                    # 우물은 돌이 필요 -> 돌 캐기
-    got = minecraft.decide([_ag("페른")], {"res": {"logs": 99, "stone": 99}, "built": {}}, day=True,
-                           llm=lambda s, u: {"tasks": [{"name": "페른", "task": "build", "blueprint": "hall"}]})
-    assert got[0]["blueprint"] in ("hut", "farm")                      # 아직 못 짓는 시대 건물은 이번 시대 목표로
-
-
 def test_server_line_goes_into_decision(monkeypatch):
     monkeypatch.setattr(minecraft, "server_line", lambda: "결계 경보 3단계(방어) / 환영극장에 손님 2명이 상영 중")
     seen = []
@@ -205,33 +187,6 @@ def test_off_and_down(monkeypatch, tmp_path):
         def get(self, path):
             raise OSError("connection refused")
     assert "down" in minecraft.tick(api=Down(), agents=[])
-
-
-def test_food_hunger_and_farm_rule():
-    st = {"res": {"food": 3, "logs": 30}, "built": {}}
-    assert any("식량" in p for p in minecraft.problems(st, 2))
-    now = datetime(2026, 11, 1, 10)
-    assert "굶주림" in minecraft.eat(st, 3, now) and st["res"]["food"] == 0 and st["hungry"]
-    people = [_ag("페른"), _ag("게르도")]
-    got = minecraft.decide(people, st, day=True, llm=lambda s, u: {"tasks": [
-        {"name": "페른", "task": "gather"}, {"name": "게르도", "task": "farm"}]})
-    assert got[1]["task"] == "build" and got[1]["blueprint"] == "farm"        # 밭이 없으면 수확 대신 밭 짓기
-    st["built"] = {"farm": 1}
-    got = minecraft.decide(people, st, day=True, llm=lambda s, u: {"tasks": [
-        {"name": "페른", "task": "gather"}, {"name": "게르도", "task": "mine"}]})
-    assert [t["task"] for t in got].count("farm") == 1                       # 굶으면 한 명은 밭으로
-    minecraft.apply_events(st, [{"id": 1, "name": "Fern", "kind": "done", "task": "farm", "result": {"food": 30}}],
-                           {"Fern": "페른"}, now)
-    assert "식량 부족을 넘겼다" in minecraft.eat(st, 2, now) and "hungry" not in st
-
-
-def test_roles_from_experience():
-    st = {"res": {}}
-    ev = [{"id": i, "name": "Geld", "kind": "done", "task": "mine", "result": {"stone": 5}} for i in range(1, 4)]
-    lines = minecraft.apply_events(st, ev, {"Geld": "게르도"}, datetime(2026, 11, 1))
-    assert minecraft.role(st, "게르도") == "mine" and any("광부" in x for _, x in lines)
-    got = minecraft.decide([_ag("게르도")], {**st, "res": {"food": 50}}, day=True, llm=lambda s, u: {})
-    assert got[0]["task"] == "mine"                                          # 말이 없으면 직업 일
 
 
 def test_ore_first_and_empty_lesson():
@@ -367,3 +322,67 @@ def test_checkup_counts_crash(monkeypatch, tmp_path):
     minecraft.checkup(datetime(2026, 11, 1, 10), api=Healthy("a"), post=lambda n, t: posts.append(t))
     out = minecraft.checkup(datetime(2026, 11, 1, 11), api=Healthy("b"), post=lambda n, t: posts.append(t))
     assert "다시 시작됐다" in out["actions"][0]
+
+
+def _jobs(st, **jobs):
+    st.setdefault("jobs", {}).update(jobs)
+    return st
+
+
+def test_give_job_from_profile_and_balance():
+    st = {}
+    now = datetime(2026, 11, 1)
+    assert minecraft.give_job(st, _ag("센시", "드워프 요리사 - 밭과 주방을 맡는다"), now)[0] in ("farm", "mine")
+    assert minecraft.give_job(st, _ag("카이진", "드워프 대장장이, 광산"), now)[0] == "mine"
+    job, line = minecraft.give_job(st, _ag("베니마루", "오니 무사"), now)
+    assert job == "patrol" and "경비" in line
+    assert minecraft.give_job(st, _ag("베니마루"), now) == ("patrol", None)          # 한 번 정하면 그대로
+    for i in range(10):
+        minecraft.give_job(st, _ag(f"사람{i}"), now)
+    counts = {j: list(st["jobs"].values()).count(j) for j in minecraft.JOBS}
+    assert counts["farm"] >= 2 and counts["gather"] >= 2                            # 직업 없는 사람은 모자란 직업으로
+    assert "농부" in minecraft.change_job(st, "베니마루", "farm", now, "밀이 모자라") and st["jobs"]["베니마루"] == "farm"
+
+
+def test_decide_by_job():
+    people = [_ag("페른"), _ag("게르도"), _ag("카이진"), _ag("리그루드")]
+    st = _jobs({"res": {"logs": 25, "stone": 0, "food": 50}, "built": {}},
+               페른="farm", 게르도="mine", 카이진="build", 리그루드="gather")
+    got = {t["name"]: t for t in minecraft.decide(people, st, day=True, llm=lambda s, u: {"says": [
+        {"name": "페른", "say": "밭을 일굴게"}]})}
+    assert got["페른"]["task"] == "build" and got["페른"]["blueprint"] == "farm"      # 농부: 밭이 없으면 밭부터
+    assert got["게르도"]["task"] == "mine" and got["리그루드"]["task"] == "gather"
+    assert got["카이진"]["task"] == "gather"                    # 건축가: 밭을 짓고 나면 오두막(통나무 20) 재료가 모자라 나무
+    assert got["페른"]["say"] == "밭을 일굴게" and got["페른"]["job"] == "farm"
+    st["built"] = {"farm": 1}
+    st["res"]["logs"] = 30
+    got = {t["name"]: t for t in minecraft.decide(people, st, day=False, llm=lambda s, u: {})}
+    assert got["페른"]["task"] == "farm" and got["카이진"]["task"] == "build" and got["카이진"]["blueprint"] == "hut"
+    assert any(t["task"] == "patrol" for t in got.values())                         # 밤엔 한 명 순찰
+    st["era"] = 2
+    st["built"] = {"farm": 2, "hut": 4, "well": 1}
+    got = {t["name"]: t for t in minecraft.decide(people, st, day=True, llm=lambda s, u: {})}
+    assert got["게르도"]["task"] == "ore"                                             # 시대가 석탄을 원하면 광부는 광석
+
+
+def test_hungry_someone_helps_farm_and_ate_event():
+    st = _jobs({"res": {"food": 0, "logs": 5}, "built": {"farm": 1}}, 게르도="mine", 리그루드="gather")
+    now = datetime(2026, 11, 1, 10)
+    assert "굶주림" in minecraft.eat(st, 2, now) and st["hungry"]
+    got = minecraft.decide([_ag("게르도"), _ag("리그루드")], st, day=True, llm=lambda s, u: {})
+    assert [t["task"] for t in got].count("farm") == 1                              # 농부가 없어도 한 명은 밭으로
+    minecraft.apply_events(st, [{"id": 1, "name": "Fern", "kind": "done", "task": "farm", "result": {"food": 30}},
+                                {"id": 2, "name": "Geld", "kind": "ate"}], {"Fern": "페른", "Geld": "게르도"}, now)
+    assert st["res"]["food"] == 30 - minecraft.MEAL
+    assert "식량 부족을 넘겼다" in minecraft.eat(st, 2, now) and "hungry" not in st
+
+
+def test_pick_covers_needed_jobs(monkeypatch):
+    monkeypatch.setattr("poring_food.agents._asleep", lambda a, h: False)
+    agents = [_ag(n) for n in ("페른", "게르도", "카이진", "리그루드", "센시")]
+    st = _jobs({"res": {"food": 0}, "built": {"farm": 1}}, 페른="gather", 게르도="mine", 카이진="build",
+               리그루드="gather", 센시="farm")
+    online = [minecraft.mc_name(n) for n in ("페른", "게르도", "리그루드")]
+    got = [a["name"] for a in minecraft.pick(agents, online, True, k=3, st=st)]
+    assert "센시" in got and len(got) == 3                                           # 굶는데 농부가 없으면 농부를 들인다
+    assert sum(1 for n in got if n in ("페른", "리그루드")) == 1                       # 겹치는 나무꾼 하나가 나간다
