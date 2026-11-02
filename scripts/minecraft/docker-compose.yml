@@ -44,6 +44,9 @@ services:
       # 이 UDP 포트만 연다 (베드락 유저는 Floodgate가 Xbox 계정으로 확인한다. 25565는 온라인 인증이 꺼져 있어 누구나
       # OP 봇 이름으로 들어올 수 있으니 절대 바깥에 열지 말 것)
       - "19132:19132/udp"
+      # 새 베드락(1.26.x)은 Geyser의 '접속 신호(signaling)'를 같은 번호의 TCP(HTTP)로 먼저 찾는다 - UDP만 열면
+      # InitialConnection 오류(Terracotta)로 못 들어온다. 바깥에 열 때도 TCP/UDP 19132 둘 다 연다.
+      - "19132:19132/tcp"
     volumes:
       - ./data:/data
     deploy:
