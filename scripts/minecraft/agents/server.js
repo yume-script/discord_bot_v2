@@ -13,7 +13,9 @@
 //   POST /rations {ok}                마을 창고에 식량이 있는지 - 있으면 배고픈 봇이 먹고('ate' 이벤트, 장부에서 식량을 뺀다),
 //                                     없으면 굶는다 (쉬움 난이도라 굶어 죽지는 않지만 체력이 안 찬다)
 //   GET  /events?after=N          [{id, at, name, kind, ...}] - 끝난 일, 잡은 몬스터, 죽음
-// 건물은 마을 중심(VILLAGE_X/Z) 둘레의 자리(slot)에 /fill 명령으로 세운다.
+// 건물은 마을 중심 둘레의 자리(slot)에 /fill 명령으로 세운다. 마을 중심은 VILLAGE_X/Z가 있으면 그 자리, 없으면(기본)
+// 월드 스폰 - 봇은 늘 스폰에서 나타나는데 예전 기본값 0,0은 스폰에서 수백 칸 떨어져 청크가 안 불러와져서
+// 짓기/밭 명령이 "That position is not loaded"로 실패하고 봇은 가다가 포기했다.
 // 명령(/fill /give /clear /effect /summon ...)은 RCON(MC_RCON_PASSWORD)으로 서버에 직접 보낸다 - 봇이 OP가 아니어도 되고
 // (OPS 목록에 없는 인물은 예전엔 명령이 전부 실패해 도구도 못 받고 짓기/밭이 안 됐다), 게임 채팅도 어지럽히지 않는다.
 // RCON이 없으면 예전처럼 봇 채팅으로 (그 봇이 OP여야 함).
@@ -32,8 +34,17 @@ const MC_HOST = process.env.MC_HOST || 'mc-village';
 const MC_PORT = parseInt(process.env.MC_PORT || '25565', 10);
 const MC_VERSION = process.env.MC_VERSION || false;
 const API_PORT = parseInt(process.env.API_PORT || '3010', 10);
-const VX = parseInt(process.env.VILLAGE_X || '0', 10);
-const VZ = parseInt(process.env.VILLAGE_Z || '0', 10);
+const FIXED_CENTER = /^-?\d+$/.test(process.env.VILLAGE_X || '') && /^-?\d+$/.test(process.env.VILLAGE_Z || '');
+let VX = FIXED_CENTER ? parseInt(process.env.VILLAGE_X, 10) : null;   // null = 첫 봇이 들어올 때 월드 스폰으로
+let VZ = FIXED_CENTER ? parseInt(process.env.VILLAGE_Z, 10) : null;
+
+function setCenter(bot) {
+  if (VX !== null) return;
+  const p = bot.spawnPoint && (bot.spawnPoint.x || bot.spawnPoint.z) ? bot.spawnPoint : bot.entity.position;
+  VX = Math.round(p.x);
+  VZ = Math.round(p.z);
+  console.log(`마을 중심 = 월드 스폰 (${VX}, ${VZ})`);
+}
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 const RCON_HOST = process.env.MC_RCON_HOST || MC_HOST;
 const RCON_PORT = parseInt(process.env.MC_RCON_PORT || '25575', 10);
@@ -550,6 +561,7 @@ function join(name) {
   bot.loadPlugin(pvp);
   bot.loadPlugin(collectBlock);
   bot.once('spawn', () => {
+    setCenter(bot);
     const moves = new Movements(bot);
     moves.canDig = true;
     bot.pathfinder.setMovements(moves);
@@ -623,6 +635,7 @@ http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
       return send(res, 200, { ok: true, bots: [...bots.keys()], started: STARTED, rcon: rconStat,
+        center: VX === null ? null : { x: VX, z: VZ },
         heapMB: Math.round(process.memoryUsage().heapUsed / 1048576) });
     }
     if (req.method === 'GET' && url.pathname === '/state') return send(res, 200, state());
