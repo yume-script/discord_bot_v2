@@ -14,14 +14,6 @@ youtube:
     - "yt-mcp-server"
     - "youtube-mcp-server"
 
-minecraft_bds:
-  transport: stdio
-  command: /mnt/discord_bot_v2/venv/bin/python3
-  args:
-    - "/mnt/discord_bot_v2/scripts/bds_mcp.py"
-  env:
-    BDS_CONTAINER: "mc-be-server"
-
 # /mnt 전체(각 프로젝트의 .env, 백업 포함)를 읽을 수 있어서 관리자 전용
 filesystem:
   admin_only: true
