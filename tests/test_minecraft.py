@@ -120,6 +120,8 @@ def test_tick_assigns_era_and_backs_off(monkeypatch, tmp_path):
     out = minecraft.tick(datetime(2026, 11, 1, 21), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
                          llm=lambda s, u: {"tasks": []}, react=react)
     assert len(out["assigned"]) == minecraft.MAX_BOTS and posts
+    gathers = [b for p, b in api.calls if p == "/task" and b["kind"] == "gather"]
+    assert gathers and gathers[0]["args"]["repeat"] is True                 # 다음 바퀴까지 이어서 모은다
     # 오두막 2채 + 밭 1채가 다 지어지면 다음 시대 + 개척지 반응
     st = minecraft._load()
     st["built"] = {"hut": 2}
@@ -250,3 +252,13 @@ def test_plan_evaluation(monkeypatch, tmp_path):
     assert "+20" in text and "달성" in text and st["plans"] == {"ok": 1, "miss": 0} and "plan" not in st
     minecraft.set_plan(st, now, llm=lambda s, u: {"focus": "ore", "target": 9})
     assert "미달" in minecraft.evaluate_plan(st, now) and "미달" in st["lessons"][-1]["text"]
+
+
+def test_farm_growth_by_time():
+    st = {}
+    now = datetime(2026, 11, 1, 12, 0)
+    assert minecraft.grow_stages(st, now) == 7                              # 처음엔 다 익었다고 본다
+    st["farm_at"] = "2026-11-01 11:50"
+    assert minecraft.grow_stages(st, now) == 2                              # 10분 = 2단계
+    st["farm_at"] = "2026-11-01 09:00"
+    assert minecraft.grow_stages(st, now) == 7
