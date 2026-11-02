@@ -407,3 +407,22 @@ def test_center_move_resets_phantom_buildings(monkeypatch, tmp_path):
     assert st["center"] == {"x": -300, "z": -150} and st["res"]["logs"] in (15, 7)   # 자원은 그대로 (밭 짓기 예약 8 빼고)
     assert not any(v for v in st["built"].values())
     assert any("(-300, -150)" in p and "실제로는 서지 못했다" in p for p in posts)
+
+
+def test_tick_survives_slow_bot_service(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+
+    class Slow(FakeApi):
+        def post(self, path, body):
+            if path in ("/leave", "/task"):
+                self.calls.append((path, body))
+                return {"error": "Read timed out"}
+            return super().post(path, body)
+    api = Slow(bots=["Zzz"])
+    st = minecraft._load()
+    st.update(res={"logs": 40, "food": 50}, jobs={"카이진": "build"})
+    minecraft._save(st)
+    out = minecraft.tick(datetime(2026, 11, 1, 12), api=api, agents=[_ag("카이진")], post=lambda n, t: None,
+                         llm=lambda s, u: {}, react=lambda *a, **k: None)
+    assert "assigned" in out and out["assigned"][0]["task"] == "-"               # 멈추지 않고 끝까지
+    assert minecraft._load()["res"]["logs"] == 40                                # 못 맡긴 짓기 재료는 되돌림

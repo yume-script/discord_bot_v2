@@ -422,11 +422,19 @@ class Api:
         return r.json()
 
     def post(self, path: str, body: dict) -> dict:
+        """POST. /raid 말고는 실패해도 예외를 던지지 않는다 - 봇 서비스가 잠깐 굼떠도(접속/나가기 응답 지연) 한 바퀴 전체가
+        멈추지 않게 (예전엔 /leave 하나가 15초 넘게 걸려 그 바퀴의 일 나눠 주기가 통째로 날아갔다). 반환에 "error"가 생긴다"""
         import requests
-        r = requests.post(self.base + path, json=body, timeout=75 if path == "/task" else 15)
-        if r.status_code >= 500:
-            r.raise_for_status()
-        return r.json() if r.content else {}
+        try:
+            r = requests.post(self.base + path, json=body, timeout=75 if path == "/task" else 30)
+            if r.status_code >= 500:
+                r.raise_for_status()
+            return r.json() if r.content else {}
+        except Exception as e:  # noqa: BLE001
+            if path == "/raid":
+                raise
+            print(f"[개척지] 봇 서비스 {path} 실패: {str(e)[:120]}")
+            return {"error": str(e)[:200]}
 
 
 # ===================================================================== 서버 상황 (이야기에 섞는다)
@@ -1203,6 +1211,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
             st["left_at"] = f"{now:%Y-%m-%d %H:%M}"
         st["online"] = []
         _save(st)
+        print(f"[개척지] 바퀴: 쉬는 중 - {why}")
         return {"busy": why}
     if not online and not force and st.get("left_at"):
         try:
@@ -1211,6 +1220,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
             rest = 0
         if rest > 0:
             _note(st, f"쉬는 중 - 철수 뒤 숨 고르기 ({int(rest) + 1}분 남음)")
+            print(f"[개척지] 바퀴: 철수 뒤 숨 고르기 ({int(rest) + 1}분 남음)")
             return {"busy": "철수 뒤 숨 고르기"}
     lite = not force and light()
     try:
@@ -1276,7 +1286,15 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
             args = {"seconds": TICK_MIN * 60 - 30}
         elif t["task"] == "audit":
             args = {"slots": {bp: max(n, slots.get(bp, 0)) for bp, n in (st.get("built") or {}).items()}}
-        api.post("/task", {"name": mc, "kind": t["task"], "args": args, "say": t["say"]})
+        sent = api.post("/task", {"name": mc, "kind": t["task"], "args": args, "say": t["say"]})
+        if sent.get("error"):                  # 못 맡겼으면 예약한 재료/자리를 되돌리고 다음 바퀴에
+            if t["task"] == "build":
+                for k, v in BLUEPRINTS[t["blueprint"]][1].items():
+                    res[k] = res.get(k, 0) + v
+                slots[t["blueprint"]] = max(0, slots.get(t["blueprint"], 1) - 1)
+                pend.pop(mc, None)
+            t["task"] = "-"
+            continue
         what = (f"{JOBS[t['job']]} · " if t.get("job") in JOBS else "") + TASKS[t["task"]] + (
             f" ({BLUEPRINTS[t['blueprint']][0]})" if t["blueprint"] else "")
         post(t["name"], f"-# {NAME} · {now:%H:%M} · {what}\n{t['say'] or '…'}")
