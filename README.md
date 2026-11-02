@@ -316,6 +316,11 @@ python app.py
   먼저, 밤엔 싸움꾼 먼저), 할 일이 없는 사람들의 일을 LLM 한 번으로 정한다(창고가 모자라면 짓기 대신 나무 모으기, 밤엔 가장 센
   사람이 순찰). 결과는 그 인물 이름으로 채널에 + 기억/연대기(건물). **결계 2단계까지는 평소대로, 3단계는 아무도 영상을 안 볼 때만 1명이 마을 안 일(밭/짓기/순찰)만, 4단계 이상이거나 3단계에 재생 중이거나 영상이 버벅이면 모두 나가고 20분은 다시 안 들어가며**(`PORING_MC_MAX_STAGE`/`_LIGHT_STAGE`/`_REJOIN_MIN`), 서버는
   비면 1분 뒤 스스로 멈춘다(`PAUSE_WHEN_EMPTY_SECONDS`). 마인크래프트 이름은 영문(`MC_NAMES`, 페른=Fern 등).
+  명령(/fill /give /clear /effect)은 봇 서비스가 **RCON으로 서버에 직접** 보낸다(OPS에 없는 인물도 짓기·밭·도구가 된다 -
+  `MC_RCON_PASSWORD`를 mc-village와 mc-agents가 같이 쓴다). 모으는 일(나무/돌/광석)은 다음 일을 받을 때까지 이어서 하고
+  (`repeat`, 빈손이면 멈춤), 나무는 지난번에 벤 숲으로 먼저 간다. 밭은 수확 사이 흐른 시간만큼(4분에 한 단계) 자란 것으로 친다
+  (밭 청크는 사람이 근처에 없으면 시간이 안 흐르므로). 봇 시야 4청크 + Node 힙 1GB(컨테이너 1280MB), keepInventory·
+  doInsomnia(팬텀 끔) 게임 규칙, 배고프면 포만감.
   설치(etc): `cd scripts/minecraft && MC_RCON_PASSWORD=... docker compose up -d --build` → `.env` `PORING_MINECRAFT=1`
   (`PORING_MC_API` 기본 `http://127.0.0.1:3010`). 서버 2GB 메모리·CPU 2개 상한, 봇 서비스 768MB·CPU 1개 상한.
   구경은 같은 집 안에서 Java 클라이언트로 `etc:25565` (온라인 인증 꺼짐이라 바깥에 포트를 열지 말 것).

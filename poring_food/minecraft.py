@@ -626,6 +626,18 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
     return out
 
 
+GROW_MIN = 4      # 밀이 한 단계 자라는 데 걸리는 시간(분) - 7단계면 약 30분에 다 익는다
+
+
+def grow_stages(st: dict, now: datetime) -> int:
+    """지난 수확 뒤 흐른 시간만큼 밀이 자란 단계 (밭 청크는 사람이 근처에 없으면 시간이 안 흘러서 봇 쪽에서 올려 준다)"""
+    try:
+        since = (now - datetime.strptime(st["farm_at"], "%Y-%m-%d %H:%M")).total_seconds() / 60
+    except (KeyError, ValueError):
+        return 7                       # 처음 - 지어 둔 뒤로 충분히 지났다고 본다
+    return max(0, min(7, int(since // GROW_MIN)))
+
+
 def eat(st: dict, people: int, now: datetime) -> str | None:
     """일하는 사람들이 식량을 먹는다 (바퀴마다). 반환: 부족이 시작되거나 풀렸을 때 연대기 말"""
     res = st.setdefault("res", {})
@@ -858,11 +870,14 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         mc = mc_name(t["name"])
         args = {}
         if t["task"] in ("gather", "mine", "ore"):
-            args = {"count": SPECIALIST_COUNT if role(st, t["name"]) == t["task"] else 12}
+            # repeat: 다음 바퀴까지 이어서 (끝날 때마다 done이 와서 창고에 쌓인다) - 10분 중 놀던 시간을 없앤다
+            args = {"count": SPECIALIST_COUNT if role(st, t["name"]) == t["task"] else 12, "repeat": True}
             if t["task"] == "ore":
                 args["count"] = max(4, args["count"] // 3)          # 광석은 드물다
         elif t["task"] == "farm":
-            args = {"plots": min(8, max(slots.get("farm", 0), (st.get("built") or {}).get("farm", 0)))}
+            args = {"plots": min(8, max(slots.get("farm", 0), (st.get("built") or {}).get("farm", 0))),
+                    "grow": grow_stages(st, now)}
+            st["farm_at"] = f"{now:%Y-%m-%d %H:%M}"
         elif t["task"] == "build":
             cost = BLUEPRINTS[t["blueprint"]][1]
             for k, v in cost.items():

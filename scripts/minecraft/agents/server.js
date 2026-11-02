@@ -11,7 +11,12 @@
 //   POST /say   {name, text}          게임 채팅 한마디 (개척지 회의)
 //   POST /raid  {count, mob}          몬스터 습격 - 마을 둘레에 몬스터 소환
 //   GET  /events?after=N          [{id, at, name, kind, ...}] - 끝난 일, 잡은 몬스터, 죽음
-// 건물은 마을 중심(VILLAGE_X/Z) 둘레의 자리(slot)에 /fill 명령으로 세운다 (봇은 OP - docker-compose OPS).
+// 건물은 마을 중심(VILLAGE_X/Z) 둘레의 자리(slot)에 /fill 명령으로 세운다.
+// 명령(/fill /give /clear /effect /summon ...)은 RCON(MC_RCON_PASSWORD)으로 서버에 직접 보낸다 - 봇이 OP가 아니어도 되고
+// (OPS 목록에 없는 인물은 예전엔 명령이 전부 실패해 도구도 못 받고 짓기/밭이 안 됐다), 게임 채팅도 어지럽히지 않는다.
+// RCON이 없으면 예전처럼 봇 채팅으로 (그 봇이 OP여야 함).
+// 메모리: 봇마다 세계 조각(청크)을 따로 들고 있어서 시야(BOT_VIEW_DISTANCE, 기본 4청크)를 줄이고, Node 힙은 compose의
+// NODE_OPTIONS로 늘린다 (기본값이면 3명이 넓게 돌아다닐 때 "JavaScript heap out of memory"로 통째로 죽는다).
 // 재료(통나무)는 봇 쪽(poring_food)이 마을 창고 장부로 세고, 모자라면 짓기를 시키지 않는다.
 'use strict';
 const http = require('http');
@@ -28,8 +33,91 @@ const API_PORT = parseInt(process.env.API_PORT || '3010', 10);
 const VX = parseInt(process.env.VILLAGE_X || '0', 10);
 const VZ = parseInt(process.env.VILLAGE_Z || '0', 10);
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
+const RCON_HOST = process.env.MC_RCON_HOST || MC_HOST;
+const RCON_PORT = parseInt(process.env.MC_RCON_PORT || '25575', 10);
+const RCON_PASS = process.env.MC_RCON_PASSWORD || '';
+const BOT_VIEW = parseInt(process.env.BOT_VIEW_DISTANCE || '4', 10);
+const net = require('net');
+
+// ------------------------------------------------------------------ RCON (명령은 서버에 직접)
+let rconSock = null;
+let rconReady = null;
+let rconId = 0;
+let rconBuf = Buffer.alloc(0);
+const rconWait = new Map();
+
+function rconPacket(id, type, body) {
+  const b = Buffer.from(body, 'utf8');
+  const p = Buffer.alloc(14 + b.length);
+  p.writeInt32LE(10 + b.length, 0);
+  p.writeInt32LE(id, 4);
+  p.writeInt32LE(type, 8);
+  b.copy(p, 12);
+  return p;
+}
+
+function rconConnect() {
+  if (rconReady) return rconReady;
+  rconReady = new Promise((resolve, reject) => {
+    const sock = net.createConnection(RCON_PORT, RCON_HOST);
+    let dead = false;
+    const fail = (e) => {
+      if (dead) return;
+      dead = true;
+      for (const w of rconWait.values()) w.reject(e);
+      rconWait.clear();
+      rconSock = null;
+      rconReady = null;
+      rconBuf = Buffer.alloc(0);
+      try { sock.destroy(); } catch (x) { /* 이미 닫힘 */ }
+      reject(e);
+    };
+    sock.on('connect', () => {
+      const id = ++rconId;
+      rconWait.set(id, { resolve: () => { rconSock = sock; resolve(sock); }, reject: fail });
+      sock.write(rconPacket(id, 3, RCON_PASS));
+    });
+    sock.on('data', (d) => {
+      rconBuf = Buffer.concat([rconBuf, d]);
+      while (rconBuf.length >= 4) {
+        const len = rconBuf.readInt32LE(0);
+        if (rconBuf.length < len + 4) break;
+        const id = rconBuf.readInt32LE(4);
+        const text = rconBuf.toString('utf8', 12, len + 2);
+        rconBuf = rconBuf.subarray(len + 4);
+        if (id === -1) return fail(new Error('RCON 비밀번호가 틀림'));
+        const w = rconWait.get(id);
+        if (w) { rconWait.delete(id); w.resolve(text); }
+      }
+    });
+    sock.on('error', fail);
+    sock.on('close', () => fail(new Error('RCON 연결 끊김')));
+  });
+  return rconReady;
+}
+
+async function rcon(cmd) {
+  const sock = await rconConnect();
+  const id = ++rconId;
+  const done = new Promise((resolve, reject) => rconWait.set(id, { resolve, reject }));
+  sock.write(rconPacket(id, 2, cmd));
+  return Promise.race([done, sleep(10000).then(() => { rconWait.delete(id); throw new Error('RCON 응답 없음'); })]);
+}
+
+// 명령 하나 (앞의 / 없이). @s는 그 봇 이름으로 바꾼다. RCON이 안 되면 봇 채팅으로
+async function run(bot, cmd) {
+  const name = bot && bot.username;
+  const c = name ? cmd.replace(/@s\b/g, name) : cmd;
+  if (RCON_PASS) {
+    try { return await rcon(c); } catch (e) { console.log(`RCON 실패 (${e.message}) - 채팅으로: ${c.slice(0, 60)}`); }
+  }
+  if (bot) bot.chat(`/${cmd}`);
+  return '';
+}
 
 const bots = new Map();      // 이름 -> {bot, task, kills}
+let forest = null;           // 마지막으로 나무를 벤 곳 (모두가 같이 쓴다)
+let worldReady = false;      // 게임 규칙을 한 번 맞췄는지
 const events = [];           // 최근 500개
 let nextId = 1;
 
@@ -139,23 +227,31 @@ async function doGather(entry, count) {
   const logIds = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log']
     .map((n) => bot.registry.blocksByName[n] && bot.registry.blocksByName[n].id).filter(Boolean);
   try { await bot.waitForChunksToLoad(); } catch (e) { /* 일부만 불러와도 진행 */ }
+  if (forest && !bot.findBlock({ matching: logIds, maxDistance: 32 })) {
+    await goNear(bot, forest.x, forest.z, 6);           // 지난번에 나무를 벤 숲으로 먼저
+    try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+  }
   let got = 0;
   let misses = 0;
-  while (got < count && !entry.cancel && misses < 5) {
+  while (got < count && !entry.cancel && misses < 6) {
     const block = bot.findBlock({ matching: logIds, maxDistance: 64 });
     if (!block) {
-      // 근처에 나무가 없으면 아무 쪽으로나 40칸 걸어가서 다시 찾는다 (최대 4번)
+      // 근처에 나무가 없으면 한쪽으로 점점 멀리 (50, 100, 150칸...) 걸어가서 다시 찾는다
       misses++;
-      const a = Math.random() * Math.PI * 2;
+      if (misses === 1) entry.dir = Math.random() * Math.PI * 2;
+      const a = entry.dir + (misses % 2 ? 0 : 0.6);
       const p = bot.entity.position;
-      await goNear(bot, Math.round(p.x + 40 * Math.cos(a)), Math.round(p.z + 40 * Math.sin(a)), 4);
+      await goNear(bot, Math.round(p.x + 50 * Math.cos(a)), Math.round(p.z + 50 * Math.sin(a)), 4);
       try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
       continue;
     }
     try { await bot.collectBlock.collect(block); got++; } catch (e) { misses++; }
   }
   // 모은 통나무는 마을 창고로 (가방에서 빼서 장부로 - 실제 건물은 /fill)
-  if (got) bot.chat(`/clear @s #minecraft:logs ${got}`);
+  if (got) {
+    await run(bot, `clear @s #minecraft:logs ${got}`);
+    forest = bot.entity.position.floored();          // 다음에 나무 베러 갈 곳
+  }
   await goNear(bot, VX, VZ, 6);
   return { logs: got };
 }
@@ -180,13 +276,15 @@ async function doMine(entry, count) {
     }
     try { await bot.collectBlock.collect(block); got++; } catch (e) { misses++; }
   }
-  if (got) bot.chat(`/clear @s #minecraft:stone_tool_materials ${got}`);
+  if (got) await run(bot, `clear @s #minecraft:stone_tool_materials ${got}`);
   await goNear(bot, VX, VZ, 6);
   return { stone: got };
 }
 
-async function doFarm(entry, plots) {
+async function doFarm(entry, plots, grow) {
   // 밭 수확 - 지은 밭(자리 0..plots-1)을 돌며 다 익은 밀(age=7)을 거두고 그 자리에 다시 심는다. 거둔 밀 한 포기 = 식량 1
+  // grow: 지난 수확 뒤 흐른 시간만큼 자란 단계 (poring_food가 계산). 밭 청크는 사람이 근처에 있을 때만 시간이 흘러서
+  // (봇은 보통 숲/채석장에 있다) 실제 무작위 성장만 기다리면 거의 안 자란다 - 그만큼 나이를 올려 준 뒤 거둔다
   const bot = entry.bot;
   let food = 0;
   for (let slot = 0; slot < plots && !entry.cancel; slot++) {
@@ -197,16 +295,19 @@ async function doFarm(entry, plots) {
     for (let dx = 0; dx < 7; dx++) {
       for (let dz = 0; dz < 7; dz++) {
         const b = bot.blockAt(new Vec3(probe.x + dx, y + 1, probe.z + dz));
-        if (b && b.name === 'wheat' && (b.getProperties().age === 7 || b.metadata === 7)) {
-          bot.chat(`/setblock ${probe.x + dx} ${y + 1} ${probe.z + dz} wheat[age=0]`);
+        if (!b || b.name !== 'wheat') continue;
+        const age = Math.min(7, (Number(b.getProperties().age) || 0) + grow);
+        if (age >= 7) {
+          await run(bot, `setblock ${probe.x + dx} ${y + 1} ${probe.z + dz} wheat[age=0]`);
           food++;
-          await sleep(120);
+        } else if (grow) {
+          await run(bot, `setblock ${probe.x + dx} ${y + 1} ${probe.z + dz} wheat[age=${age}]`);
         }
       }
     }
     // 비어 버린 칸(밟혀 망가진 곳)은 다시 심는다
-    bot.chat(`/fill ${probe.x} ${y + 1} ${probe.z} ${probe.x + 6} ${y + 1} ${probe.z + 6} wheat[age=0] replace air`);
-    bot.chat(`/setblock ${probe.x + 3} ${y + 1} ${probe.z + 3} air`);
+    await run(bot, `fill ${probe.x} ${y + 1} ${probe.z} ${probe.x + 6} ${y + 1} ${probe.z + 6} wheat[age=0] replace air`);
+    await run(bot, `setblock ${probe.x + 3} ${y + 1} ${probe.z + 3} air`);
     await sleep(400);
   }
   await goNear(bot, VX, VZ, 6);
@@ -234,8 +335,8 @@ async function doOre(entry, count) {
     const kind = block.name.includes('iron') ? 'iron' : 'coal';
     try { await bot.collectBlock.collect(block); got[kind]++; } catch (e) { misses++; }
   }
-  if (got.coal) bot.chat(`/clear @s coal ${got.coal}`);
-  if (got.iron) bot.chat(`/clear @s raw_iron ${got.iron}`);
+  if (got.coal) await run(bot, `clear @s coal ${got.coal}`);
+  if (got.iron) await run(bot, `clear @s raw_iron ${got.iron}`);
   await goNear(bot, VX, VZ, 6);
   return got;
 }
@@ -248,7 +349,7 @@ async function doRaid(count, mob) {
     const a = (2 * Math.PI * i) / count;
     const x = Math.round(VX + 30 * Math.cos(a));
     const z = Math.round(VZ + 30 * Math.sin(a));
-    any.bot.chat(`/execute positioned ${x} 0 ${z} positioned over motion_blocking_no_leaves run summon ${mob} ~ ~ ~`);
+    await run(any.bot, `execute positioned ${x} 0 ${z} positioned over motion_blocking_no_leaves run summon ${mob} ~ ~ ~`);
     await sleep(300);
   }
   return { count, mob };
@@ -263,8 +364,8 @@ async function doBuild(entry, blueprint, slot) {
   const o = slotOrigin(blueprint, slot, groundY(bot, probe.x, probe.z));
   for (const cmd of plan(o)) {
     if (entry.cancel) throw new Error('짓다가 멈춤');
-    bot.chat(`/${cmd}`);
-    await sleep(400);
+    await run(bot, cmd);
+    await sleep(RCON_PASS ? 100 : 400);
   }
   // 검증: 모든 건물은 (o.x, o.y+1, o.z)에 블록이 있다 - 정말 서 있는지 확인 (청크가 안 보이면 확인 못 함 = 믿는다)
   await sleep(800);
@@ -293,7 +394,6 @@ async function doPatrol(entry, seconds) {
       await goNear(bot, Math.round(VX + 14 * Math.cos(a)), Math.round(VZ + 14 * Math.sin(a)), 3);
       await sleep(2000);
     }
-    if (bot.food < 10) bot.chat('/effect give @s saturation 3 1 true');
   }
   bot.pvp.stop();
   return { kills: entry.kills - before };
@@ -308,16 +408,23 @@ async function runTask(name, kind, args, say) {
   entry.task = kind;
   await Promise.race([entry.ready, sleep(60000)]);
   if (say) entry.bot.chat(String(say).slice(0, 200));
+  // repeat: 모으는 일(gather/mine/ore)은 다음 일을 받을 때까지 이어서 한다 (한 번 끝날 때마다 done) -
+  // 일을 10분마다 나눠 주므로 금방 끝나면 남는 시간 동안 놀던 것을 없앤다. 빈손이면 멈춘다 (같은 헛수고 반복 X)
+  const repeat = args.repeat && ['gather', 'mine', 'ore'].includes(kind);
   try {
-    let result = {};
-    if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8));
-    else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0);
-    else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8));
-    else if (kind === 'farm') result = await doFarm(entry, Math.max(1, Math.min(8, args.plots || 1)));
-    else if (kind === 'ore') result = await doOre(entry, Math.min(16, args.count || 4));
-    else if (kind === 'patrol') result = await doPatrol(entry, Math.min(900, args.seconds || 300));
-    else if (kind === 'rest') { await goNear(entry.bot, VX, VZ, 4); result = {}; }
-    emit(name, 'done', { task: kind, result });
+    for (let round = 0; ; round++) {
+      let result = {};
+      if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8));
+      else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0);
+      else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8));
+      else if (kind === 'farm') result = await doFarm(entry, Math.max(1, Math.min(8, args.plots || 1)), Math.max(0, Math.min(7, args.grow || 0)));
+      else if (kind === 'ore') result = await doOre(entry, Math.min(16, args.count || 4));
+      else if (kind === 'patrol') result = await doPatrol(entry, Math.min(900, args.seconds || 300));
+      else if (kind === 'rest') { await goNear(entry.bot, VX, VZ, 4); result = {}; }
+      emit(name, 'done', { task: kind, result, round });
+      const gained = Object.values(result).some((v) => typeof v === 'number' && v > 0);
+      if (!repeat || !gained || entry.cancel || round >= 5) break;
+    }
   } catch (e) {
     emit(name, 'failed', { task: kind, error: String(e.message || e).slice(0, 200) });
   } finally {
@@ -348,7 +455,8 @@ function queueJoin(name) {
 
 function join(name) {
   if (bots.has(name)) return;
-  const bot = mineflayer.createBot({ host: MC_HOST, port: MC_PORT, username: name, version: MC_VERSION || undefined, auth: 'offline' });
+  const bot = mineflayer.createBot({ host: MC_HOST, port: MC_PORT, username: name, version: MC_VERSION || undefined,
+    auth: 'offline', viewDistance: BOT_VIEW });
   const entry = { bot, task: null, kills: 0, cancel: false };
   entry.ready = new Promise((resolve) => bot.once('spawn', resolve));   // 일은 들어간 뒤에 (접속 직후 받은 일은 기다린다)
   bots.set(name, entry);
@@ -359,17 +467,28 @@ function join(name) {
     const moves = new Movements(bot);
     moves.canDig = true;
     bot.pathfinder.setMovements(moves);
-    // 맨손으로는 돌이 안 나온다 - 개척지 공용 도구 (봇은 OP)
-    for (const item of ['iron_pickaxe', 'iron_axe', 'iron_sword', 'bread 8']) bot.chat(`/give @s ${item}`);
+    // 맨손으로는 돌이 안 나온다 - 개척지 공용 도구 (RCON으로 주니 OP가 아니어도 받는다)
+    (async () => {
+      if (!worldReady) {
+        worldReady = true;
+        // 쓰러져도 도구를 잃지 않게, 잠을 안 자는 봇에게 팬텀이 몰려오지 않게
+        for (const g of ['keepInventory true', 'doInsomnia false']) await run(bot, `gamerule ${g}`);
+      }
+      for (const item of ['iron_pickaxe', 'iron_axe', 'iron_sword', 'bread 8']) await run(bot, `give @s ${item}`);
+    })();
     emit(name, 'joined');
   });
+  // 배고픔 (봇은 스스로 먹지 않는다) - 배가 고프면 포만감을 채워 굶어서 쓰러지거나 체력이 안 차는 일이 없게
+  entry.feeder = setInterval(() => {
+    if (bot.entity && typeof bot.food === 'number' && bot.food < 14) run(bot, 'effect give @s saturation 2 1 true').catch(() => {});
+  }, 30000);
   bot.on('entityDead', (e) => {
     if (isHostile(e) && bot.pvp.target === e) { entry.kills++; emit(name, 'kill', { mob: e.name }); }
   });
   bot.on('death', () => emit(name, 'died'));
   bot.on('kicked', (reason) => emit(name, 'kicked', { reason: String(reason).slice(0, 120) }));
   bot.on('error', (e) => emit(name, 'error', { error: String(e.message || e).slice(0, 120) }));
-  bot.on('end', () => { bots.delete(name); emit(name, 'left'); });
+  bot.on('end', () => { clearInterval(entry.feeder); bots.delete(name); emit(name, 'left'); });
 }
 
 function leave(name) {
