@@ -30,10 +30,16 @@ services:
       TZ: "Asia/Seoul"
       # 웹 지도 (BlueMap) - 브라우저로 http://<서버>:8100 에서 개척지를 3D로 본다. 처음 한 번 core.conf의
       # accept-download를 true로 바꿔야 그리기 시작한다 (README / scripts/minecraft/bluemap-setup.sh)
-      MODRINTH_PROJECTS: "bluemap"
+      # 베드락(모바일/콘솔/윈10) 유저도 같이 - GeyserMC(베드락 프로토콜 변환) + Floodgate(Xbox 계정으로 접속, 자바 정품 불필요)
+      MODRINTH_PROJECTS: "bluemap,geyser,floodgate"
     ports:
       - "25565:25565"
       - "8100:8100"               # BlueMap 웹 지도 (집 안에서만 - 공유기에서 열지 말 것)
+      # 베드락 접속 (Geyser는 컨테이너 안 19132/udp). 이 서버(etc)엔 이미 Bedrock 서버(mc-be-server)가 19132를 쓰므로
+      # 바깥 포트는 19133 - 베드락 유저는 서버 주소 + 포트 19133으로 접속. 바깥에 열 거라면 이 UDP 포트만 연다
+      # (베드락 유저는 Floodgate가 Xbox 계정으로 확인한다. 25565는 온라인 인증이 꺼져 있어 누구나 OP 봇 이름으로
+      #  들어올 수 있으니 절대 바깥에 열지 말 것)
+      - "19133:19132/udp"
     volumes:
       - ./data:/data
     deploy:
