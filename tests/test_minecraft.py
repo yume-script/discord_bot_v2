@@ -259,6 +259,19 @@ def test_farm_growth_by_time():
     now = datetime(2026, 11, 1, 12, 0)
     assert minecraft.grow_stages(st, now) == 7                              # 처음엔 다 익었다고 본다
     st["farm_at"] = "2026-11-01 11:50"
-    assert minecraft.grow_stages(st, now) == 2                              # 10분 = 2단계
+    assert minecraft.grow_stages(st, now) == 3                              # 10분 = 3단계 (3분에 한 단계)
     st["farm_at"] = "2026-11-01 09:00"
     assert minecraft.grow_stages(st, now) == 7
+
+
+def test_farm_no_crops_lesson_and_death_reset(monkeypatch, tmp_path):
+    st = {"res": {}}
+    minecraft.apply_events(st, [{"id": 1, "name": "Dani", "kind": "done", "task": "farm",
+                                 "result": {"food": 0, "crops": 0}}], {"Dani": "강단이"}, datetime(2026, 11, 1))
+    assert "한 포기도 없음" in st["lessons"][-1]["text"]
+    import json
+    p = tmp_path / "mc.json"
+    p.write_text(json.dumps({"deaths": 489, "lessons": [{"text": "밤에 몬스터에게 쓰러짐 - x", "n": 400}]}), encoding="utf-8")
+    monkeypatch.setattr(minecraft, "STATE_PATH", str(p))
+    st = minecraft._load()
+    assert st["deaths"] == 0 and st["lessons"] == []                         # 부풀려진 쓰러짐 수는 한 번 비운다

@@ -131,6 +131,10 @@ def _load() -> dict:
     res = st.setdefault("res", {})
     if "stock" in st:                       # 예전 장부(통나무만) -> 자원별
         res["logs"] = res.get("logs", 0) + int(st.pop("stock") or 0)
+    if not st.get("deaths_v2"):             # 예전 봇은 한 번 쓰러질 때 여러 번 셌다 - 한 번 비운다
+        st["deaths"] = 0
+        st["lessons"] = [x for x in st.get("lessons") or [] if "쓰러짐" not in x.get("text", "")]
+        st["deaths_v2"] = 1
     return st
 
 
@@ -584,8 +588,11 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
                             + "를 마을 창고에 쌓았다 (창고 " + ", ".join(f"{RESOURCES[k]} {res[k]}" for k in gained) + ")"))
             else:
                 stats[task]["empty"] += 1
-                lesson(st, f"{TASKS[task]}: 빈손으로 돌아옴" + (" (다 익은 밀이 없음 - 밭이 더 있거나 기다려야)" if task == "farm"
-                                                         else " (근처에 없음)"))
+                if task == "farm" and "crops" in r and not r.get("crops"):
+                    lesson(st, "밭 수확: 밭에 밀이 한 포기도 없음 (밭이 망가졌거나 자리를 못 찾음 - 밭을 새로 지어야)")
+                else:
+                    lesson(st, f"{TASKS[task]}: 빈손으로 돌아옴" + (" (아직 덜 익음 - 기다리거나 밭을 늘려야)" if task == "farm"
+                                                             else " (근처에 없음)"))
         elif kind == "done" and task == "build":
             bp = r.get("blueprint") or (pend.get(e.get("name")) or {}).get("blueprint")
             if bp in BLUEPRINTS:
@@ -626,7 +633,7 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
     return out
 
 
-GROW_MIN = 4      # 밀이 한 단계 자라는 데 걸리는 시간(분) - 7단계면 약 30분에 다 익는다
+GROW_MIN = 3      # 밀이 한 단계 자라는 데 걸리는 시간(분) - 7단계면 약 20분에 다 익는다
 
 
 def grow_stages(st: dict, now: datetime) -> int:

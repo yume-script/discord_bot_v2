@@ -109,7 +109,13 @@ async function run(bot, cmd) {
   const name = bot && bot.username;
   const c = name ? cmd.replace(/@s\b/g, name) : cmd;
   if (RCON_PASS) {
-    try { return await rcon(c); } catch (e) { console.log(`RCON 실패 (${e.message}) - 채팅으로: ${c.slice(0, 60)}`); }
+    // 연결이 끊겼으면(서버가 RCON 연결을 닫음) 새로 붙어서 한 번 더 - 그래도 안 되면 채팅으로
+    for (let i = 0; i < 2; i++) {
+      try { return await rcon(c); } catch (e) {
+        if (i === 1 || /비밀번호/.test(e.message)) { console.log(`RCON 실패 (${e.message}) - 채팅으로: ${c.slice(0, 60)}`); break; }
+        await sleep(300);
+      }
+    }
   }
   if (bot) bot.chat(`/${cmd}`);
   return '';
@@ -287,6 +293,7 @@ async function doFarm(entry, plots, grow) {
   // (봇은 보통 숲/채석장에 있다) 실제 무작위 성장만 기다리면 거의 안 자란다 - 그만큼 나이를 올려 준 뒤 거둔다
   const bot = entry.bot;
   let food = 0;
+  let crops = 0;                  // 밭에서 찾은 밀 포기 수 (0이면 밭이 망가졌거나 자리를 못 찾은 것)
   for (let slot = 0; slot < plots && !entry.cancel; slot++) {
     const probe = slotOrigin('farm', slot, 0);
     await goNear(bot, probe.x + 3, probe.z + 3, 4);
@@ -296,6 +303,7 @@ async function doFarm(entry, plots, grow) {
       for (let dz = 0; dz < 7; dz++) {
         const b = bot.blockAt(new Vec3(probe.x + dx, y + 1, probe.z + dz));
         if (!b || b.name !== 'wheat') continue;
+        crops++;
         const age = Math.min(7, (Number(b.getProperties().age) || 0) + grow);
         if (age >= 7) {
           await run(bot, `setblock ${probe.x + dx} ${y + 1} ${probe.z + dz} wheat[age=0]`);
@@ -311,7 +319,7 @@ async function doFarm(entry, plots, grow) {
     await sleep(400);
   }
   await goNear(bot, VX, VZ, 6);
-  return { food };
+  return { food, crops };
 }
 
 async function doOre(entry, count) {
@@ -485,7 +493,9 @@ function join(name) {
   bot.on('entityDead', (e) => {
     if (isHostile(e) && bot.pvp.target === e) { entry.kills++; emit(name, 'kill', { mob: e.name }); }
   });
-  bot.on('death', () => emit(name, 'died'));
+  bot.on('death', () => {        // 한 번 쓰러질 때 신호가 여러 번 올 수 있다 - 1분에 한 번만 센다
+    if (Date.now() - (entry.diedAt || 0) > 60000) { entry.diedAt = Date.now(); emit(name, 'died'); }
+  });
   bot.on('kicked', (reason) => emit(name, 'kicked', { reason: String(reason).slice(0, 120) }));
   bot.on('error', (e) => emit(name, 'error', { error: String(e.message || e).slice(0, 120) }));
   bot.on('end', () => { clearInterval(entry.feeder); bots.delete(name); emit(name, 'left'); });
