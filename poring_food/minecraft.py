@@ -65,7 +65,7 @@ NAME = "⛏️ 개척지"
 # 철수한 뒤에는 REJOIN_MIN분 동안 다시 들어가지 않는다 (접속할 때 스폰 청크를 불러오는 부하로 단계가 들썩이지 않게)
 MAX_STAGE = int(os.getenv("PORING_MC_MAX_STAGE", "2"))
 LIGHT_STAGE = int(os.getenv("PORING_MC_LIGHT_STAGE", "3"))
-LIGHT_TASKS = ("farm", "build", "patrol", "rest")
+LIGHT_TASKS = ("farm", "build", "patrol", "rest", "audit")
 REJOIN_MIN = int(os.getenv("PORING_MC_REJOIN_MIN", "20"))
 TALK_LINES = 5         # 매시 회의 발언 수
 
@@ -81,7 +81,7 @@ BLUEPRINTS = {
 }
 RESOURCES = {"logs": "통나무", "stone": "돌", "food": "식량", "coal": "석탄", "iron": "철"}
 TASKS = {"gather": "나무 베기", "mine": "돌 캐기", "farm": "밭 수확", "ore": "광석 캐기", "build": "짓기",
-         "patrol": "몬스터 순찰", "rest": "광장에서 쉬기"}
+         "patrol": "몬스터 순찰", "rest": "광장에서 쉬기", "audit": "개척지 둘러보기"}
 TASK_RES = {"gather": "logs", "mine": "stone", "farm": "food", "ore": "iron"}   # 일 -> 주로 얻는 자원
 RES_TASK = {"logs": "gather", "stone": "mine", "food": "farm", "coal": "ore", "iron": "ore"}
 ROLES = {"gather": "나무꾼", "mine": "광부", "farm": "농부", "ore": "광산꾼", "build": "건축가", "patrol": "경비"}
@@ -582,13 +582,17 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
                     if not made.get(key) and key in ("coal", "iron"):
                         out.append((NAME, history(st, now, f"{who}이(가) 처음으로 {RESOURCES[key]}을(를) 캐 왔다")))
                     made[key] = made.get(key, 0) + n
+            if task == "farm" and r.get("rebuilt"):
+                out.append((who, f"망가진(또는 장부에만 있던) 밭 {r['rebuilt']}곳을 다시 일구고 밀을 심었다"))
             if gained:
                 stats[task]["done"] += 1
                 out.append((who, ", ".join(f"{RESOURCES[k]} {n}개" for k, n in gained.items())
                             + "를 마을 창고에 쌓았다 (창고 " + ", ".join(f"{RESOURCES[k]} {res[k]}" for k in gained) + ")"))
             else:
                 stats[task]["empty"] += 1
-                if task == "farm" and "crops" in r and not r.get("crops"):
+                if task == "farm" and r.get("rebuilt"):
+                    pass
+                elif task == "farm" and "crops" in r and not r.get("crops"):
                     lesson(st, "밭 수확: 밭에 밀이 한 포기도 없음 (밭이 망가졌거나 자리를 못 찾음 - 밭을 새로 지어야)")
                 else:
                     lesson(st, f"{TASKS[task]}: 빈손으로 돌아옴" + (" (아직 덜 익음 - 기다리거나 밭을 늘려야)" if task == "farm"
@@ -610,6 +614,22 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
             if task in TASKS:
                 stats[task]["failed"] += 1
                 lesson(st, f"{TASKS[task]} 실패: {str(e.get('error') or '이유 모름')[:60]}")
+        elif kind == "done" and task == "audit":
+            # 둘러보기: 장부에만 있고 실제로는 없는 건물을 장부에서 뺀다 (예전에 명령 권한이 없어 실패했는데 지어졌다고 적힌 것)
+            st["audited"] = f"{now:%Y-%m-%d %H:%M}"
+            fixed = []
+            for bp, n in (r.get("found") or {}).items():
+                if bp in BLUEPRINTS and int(n) < built.get(bp, 0):
+                    fixed.append(f"{BLUEPRINTS[bp][0]} {built[bp]}→{int(n)}")
+                    built[bp] = int(n)
+                    if not built[bp]:
+                        built.pop(bp)
+            if fixed:
+                st["slots"] = {bp: built.get(bp, 0) for bp in BLUEPRINTS if built.get(bp)}   # 빈 자리부터 다시 짓게
+                out.append((NAME, history(st, now, f"{who}이(가) 개척지를 둘러보니 장부와 달랐다 - " + ", ".join(fixed)
+                                          + " (실제로 서 있는 것만 남김)")))
+            else:
+                out.append((who, f"개척지를 한 바퀴 둘러봤다 - 건물 {int(r.get('checked') or 0)}곳이 장부대로 서 있다"))
         elif kind == "done" and task == "patrol":
             stats["patrol"]["done"] += 1
             k = int(r.get("kills") or 0)
@@ -865,6 +885,10 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         working = set()
     idle = [a for a in chosen if mc_name(a["name"]) not in working]
     plan = decide(idle, st, day, llm)
+    if plan and not st.get("audited") and (st.get("built") or {}):
+        # 한 번: 장부의 건물이 실제로 서 있는지 둘러보기 (명령이 RCON으로 바뀌기 전엔 권한이 없어 장부에만 지어진 건물이 있다)
+        t = plan[-1]
+        t.update(task="audit", blueprint="", say=t.get("say") or "장부랑 실제가 맞나 한 바퀴 돌아볼게")
     if lite:                               # 멀리 나가는 일 대신 마을 안 일
         farms = (st.get("built") or {}).get("farm", 0)
         for t in plan:
@@ -894,6 +918,8 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
             pend[mc] = {"task": "build", "blueprint": t["blueprint"], "cost": cost}
         elif t["task"] == "patrol":
             args = {"seconds": TICK_MIN * 60 - 30}
+        elif t["task"] == "audit":
+            args = {"slots": {bp: max(n, slots.get(bp, 0)) for bp, n in (st.get("built") or {}).items()}}
         api.post("/task", {"name": mc, "kind": t["task"], "args": args, "say": t["say"]})
         what = TASKS[t["task"]] + (f" ({BLUEPRINTS[t['blueprint']][0]})" if t["blueprint"] else "")
         post(t["name"], f"-# {NAME} · {now:%H:%M} · {what}\n{t['say'] or '…'}")

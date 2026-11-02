@@ -221,6 +221,30 @@ function groundY(bot, x, z) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 건물마다 그 자리 기둥(세로줄)에 있어야 할 블록 - 실제로 서 있는지 확인(둘러보기/밭 고치기)에 쓴다
+const SIGNS = {
+  hut: /oak_planks|spruce_slab|oak_door/, farm: /farmland|wheat/, well: /cobblestone|water/,
+  tower: /cobblestone|oak_planks/, smithy: /stone_bricks|cobblestone|dark_oak_slab/,
+  hall: /polished_andesite|spruce_planks|stone_bricks|dark_oak_slab/, wall: /cobblestone_wall|lantern/,
+};
+
+function standing(bot, blueprint, slot) {
+  // 그 자리(모서리 + 한 칸 안쪽)를 위에서 아래로 훑어 건물 블록이 있으면 true, 없으면 false, 청크가 안 보이면 null
+  const o = slotOrigin(blueprint, slot, 0);
+  const sign = SIGNS[blueprint];
+  let seen = false;
+  for (const [dx, dz] of [[0, 0], [1, 1], [2, 2]]) {
+    for (let y = 120; y > -40; y--) {
+      const b = bot.blockAt(new Vec3(o.x + dx, y, o.z + dz));
+      if (!b) break;
+      seen = true;
+      if (sign.test(b.name)) return true;
+      if (b.boundingBox === 'block' && !/leaves|log/.test(b.name) && y < 100) break;   // 땅에 닿음
+    }
+  }
+  return seen ? false : null;
+}
+
 async function goNear(bot, x, z, range = 3) {
   try {
     await bot.pathfinder.goto(new goals.GoalNearXZ(x, z, range));
@@ -294,11 +318,14 @@ async function doFarm(entry, plots, grow) {
   const bot = entry.bot;
   let food = 0;
   let crops = 0;                  // 밭에서 찾은 밀 포기 수 (0이면 밭이 망가졌거나 자리를 못 찾은 것)
+  let rebuilt = 0;                // 다시 일군 밭
   for (let slot = 0; slot < plots && !entry.cancel; slot++) {
     const probe = slotOrigin('farm', slot, 0);
     await goNear(bot, probe.x + 3, probe.z + 3, 4);
     try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+    if (!bot.blockAt(new Vec3(probe.x + 1, 60, probe.z + 1))) continue;   // 청크가 안 보이면 건드리지 않는다
     const y = groundY(bot, probe.x + 1, probe.z + 1);
+    const before = crops;
     for (let dx = 0; dx < 7; dx++) {
       for (let dz = 0; dz < 7; dz++) {
         const b = bot.blockAt(new Vec3(probe.x + dx, y + 1, probe.z + dz));
@@ -313,13 +340,20 @@ async function doFarm(entry, plots, grow) {
         }
       }
     }
+    if (!(crops - before) || standing(bot, 'farm', slot) === false) {
+      // 밭이 아예 없다 (예전에 명령 권한이 없어 장부에만 지어진 밭, 또는 망가짐) - 그 자리에 밭을 다시 일군다
+      const o = slotOrigin('farm', slot, y);
+      for (const cmd of BLUEPRINTS.farm(o)) await run(bot, cmd);
+      rebuilt++;
+      continue;
+    }
     // 비어 버린 칸(밟혀 망가진 곳)은 다시 심는다
     await run(bot, `fill ${probe.x} ${y + 1} ${probe.z} ${probe.x + 6} ${y + 1} ${probe.z + 6} wheat[age=0] replace air`);
     await run(bot, `setblock ${probe.x + 3} ${y + 1} ${probe.z + 3} air`);
     await sleep(400);
   }
   await goNear(bot, VX, VZ, 6);
-  return { food, crops };
+  return { food, crops, rebuilt };
 }
 
 async function doOre(entry, count) {
@@ -347,6 +381,29 @@ async function doOre(entry, count) {
   if (got.iron) await run(bot, `clear @s raw_iron ${got.iron}`);
   await goNear(bot, VX, VZ, 6);
   return got;
+}
+
+async function doAudit(entry, slots) {
+  // 둘러보기 - 장부에 지어졌다고 적힌 건물 자리마다 가서 실제로 서 있는지 본다. 반환 {found: {건물: 서 있는 수}, checked}
+  const bot = entry.bot;
+  const found = {};
+  let checked = 0;
+  for (const [bp, n] of Object.entries(slots || {})) {
+    if (!SIGNS[bp]) continue;
+    found[bp] = 0;
+    for (let slot = 0; slot < Math.min(8, n) && !entry.cancel; slot++) {
+      const p = slotOrigin(bp, slot, 0);
+      await goNear(bot, p.x, p.z, 6);
+      try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+      const ok = standing(bot, bp, slot);
+      if (ok === null) continue;      // 못 봄 - 세지 않는다 (장부를 함부로 줄이지 않게)
+      checked++;
+      if (ok) found[bp]++;
+    }
+  }
+  if (entry.cancel) throw new Error('둘러보다 멈춤');
+  await goNear(bot, VX, VZ, 6);
+  return { found, checked };
 }
 
 async function doRaid(count, mob) {
@@ -429,6 +486,7 @@ async function runTask(name, kind, args, say) {
       else if (kind === 'ore') result = await doOre(entry, Math.min(16, args.count || 4));
       else if (kind === 'patrol') result = await doPatrol(entry, Math.min(900, args.seconds || 300));
       else if (kind === 'rest') { await goNear(entry.bot, VX, VZ, 4); result = {}; }
+      else if (kind === 'audit') result = await doAudit(entry, args.slots || {});
       emit(name, 'done', { task: kind, result, round });
       const gained = Object.values(result).some((v) => typeof v === 'number' && v > 0);
       if (!repeat || !gained || entry.cancel || round >= 5) break;
@@ -563,7 +621,7 @@ http.createServer(async (req, res) => {
       if (!NAME_RE.test(name)) return send(res, 400, { error: '이름은 영문/숫자/_ 3~16자' });
       if (url.pathname === '/join') { queueJoin(name); return send(res, 200, { ok: true }); }
       if (url.pathname === '/task') {
-        if (!['gather', 'mine', 'farm', 'ore', 'build', 'patrol', 'rest'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
+        if (!['gather', 'mine', 'farm', 'ore', 'build', 'patrol', 'rest', 'audit'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
         if (!bots.has(name) && joinQueue.includes(name)) {
           // 아직 접속 차례를 기다리는 중 - 들어가면 바로 하게 잠깐 기다렸다가 맡긴다
           const until = Date.now() + 60000;

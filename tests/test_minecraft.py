@@ -275,3 +275,25 @@ def test_farm_no_crops_lesson_and_death_reset(monkeypatch, tmp_path):
     monkeypatch.setattr(minecraft, "STATE_PATH", str(p))
     st = minecraft._load()
     assert st["deaths"] == 0 and st["lessons"] == []                         # 부풀려진 쓰러짐 수는 한 번 비운다
+
+
+def test_audit_fixes_phantom_buildings(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    st = minecraft._load()
+    st.update(built={"hut": 1, "farm": 1, "wall": 3}, slots={"hut": 2, "farm": 1, "wall": 3}, res={"food": 50})
+    minecraft._save(st)
+    api, posts = FakeApi(), []
+    out = minecraft.tick(datetime(2026, 11, 1, 12), api=api, agents=[_ag("페른"), _ag("게르도")],
+                         post=lambda n, t: posts.append((n, t)), llm=lambda s, u: {"tasks": []}, react=lambda *a, **k: None)
+    audit = [b for p, b in api.calls if p == "/task" and b["kind"] == "audit"]
+    assert len(audit) == 1 and audit[0]["args"]["slots"] == {"hut": 2, "farm": 1, "wall": 3}
+    assert out["assigned"][-1]["task"] == "audit"
+    st = minecraft._load()
+    lines = minecraft.apply_events(st, [{"id": 9, "name": "Geld", "kind": "done", "task": "audit",
+                                         "result": {"found": {"hut": 1, "farm": 0, "wall": 0}, "checked": 4}}],
+                                   {"Geld": "게르도"}, datetime(2026, 11, 1, 12, 5))
+    assert st["built"] == {"hut": 1} and st["audited"] and st["slots"] == {"hut": 1}
+    assert "장부와 달랐다" in lines[0][1] and "밭 1→0" in lines[0][1]
+    lines = minecraft.apply_events(st, [{"id": 10, "name": "Geld", "kind": "done", "task": "farm",
+                                         "result": {"food": 0, "crops": 0, "rebuilt": 1}}], {"Geld": "게르도"})
+    assert "다시 일구고" in lines[0][1] and not any("한 포기도" in x["text"] for x in st.get("lessons") or [])
