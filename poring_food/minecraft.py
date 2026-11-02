@@ -715,6 +715,10 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
                 out.append((who, f"개척지 둘레를 돌며 몬스터 {k}마리를 쓰러뜨렸다 (모두 {st['kills']}마리)"))
         elif kind == "ate":                     # 배고파서 마을 식량을 먹음 (농부가 거둔 밀)
             res["food"] = max(0, res.get("food", START_FOOD) - MEAL)
+        elif kind == "stuck":                   # 봇 서비스 지킴이가 너무 오래 걸린 일을 멈춤
+            if task in TASKS:
+                stats.setdefault(task, {"done": 0, "failed": 0, "empty": 0})["failed"] += 1
+                lesson(st, f"{TASKS[task]} 실패: {int(e.get('minutes') or 0)}분 넘게 끝나지 않아 멈춤 (길이 막혔거나 닿을 수 없는 곳)")
         elif kind == "died":
             st["deaths"] = st.get("deaths", 0) + 1
             out.append((who, "몬스터에게 당해 쓰러졌다가 광장에서 다시 일어났다"))
