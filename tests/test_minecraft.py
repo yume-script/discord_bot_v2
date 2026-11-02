@@ -128,13 +128,39 @@ def test_tick_assigns_era_and_backs_off(monkeypatch, tmp_path):
     minecraft.tick(datetime(2026, 11, 1, 21, 10), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
                    llm=lambda s, u: {"tasks": []}, react=react)
     assert minecraft._load()["era"] == 1 and any("통나무 마을" in t for _, t in posts) and reacted[-1][0] == "새 시대"
-    # 결계 2단계 -> 모두 철수 + 결계 담당과 돌아온 사람이 반응
+    # 결계 2단계 -> 그대로 일한다
     monkeypatch.setattr(loadshed, "stage", lambda now=None, fresh_min=15: 2)
     api.events = []
+    out = minecraft.tick(datetime(2026, 11, 1, 21, 15), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
+                         llm=lambda s, u: {"tasks": []}, react=react)
+    assert "assigned" in out and len(api.bots) == minecraft.MAX_BOTS
+    # 3단계 + 아무도 안 봄 -> 한 사람만, 마을 안 일만
+    monkeypatch.setattr(loadshed, "stage", lambda now=None, fresh_min=15: 3)
+    out = minecraft.tick(datetime(2026, 11, 1, 21, 18), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
+                         llm=lambda s, u: {"tasks": [{"name": a["name"], "task": "ore"} for a in agents]}, react=react)
+    assert len(api.bots) == 1 and all(t["task"] in minecraft.LIGHT_TASKS for t in out["assigned"])
+    assert any("한 사람만 남아" in t for _, t in posts)
+    # 4단계 -> 모두 철수 + 결계 담당과 돌아온 사람이 반응, 그 뒤 REJOIN_MIN분은 다시 안 들어감
+    monkeypatch.setattr(loadshed, "stage", lambda now=None, fresh_min=15: 4)
     out = minecraft.tick(datetime(2026, 11, 1, 21, 20), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
                          react=react)
-    assert out == {"busy": "결계 경보 2단계"} and ("/leave", {"name": "*"}) in api.calls and api.bots == []
-    assert reacted[-1][0] == "개척지 철수" and "결계 경보 2단계" in reacted[-1][2]
+    assert out == {"busy": "결계 경보 4단계"} and ("/leave", {"name": "*"}) in api.calls and api.bots == []
+    assert reacted[-1][0] == "개척지 철수" and "결계 경보 4단계" in reacted[-1][2]
+    monkeypatch.setattr(loadshed, "stage", lambda now=None, fresh_min=15: 0)
+    out = minecraft.tick(datetime(2026, 11, 1, 21, 30), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
+                         llm=lambda s, u: {"tasks": []}, react=react)
+    assert out == {"busy": "철수 뒤 숨 고르기"} and api.bots == []
+    out = minecraft.tick(datetime(2026, 11, 1, 21, 41), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
+                         llm=lambda s, u: {"tasks": []}, react=react)
+    assert "assigned" in out
+
+
+def test_stage3_with_playback_withdraws(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path, stage=3)
+    monkeypatch.setattr(loadshed, "_load", lambda: {"hosts": {"plex01": {"stage": 3, "playing": 1}}})
+    assert minecraft.busy() == "결계 경보 3단계에 환영극 상영 중"
+    monkeypatch.setattr(loadshed, "_load", lambda: {"hosts": {"plex01": {"stage": 3, "playing": 0}}})
+    assert minecraft.busy() is None and minecraft.light()
 
 
 def test_hourly_talk(monkeypatch, tmp_path):

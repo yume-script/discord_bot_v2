@@ -23,13 +23,15 @@
 
 - 봇(cogs/poring_food.py minecraft_tick)이 TICK_MIN분마다 tick():
   1) 지난 일 결과(이벤트) → 마을 장부 (창고, 지은 건물, 잡은 몬스터, 쓰러짐) - 시대가 오르면 개척지 회의
-  2) 결계 경보 2단계 이상이거나 영상 재생이 버벅이면 모두 철수 (서버는 비면 스스로 멈춤 - 시청·독서가 먼저)
+  2) 결계 경보 4단계 이상, 3단계에 영상 재생 중, 영상이 버벅이면 모두 철수 (서버는 비면 스스로 멈춤 - 시청·독서가 먼저).
+     3단계(아무도 안 볼 때)는 1명만 마을 안 일만 - 철수 뒤 REJOIN_MIN분은 다시 안 들어간다
   3) 깨어 있는 인물 MAX_BOTS명 접속 (이미 있던 사람 먼저, 밤이면 싸움꾼 먼저)
   4) 할 일이 없는 사람들의 일을 LLM 한 번으로 (이번 시대 목표, 창고, 서버 사정을 보고) - 규칙으로 바로잡는다:
      못 짓는 건물은 모자란 자원 모으기로, 밤엔 가장 센 사람이 순찰
   5) 채널(⛏️ 개척지)에 그 인물 이름으로 한마디 + 끝난 일 소식, 기억/연대기
 - 매시(minecraft 모드의 회차): hourly() - 최근 개척지에서 일한 사람들이 시대 목표·창고·서버 사정을 두고 짧게 회의
   (한 줄에 LLM 한 번, 채널 + 게임 안에 있는 사람은 게임 채팅으로도)
+- 결계 경보: 2단계까지 평소대로, 3단계는 가벼운 개척(영상 재생 중이면 철수), 4단계부터 철수 (MAX_STAGE/LIGHT_STAGE 주석)
 - 몬스터 불시 습격(raids surge - 재생 중 부하 급등)은 개척지 둘레에 실제 몬스터가 나타나는 것으로 (surge_raid)
 - 마인크래프트 이름은 영문 (MC_NAMES, 없으면 V+해시)
 - 켜기: .env PORING_MINECRAFT=1 (서버를 띄운 뒤). API 주소 PORING_MC_API (기본 http://127.0.0.1:3010).
@@ -55,7 +57,16 @@ MAX_BOTS = int(os.getenv("PORING_MC_MAX_BOTS", "3"))
 TICK_MIN = 10
 STATE_PATH = os.path.join(STATE_DIR, "minecraft.json")
 NAME = "⛏️ 개척지"
-MAX_STAGE = 1          # 이 단계를 넘으면 모두 나간다 (2단계부터)
+# 결계 경보(loadshed 단계, 모든 서버 중 가장 높은 단계)에 따라:
+#   ~ MAX_STAGE(기본 2)        평소대로
+#   ~ LIGHT_STAGE(기본 3)      가벼운 개척 - 아무도 영상을 안 볼 때만, 1명만, 멀리 나가지 않는 일(밭/짓기/순찰/쉬기)만
+#                               (나무 베기·돌 캐기·광석 캐기는 새 땅(청크)을 불러와 CPU/디스크를 많이 쓴다). 영상 재생 중이면 철수
+#   LIGHT_STAGE 초과(4단계~)    모두 철수 (짐꾼까지 늦추는 단계 - 시청·독서가 먼저)
+# 철수한 뒤에는 REJOIN_MIN분 동안 다시 들어가지 않는다 (접속할 때 스폰 청크를 불러오는 부하로 단계가 들썩이지 않게)
+MAX_STAGE = int(os.getenv("PORING_MC_MAX_STAGE", "2"))
+LIGHT_STAGE = int(os.getenv("PORING_MC_LIGHT_STAGE", "3"))
+LIGHT_TASKS = ("farm", "build", "patrol", "rest")
+REJOIN_MIN = int(os.getenv("PORING_MC_REJOIN_MIN", "20"))
 TALK_LINES = 5         # 매시 회의 발언 수
 
 # 건물: 이름, 값 {자원: 개수}
@@ -516,15 +527,29 @@ def hourly(now: datetime | None = None, speak=None, post=None, llm=None) -> list
 
 
 # ===================================================================== 판단 재료
+def _playing() -> dict:
+    from . import loadshed
+    return (loadshed._load().get("hosts") or {}).get("plex01") or {}
+
+
 def busy() -> str | None:
     """지금 개척지 일을 쉬어야 하는 이유 (시청·독서가 먼저)"""
     from . import loadshed
-    if loadshed.stage() > MAX_STAGE:
-        return f"결계 경보 {loadshed.stage()}단계"
-    st = (loadshed._load().get("hosts") or {}).get("plex01") or {}
-    if st.get("playing") and st.get("struggling"):
+    stage = loadshed.stage()
+    if stage > LIGHT_STAGE:
+        return f"결계 경보 {stage}단계"
+    p = _playing()
+    if p.get("playing") and p.get("struggling"):
         return "환영극(영상)이 버벅이는 중"
+    if stage > MAX_STAGE and p.get("playing"):
+        return f"결계 경보 {stage}단계에 환영극 상영 중"
     return None
+
+
+def light() -> bool:
+    """가벼운 개척 (결계 경보가 MAX_STAGE를 넘었지만 LIGHT_STAGE 이하 - busy()가 None일 때만 의미)"""
+    from . import loadshed
+    return loadshed.stage() > MAX_STAGE
 
 
 def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datetime | None = None) -> list[tuple[str, str]]:
@@ -788,14 +813,27 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
             from . import stewards
             _react(f"{why} - 개척지에서 일하던 {', '.join(back)}이(가) 일을 멈추고 돌아왔다", "개척지 철수",
                    [stewards.steward("loadshed")] + back[:2], react, st)
+            st["left_at"] = f"{now:%Y-%m-%d %H:%M}"
         st["online"] = []
         _save(st)
         return {"busy": why}
+    if not online and not force and st.get("left_at"):
+        try:
+            rest = REJOIN_MIN - (now - datetime.strptime(st["left_at"], "%Y-%m-%d %H:%M")).total_seconds() / 60
+        except ValueError:
+            rest = 0
+        if rest > 0:
+            _note(st, f"쉬는 중 - 철수 뒤 숨 고르기 ({int(rest) + 1}분 남음)")
+            return {"busy": "철수 뒤 숨 고르기"}
+    lite = not force and light()
     try:
         day = api.get("/state").get("day") if online else None
     except Exception:  # noqa: BLE001
         day = None
-    chosen = pick(agents, online, day)
+    chosen = pick(agents, online, day, k=1 if lite else MAX_BOTS)
+    if lite and (not st.get("lite")):
+        post(NAME, f"-# {NAME} · {now:%H:%M}\n결계가 높아 개척지는 한 사람만 남아 마을 안 일(밭, 짓기, 순찰)만 한다")
+    st["lite"] = lite
     want = {mc_name(a["name"]) for a in chosen}
     for n in online:
         if n not in want:
@@ -808,6 +846,11 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         working = set()
     idle = [a for a in chosen if mc_name(a["name"]) not in working]
     plan = decide(idle, st, day, llm)
+    if lite:                               # 멀리 나가는 일 대신 마을 안 일
+        farms = (st.get("built") or {}).get("farm", 0)
+        for t in plan:
+            if t["task"] not in LIGHT_TASKS:
+                t.update(task="farm" if farms else "rest", blueprint="")
     slots = st.setdefault("slots", {})
     pend = st.setdefault("pending", {})
     res = st.setdefault("res", {})
