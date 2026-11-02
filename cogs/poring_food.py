@@ -714,7 +714,7 @@ class PoringFood(commands.Cog):
             async with self._lock:
                 try:
                     out = await asyncio.to_thread(minecraft.tick, None, None, None, None, None, True)
-                    line = "\n" + (f"맡긴 일: {', '.join(t['name'] + '-' + minecraft.TASKS[t['task']] for t in out.get('assigned', []))}"
+                    line = "\n" + (f"맡긴 일: {', '.join(t['name'] + '-' + minecraft.TASKS.get(t['task'], '못 맡김') for t in out.get('assigned', []))}"
                                     if out.get("assigned") is not None else f"결과: {out}")
                 except Exception as e:  # noqa: BLE001
                     log.exception("포링푸드 마인크래프트 실행 실패")
