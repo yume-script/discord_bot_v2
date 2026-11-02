@@ -120,9 +120,13 @@ def test_tick_assigns_era_and_backs_off(monkeypatch, tmp_path):
     assert "assigned" in out and len(api.bots) == minecraft.MAX_BOTS
     # 3단계 + 아무도 안 봄 -> 한 사람만, 마을 안 일만
     monkeypatch.setattr(loadshed, "stage", lambda now=None, fresh_min=15: 3)
+    mark = len(api.calls)
     out = minecraft.tick(datetime(2026, 11, 1, 21, 18), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
                          llm=lambda s, u: {"tasks": [{"name": a["name"], "task": "ore"} for a in agents]}, react=react)
     assert len(api.bots) == 1 and all(t["task"] in minecraft.LIGHT_TASKS for t in out["assigned"])
+    lite_calls = [b for p, b in api.calls[mark:] if p == "/task"]
+    assert lite_calls and all(b["kind"] != "rest" for b in lite_calls)               # 쉬기로 바꾸지 않는다
+    assert all(b["args"].get("near") is True for b in lite_calls if b["kind"] in ("gather", "mine"))
     assert any("한 사람만 남아" in t for _, t in posts)
     # 4단계 -> 모두 철수 + 결계 담당과 돌아온 사람이 반응, 그 뒤 REJOIN_MIN분은 다시 안 들어감
     monkeypatch.setattr(loadshed, "stage", lambda now=None, fresh_min=15: 4)

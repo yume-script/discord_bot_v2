@@ -274,19 +274,21 @@ async function goNear(bot, x, z, range = 3) {
 }
 
 // ------------------------------------------------------------------ 일
-async function doGather(entry, count) {
+async function doGather(entry, count, near) {
+  // near: 결계가 높을 때 - 멀리 걸어가지 않고(새 청크를 안 불러오게) 마을 둘레 32칸 안에서만
   const bot = entry.bot;
   const logIds = ['oak_log', 'birch_log', 'spruce_log', 'jungle_log', 'acacia_log', 'dark_oak_log', 'cherry_log', 'mangrove_log']
     .map((n) => bot.registry.blocksByName[n] && bot.registry.blocksByName[n].id).filter(Boolean);
   try { await bot.waitForChunksToLoad(); } catch (e) { /* 일부만 불러와도 진행 */ }
-  if (forest && !bot.findBlock({ matching: logIds, maxDistance: 32 })) {
+  if (!near && forest && !bot.findBlock({ matching: logIds, maxDistance: 32 })) {
     await goNear(bot, forest.x, forest.z, 6);           // 지난번에 나무를 벤 숲으로 먼저
     try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
   }
   let got = 0;
   let misses = 0;
-  while (got < count && !entry.cancel && misses < 6) {
-    const block = bot.findBlock({ matching: logIds, maxDistance: 64 });
+  while (got < count && !entry.cancel && misses < (near ? 2 : 6)) {
+    const block = bot.findBlock({ matching: logIds, maxDistance: near ? 32 : 64 });
+    if (!block && near) { misses++; continue; }
     if (!block) {
       // 근처에 나무가 없으면 한쪽으로 점점 멀리 (50, 100, 150칸...) 걸어가서 다시 찾는다
       misses++;
@@ -308,7 +310,7 @@ async function doGather(entry, count) {
   return { logs: got };
 }
 
-async function doMine(entry, count) {
+async function doMine(entry, count, near) {
   // 돌 캐기 - 땅 위나 얕은 곳의 돌을 캐서 마을 창고로 (조약돌로 셈)
   const bot = entry.bot;
   const ids = ['stone', 'cobblestone', 'andesite', 'diorite', 'granite', 'deepslate', 'tuff']
@@ -316,11 +318,12 @@ async function doMine(entry, count) {
   try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
   let got = 0;
   let misses = 0;
-  while (got < count && !entry.cancel && misses < 5) {
+  while (got < count && !entry.cancel && misses < (near ? 2 : 5)) {
     const block = bot.findBlock({ matching: ids, maxDistance: 32,
       useExtraInfo: (b) => b.position.y >= bot.entity.position.y - 6 });   // 너무 깊이는 안 판다
     if (!block) {
       misses++;
+      if (near) continue;            // 결계가 높을 땐 멀리 안 간다
       const a = Math.random() * Math.PI * 2;
       const p = bot.entity.position;
       await goNear(bot, Math.round(p.x + 32 * Math.cos(a)), Math.round(p.z + 32 * Math.sin(a)), 4);
@@ -504,9 +507,9 @@ async function runTask(name, kind, args, say) {
   try {
     for (let round = 0; ; round++) {
       let result = {};
-      if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8));
+      if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8), !!args.near);
       else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0);
-      else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8));
+      else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8), !!args.near);
       else if (kind === 'farm') {
         if (round) { for (let w = 0; w < 36 && !entry.cancel; w++) await sleep(5000); }   // 3분 기다렸다 다시
         if (entry.cancel) break;

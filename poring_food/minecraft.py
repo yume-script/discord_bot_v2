@@ -66,13 +66,14 @@ STATE_PATH = os.path.join(STATE_DIR, "minecraft.json")
 NAME = "⛏️ 개척지"
 # 결계 경보(loadshed 단계, 모든 서버 중 가장 높은 단계)에 따라:
 #   ~ MAX_STAGE(기본 2)        평소대로
-#   ~ LIGHT_STAGE(기본 3)      가벼운 개척 - 아무도 영상을 안 볼 때만, 1명만, 멀리 나가지 않는 일(밭/짓기/순찰/쉬기)만
-#                               (나무 베기·돌 캐기·광석 캐기는 새 땅(청크)을 불러와 CPU/디스크를 많이 쓴다). 영상 재생 중이면 철수
+#   ~ LIGHT_STAGE(기본 3)      가벼운 개척 - 아무도 영상을 안 볼 때만, 1명만, 멀리 나가지 않는 일만: 밭/짓기/순찰 그대로,
+#                               나무·돌은 마을 둘레 32칸 안에서만(near - 멀리 걸어가 새 청크를 불러오지 않게), 광석은 돌로.
+#                               (예전엔 이 일들을 '쉬기'로 바꿔서 밭이 없을 때 3단계면 아무것도 안 했다). 영상 재생 중이면 철수
 #   LIGHT_STAGE 초과(4단계~)    모두 철수 (짐꾼까지 늦추는 단계 - 시청·독서가 먼저)
 # 철수한 뒤에는 REJOIN_MIN분 동안 다시 들어가지 않는다 (접속할 때 스폰 청크를 불러오는 부하로 단계가 들썩이지 않게)
 MAX_STAGE = int(os.getenv("PORING_MC_MAX_STAGE", "2"))
 LIGHT_STAGE = int(os.getenv("PORING_MC_LIGHT_STAGE", "3"))
-LIGHT_TASKS = ("farm", "build", "patrol", "rest", "audit")
+LIGHT_TASKS = ("farm", "build", "patrol", "rest", "audit", "gather", "mine")   # gather/mine은 near로
 REJOIN_MIN = int(os.getenv("PORING_MC_REJOIN_MIN", "20"))
 TALK_LINES = 5         # 매시 회의 발언 수
 
@@ -1230,7 +1231,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
     hist_before = len(st.get("history") or [])
     chosen = pick(agents, online, day, k=1 if lite else MAX_BOTS, st=st)
     if lite and (not st.get("lite")):
-        post(NAME, f"-# {NAME} · {now:%H:%M}\n결계가 높아 개척지는 한 사람만 남아 마을 안 일(밭, 짓기, 순찰)만 한다")
+        post(NAME, f"-# {NAME} · {now:%H:%M}\n결계가 높아 개척지는 한 사람만 남아 마을 둘레 일(밭, 짓기, 가까운 나무·돌, 순찰)만 한다")
     st["lite"] = lite
     want = {mc_name(a["name"]) for a in chosen}
     for n in online:
@@ -1255,11 +1256,10 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         # 한 번: 장부의 건물이 실제로 서 있는지 둘러보기 (명령이 RCON으로 바뀌기 전엔 권한이 없어 장부에만 지어진 건물이 있다)
         t = plan[-1]
         t.update(task="audit", blueprint="", say=t.get("say") or "장부랑 실제가 맞나 한 바퀴 돌아볼게")
-    if lite:                               # 멀리 나가는 일 대신 마을 안 일
-        farms = (st.get("built") or {}).get("farm", 0)
+    if lite:                               # 멀리 나가는 일 대신 마을 안 일 (광석은 돌로, 나무·돌은 near)
         for t in plan:
             if t["task"] not in LIGHT_TASKS:
-                t.update(task="farm" if farms else "rest", blueprint="")
+                t.update(task="mine", blueprint="")
     slots = st.setdefault("slots", {})
     pend = st.setdefault("pending", {})
     res = st.setdefault("res", {})
@@ -1269,6 +1269,8 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         if t["task"] in ("gather", "mine", "ore"):
             # repeat: 다음 바퀴까지 이어서 (끝날 때마다 done이 와서 창고에 쌓인다) - 10분 중 놀던 시간을 없앤다
             args = {"count": SPECIALIST_COUNT if role(st, t["name"]) == t["task"] else 12, "repeat": True}
+            if lite:
+                args["near"] = True                                  # 결계가 높으면 마을 둘레에서만
             if t["task"] == "ore":
                 args["count"] = max(4, args["count"] // 3)          # 광석은 드물다
         elif t["task"] == "farm":
