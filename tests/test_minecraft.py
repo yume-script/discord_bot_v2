@@ -430,3 +430,10 @@ def test_tick_survives_slow_bot_service(monkeypatch, tmp_path):
                          llm=lambda s, u: {}, react=lambda *a, **k: None)
     assert "assigned" in out and out["assigned"][0]["task"] == "-"               # 멈추지 않고 끝까지
     assert minecraft._load()["res"]["logs"] == 40                                # 못 맡긴 짓기 재료는 되돌림
+
+
+def test_stuck_event_is_a_lesson():
+    st = {"res": {}}
+    minecraft.apply_events(st, [{"id": 1, "name": "Geld", "kind": "stuck", "task": "farm", "minutes": 13}],
+                           {"Geld": "게르도"}, datetime(2026, 11, 1))
+    assert st["stats"]["farm"]["failed"] == 1 and "13분 넘게" in st["lessons"][-1]["text"]

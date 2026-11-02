@@ -267,10 +267,23 @@ function standing(bot, blueprint, slot) {
   return seen ? false : null;
 }
 
+// 길찾기/캐기가 끝나지 않고 매달리는 일이 있다 (닿을 수 없는 곳, 물/절벽) - 그러면 봇은 '일하는 중'인 채 서 있고
+// 새 일도 못 받는다. 일정 시간이 지나면 멈추고 다음으로 넘어간다
+function withTimeout(promise, ms, onTimeout) {
+  let t;
+  return Promise.race([promise, new Promise((_, reject) => {
+    t = setTimeout(() => { try { onTimeout && onTimeout(); } catch (e) { /* 무시 */ } reject(new Error('시간 초과')); }, ms);
+  })]).finally(() => clearTimeout(t));
+}
+
 async function goNear(bot, x, z, range = 3) {
   try {
-    await bot.pathfinder.goto(new goals.GoalNearXZ(x, z, range));
+    await withTimeout(bot.pathfinder.goto(new goals.GoalNearXZ(x, z, range)), 90000, () => bot.pathfinder.stop());
   } catch (e) { /* 막혀도 근처에서 진행 */ }
+}
+
+async function collect(bot, block) {
+  return withTimeout(bot.collectBlock.collect(block), 60000, () => { bot.pathfinder.stop(); bot.stopDigging(); });
 }
 
 // ------------------------------------------------------------------ 일
@@ -299,7 +312,7 @@ async function doGather(entry, count, near) {
       try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
       continue;
     }
-    try { await bot.collectBlock.collect(block); got++; } catch (e) { misses++; }
+    try { await collect(bot, block); got++; } catch (e) { misses++; }
   }
   // 모은 통나무는 마을 창고로 (가방에서 빼서 장부로 - 실제 건물은 /fill)
   if (got) {
@@ -329,7 +342,7 @@ async function doMine(entry, count, near) {
       await goNear(bot, Math.round(p.x + 32 * Math.cos(a)), Math.round(p.z + 32 * Math.sin(a)), 4);
       continue;
     }
-    try { await bot.collectBlock.collect(block); got++; } catch (e) { misses++; }
+    try { await collect(bot, block); got++; } catch (e) { misses++; }
   }
   if (got) await run(bot, `clear @s #minecraft:stone_tool_materials ${got}`);
   await goNear(bot, VX, VZ, 6);
@@ -402,7 +415,7 @@ async function doOre(entry, count) {
       continue;
     }
     const kind = block.name.includes('iron') ? 'iron' : 'coal';
-    try { await bot.collectBlock.collect(block); got[kind]++; } catch (e) { misses++; }
+    try { await collect(bot, block); got[kind]++; } catch (e) { misses++; }
   }
   if (got.coal) await run(bot, `clear @s coal ${got.coal}`);
   if (got.iron) await run(bot, `clear @s raw_iron ${got.iron}`);
@@ -506,6 +519,7 @@ async function runTask(name, kind, args, say) {
   const repeat = args.repeat && ['gather', 'mine', 'ore', 'farm'].includes(kind);
   try {
     for (let round = 0; ; round++) {
+      entry.roundAt = Date.now();
       let result = {};
       if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8), !!args.near);
       else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0);
@@ -517,7 +531,7 @@ async function runTask(name, kind, args, say) {
           Math.max(0, args.grow_min || 0));
       }
       else if (kind === 'ore') result = await doOre(entry, Math.min(16, args.count || 4));
-      else if (kind === 'patrol') result = await doPatrol(entry, Math.min(900, args.seconds || 300));
+      else if (kind === 'patrol') { entry.limitMs = Math.min(900, args.seconds || 300) * 1000; result = await doPatrol(entry, Math.min(900, args.seconds || 300)); }
       else if (kind === 'rest') { await goNear(entry.bot, VX, VZ, 4); result = {}; }
       else if (kind === 'audit') result = await doAudit(entry, args.slots || {});
       emit(name, 'done', { task: kind, result, round });
@@ -531,6 +545,20 @@ async function runTask(name, kind, args, say) {
     entry.task = null;
   }
 }
+
+// 지킴이: 한 바퀴(round)가 너무 오래 걸리면(순찰은 정해진 시간 + 2분, 그 밖은 12분) 그 일을 멈춘다 -
+// 봇이 일하는 중인 채로 서 있어 새 일을 못 받는 것을 막는다 ('stuck' 이벤트 - poring_food가 교훈으로)
+setInterval(() => {
+  for (const [name, e] of bots) {
+    if (!e.task || !e.roundAt || e.cancel) continue;
+    const limit = e.task === 'patrol' ? (e.limitMs || 600000) + 120000 : 720000;
+    if (Date.now() - e.roundAt > limit) {
+      e.cancel = true;
+      try { e.bot.pathfinder.stop(); e.bot.pvp.stop(); } catch (x) { /* 무시 */ }
+      emit(name, 'stuck', { task: e.task, minutes: Math.round((Date.now() - e.roundAt) / 60000) });
+    }
+  }
+}, 30000);
 
 // ------------------------------------------------------------------ 접속
 // 같은 IP에서 몇 초 안에 여러 명이 들어가면 서버가 "Connection throttled"로 쫓아낸다 - 한 명씩 6초 간격으로
