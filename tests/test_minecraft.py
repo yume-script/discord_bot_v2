@@ -386,3 +386,24 @@ def test_pick_covers_needed_jobs(monkeypatch):
     got = [a["name"] for a in minecraft.pick(agents, online, True, k=3, st=st)]
     assert "센시" in got and len(got) == 3                                           # 굶는데 농부가 없으면 농부를 들인다
     assert sum(1 for n in got if n in ("페른", "리그루드")) == 1                       # 겹치는 나무꾼 하나가 나간다
+
+
+
+def test_center_move_resets_phantom_buildings(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    st = minecraft._load()
+    st.update(built={"hut": 1, "farm": 1}, slots={"hut": 2, "farm": 1}, res={"logs": 15, "food": 40})
+    minecraft._save(st)
+
+    class Centered(FakeApi):
+        def get(self, path):
+            if path == "/health":
+                return {"ok": True, "bots": self.bots, "center": {"x": -300, "z": -150}}
+            return super().get(path)
+    posts = []
+    minecraft.tick(datetime(2026, 11, 1, 12), api=Centered(), agents=[_ag("페른")],
+                   post=lambda n, t: posts.append(t), llm=lambda s, u: {}, react=lambda *a, **k: None)
+    st = minecraft._load()
+    assert st["center"] == {"x": -300, "z": -150} and st["res"]["logs"] in (15, 7)   # 자원은 그대로 (밭 짓기 예약 8 빼고)
+    assert not any(v for v in st["built"].values())
+    assert any("(-300, -150)" in p and "실제로는 서지 못했다" in p for p in posts)

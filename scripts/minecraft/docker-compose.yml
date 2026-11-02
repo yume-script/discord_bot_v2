@@ -69,8 +69,9 @@ services:
       MC_PORT: "25565"
       MC_VERSION: "1.21.4"
       API_PORT: "3010"
-      VILLAGE_X: "${MC_VILLAGE_X:-0}"
-      VILLAGE_Z: "${MC_VILLAGE_Z:-0}"
+      # 마을 중심 - 비우면 월드 스폰(봇이 나타나는 곳). 0,0처럼 스폰에서 먼 곳이면 청크가 안 불러와져 짓기가 실패한다
+      VILLAGE_X: "${MC_VILLAGE_X:-}"
+      VILLAGE_Z: "${MC_VILLAGE_Z:-}"
       # 명령(/fill /give /clear ...)은 RCON으로 - OPS에 없는 인물 봇도 짓기/밭/도구가 된다 (mc-village와 같은 비밀번호)
       MC_RCON_PASSWORD: "${MC_RCON_PASSWORD:-change-me}"
       BOT_VIEW_DISTANCE: "4"        # 봇마다 들고 있는 세계 조각 반지름(청크) - 메모리

@@ -1131,12 +1131,31 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         _save(st)
         return {"down": str(e)[:120]}
     st["down_ticks"] = 0
+    center = health.get("center")
+    if center and center != st.get("center"):
+        # 마을 중심이 정해졌거나 바뀜 (봇 서비스가 월드 스폰을 마을 중심으로 쓴다). 예전 중심(0,0)은 스폰에서 멀어 청크가
+        # 불러와지지 않아 아무것도 실제로 지어지지 않았다 - 장부의 건물은 비우고 새 자리에서 다시 시작한다 (자원은 그대로)
+        if st.get("built") or st.get("center"):
+            old = ", ".join(f"{BLUEPRINTS[b][0]} {n}" for b, n in (st.get("built") or {}).items() if b in BLUEPRINTS)
+            st["built"], st["slots"], st["pending"] = {}, {}, {}
+            st["audited"] = f"{now:%Y-%m-%d %H:%M}"
+            line = history(st, now, f"개척지 자리를 월드 스폰 ({center['x']}, {center['z']}) 둘레로 옮겼다"
+                           + (f" - 예전 자리는 너무 멀어 장부의 건물({old})이 실제로는 서지 못했다" if old else ""))
+            post_later = line
+        else:
+            post_later = None
+        st["center"] = center
+        _save(st)
+    else:
+        post_later = None
     agents = agents if agents is not None else ag.load_agents()
     by_name = {a["name"]: a for a in agents}
     by_mc = {mc_name(a["name"]): a["name"] for a in agents}
     if post is None:
         def post(name, text):
             (ag._post(by_name[name], text) if name in by_name else ag._post_as(name, text))
+    if post_later:
+        post(NAME, f"-# {NAME} · {now:%H:%M}\n{post_later}")
     try:
         evs = api.get(f"/events?after={st.get('last_event', 0)}").get("events") or []
     except Exception:  # noqa: BLE001
