@@ -30,8 +30,13 @@ services:
       TZ: "Asia/Seoul"
       # 웹 지도 (BlueMap) - 브라우저로 http://<서버>:8100 에서 개척지를 3D로 본다. 처음 한 번 core.conf의
       # accept-download를 true로 바꿔야 그리기 시작한다 (README / scripts/minecraft/bluemap-setup.sh)
-      # 베드락(모바일/콘솔/윈10) 유저도 같이 - GeyserMC(베드락 프로토콜 변환) + Floodgate(Xbox 계정으로 접속, 자바 정품 불필요)
-      MODRINTH_PROJECTS: "bluemap,geyser,floodgate"
+      # 베드락(모바일/콘솔/윈10) 유저도 같이 - GeyserMC(베드락 프로토콜 변환) + Floodgate(Xbox 계정으로 접속, 자바 정품 불필요).
+      # Geyser/Floodgate는 Modrinth에 베타판만 있거나 1.21.4 파일이 없어서 GeyserMC 공식 다운로드 주소로 받는다.
+      # Geyser 최신판은 최신 자바 판 프로토콜만 말하므로, 서버(1.21.4)와 이어 주는 ViaVersion을 같이 넣는다.
+      MODRINTH_PROJECTS: "bluemap,viaversion"
+      PLUGINS: |
+        https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot
+        https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot
     ports:
       - "25565:25565"
       - "8100:8100"               # BlueMap 웹 지도 (집 안에서만 - 공유기에서 열지 말 것)
