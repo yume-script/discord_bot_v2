@@ -1,6 +1,6 @@
 // 오아시스 마을 인물 봇 - mineflayer로 인물마다 한 명씩 접속해서 시킨 일(나무 모으기 / 마을 짓기 / 몬스터 순찰)을 한다.
 // discord_bot_v2 poring_food/minecraft.py가 이 HTTP API로만 부른다 (127.0.0.1에만 열림).
-//   GET  /health                  {ok, bots:[이름]}
+//   GET  /health                  {ok, bots:[이름], started, heapMB, rcon:{ok, at, error}} - 자가 점검이 본다
 //   GET  /state                   {day, time, bots:[{name, health, food, pos, task}]}
 //   POST /join  {name}            접속 (이름은 영문 3~16자)
 //   POST /leave {name|"*"}        나가기
@@ -45,6 +45,8 @@ let rconReady = null;
 let rconId = 0;
 let rconBuf = Buffer.alloc(0);
 const rconWait = new Map();
+const STARTED = new Date().toISOString();   // 이 프로세스가 뜬 시각 - 바뀌면 죽었다 살아난 것
+const rconStat = { ok: null, at: null, error: '' };
 
 function rconPacket(id, type, body) {
   const b = Buffer.from(body, 'utf8');
@@ -111,7 +113,12 @@ async function run(bot, cmd) {
   if (RCON_PASS) {
     // 연결이 끊겼으면(서버가 RCON 연결을 닫음) 새로 붙어서 한 번 더 - 그래도 안 되면 채팅으로
     for (let i = 0; i < 2; i++) {
-      try { return await rcon(c); } catch (e) {
+      try {
+        const out = await rcon(c);
+        Object.assign(rconStat, { ok: true, at: new Date().toISOString(), error: '' });
+        return out;
+      } catch (e) {
+        Object.assign(rconStat, { ok: false, at: new Date().toISOString(), error: String(e.message || e).slice(0, 120) });
         if (i === 1 || /비밀번호/.test(e.message)) { console.log(`RCON 실패 (${e.message}) - 채팅으로: ${c.slice(0, 60)}`); break; }
         await sleep(300);
       }
@@ -597,7 +604,10 @@ function send(res, code, obj) {
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   try {
-    if (req.method === 'GET' && url.pathname === '/health') return send(res, 200, { ok: true, bots: [...bots.keys()] });
+    if (req.method === 'GET' && url.pathname === '/health') {
+      return send(res, 200, { ok: true, bots: [...bots.keys()], started: STARTED, rcon: rconStat,
+        heapMB: Math.round(process.memoryUsage().heapUsed / 1048576) });
+    }
     if (req.method === 'GET' && url.pathname === '/state') return send(res, 200, state());
     if (req.method === 'GET' && url.pathname === '/events') {
       const after = parseInt(url.searchParams.get('after') || '0', 10);

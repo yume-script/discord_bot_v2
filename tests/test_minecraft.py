@@ -170,6 +170,7 @@ def test_hourly_talk(monkeypatch, tmp_path):
     agents = [_ag("페른"), _ag("베니마루"), _ag("슈타르크")]
     monkeypatch.setattr("poring_food.agents.load_agents", lambda: agents)
     monkeypatch.setattr(minecraft, "server_line", lambda: "결계 경보 1단계(경계)")
+    monkeypatch.setattr(minecraft, "checkup", lambda *a, **k: {})
     heard, posts = [], []
 
     def speak(who, user):
@@ -194,7 +195,8 @@ def test_surge_raid(monkeypatch, tmp_path):
     assert got["mob"] == "husk" and 3 <= got["count"] <= 10 and api.calls[-1][0] == "/raid" and "30%→92%" in posts[0]
 
 
-def test_off_and_down(monkeypatch):
+def test_off_and_down(monkeypatch, tmp_path):
+    monkeypatch.setattr(minecraft, "STATE_PATH", str(tmp_path / "mc.json"))
     monkeypatch.setattr(minecraft, "ENABLED", False)
     assert minecraft.tick() == {} and minecraft.hourly() == []
     monkeypatch.setattr(minecraft, "ENABLED", True)
@@ -297,3 +299,71 @@ def test_audit_fixes_phantom_buildings(monkeypatch, tmp_path):
     lines = minecraft.apply_events(st, [{"id": 10, "name": "Geld", "kind": "done", "task": "farm",
                                          "result": {"food": 0, "crops": 0, "rebuilt": 1}}], {"Geld": "게르도"})
     assert "다시 일구고" in lines[0][1] and not any("한 포기도" in x["text"] for x in st.get("lessons") or [])
+
+
+
+class Healthy(FakeApi):
+    def __init__(self, started="s1", rcon=None):
+        super().__init__(bots=["Fern"])
+        self.started, self.rcon = started, rcon or {"ok": True}
+
+    def get(self, path):
+        if path == "/health":
+            return {"ok": True, "bots": self.bots, "started": self.started, "rcon": self.rcon, "heapMB": 300}
+        return super().get(path)
+
+
+class Dead:
+    def get(self, path):
+        raise OSError("connection refused")
+
+
+def test_checkup_restarts_dead_agents(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    posts, restarts = [], []
+    restart = lambda: restarts.append(1) or ""  # noqa: E731
+    out = minecraft.checkup(datetime(2026, 11, 1, 10), api=Dead(), post=lambda n, t: posts.append(t), restart=restart)
+    assert restarts == [1] and "다시 열었다" in out["actions"][0]
+    minecraft.checkup(datetime(2026, 11, 1, 10, 30), api=Dead(), post=lambda n, t: posts.append(t), restart=restart)
+    assert restarts == [1]                                                   # 한 시간에 한 번만
+    for h in (11, 12, 13):
+        minecraft.checkup(datetime(2026, 11, 1, h), api=Dead(), post=lambda n, t: posts.append(t), restart=restart)
+    assert len(restarts) == minecraft.RESTART_MAX and any("사람 손이 필요해요" in p for p in posts)
+
+
+def test_checkup_rcon_password_alert_once(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    posts = []
+    api = Healthy(rcon={"ok": False, "error": "RCON 비밀번호가 틀림"})
+    out = minecraft.checkup(datetime(2026, 11, 1, 10), api=api, post=lambda n, t: posts.append(t))
+    assert out["alerts"] == ["rcon_pass"] and "MC_RCON_PASSWORD" in posts[0]
+    out = minecraft.checkup(datetime(2026, 11, 1, 11), api=api, post=lambda n, t: posts.append(t))
+    assert out["alerts"] == [] and len(posts) == 1                          # 같은 알림은 ALERT_H시간에 한 번
+
+
+def test_checkup_stall_avoids_failing_task(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    st = minecraft._load()
+    st.update(made={"logs": 5}, lessons=[{"text": "나무 베기: 빈손으로 돌아옴 (근처에 없음)", "n": 4}])
+    minecraft._save(st)
+    posts = []
+    minecraft.checkup(datetime(2026, 11, 1, 10), api=Healthy(), post=lambda n, t: posts.append(t))
+    out = minecraft.checkup(datetime(2026, 11, 1, 11, 5), api=Healthy(), post=lambda n, t: posts.append(t))
+    assert "돌을 캐게" in out["actions"][0]
+    st = minecraft._load()
+    assert minecraft.avoided(st, datetime(2026, 11, 1, 11, 30)) == {"gather"}
+    got = minecraft.decide([_ag("페른")], {**st, "res": {"food": 50}}, day=True,
+                           llm=lambda s, u: {"tasks": [{"name": "페른", "task": "gather"}]}, now=datetime(2026, 11, 1, 11, 30))
+    assert got[0]["task"] == "mine"
+    out = minecraft.checkup(datetime(2026, 11, 1, 13, 10), api=Healthy(), post=lambda n, t: posts.append(t))
+    assert out["alerts"] == ["stalled"]                                     # 3시간 넘게 그대로 -> 사람에게
+    out = minecraft.checkup(datetime(2026, 11, 1, 21, 5), api=Healthy(), post=lambda n, t: posts.append(t))
+    assert any("일째 보고" in p for p in posts)
+
+
+def test_checkup_counts_crash(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    posts = []
+    minecraft.checkup(datetime(2026, 11, 1, 10), api=Healthy("a"), post=lambda n, t: posts.append(t))
+    out = minecraft.checkup(datetime(2026, 11, 1, 11), api=Healthy("b"), post=lambda n, t: posts.append(t))
+    assert "다시 시작됐다" in out["actions"][0]

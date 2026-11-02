@@ -32,6 +32,13 @@
 - 매시(minecraft 모드의 회차): hourly() - 최근 개척지에서 일한 사람들이 시대 목표·창고·서버 사정을 두고 짧게 회의
   (한 줄에 LLM 한 번, 채널 + 게임 안에 있는 사람은 게임 채팅으로도)
 - 결계 경보: 2단계까지 평소대로, 3단계는 가벼운 개척(영상 재생 중이면 철수), 4단계부터 철수 (MAX_STAGE/LIGHT_STAGE 주석)
+- 자가 점검 (checkup, 매시 회의 전 + 봇 서비스가 두 바퀴 연속 응답 없으면 바로): 개척지 담당(stewards minecraft, 카이진)이
+  스스로 고장을 찾아 정해진 방법으로 고치고, 못 고치는 것만 ⚠️로 사람에게 알린다 (같은 알림은 ALERT_H시간에 한 번).
+  · 봇 서비스가 죽음/응답 없음 -> docker restart mc-agents (한 시간에 한 번, 하루 RESTART_MAX번) / 계속 죽음 -> 알림
+  · RCON 비밀번호 틀림 -> 알림 (고칠 명령까지) / 일시 끊김은 기록만
+  · 장부가 한 시간 넘게 그대로 -> 이유를 가린다 (결계 철수 / 아무도 없음 / 되풀이되는 실패) - 실패면 그 일을 잠시 쉬게 하고
+    (avoid - 다른 일로 바꿔 맡김), 밭·짓기 실패면 개척지를 다시 둘러보게 한다 / STALL_ALERT_H시간 넘게 그대로면 알림
+  · 매일 REPORT_HOUR시 이후 첫 점검 때 '개척 N일째 보고' (오늘 늘어난 것, 막힌 것)
 - 몬스터 불시 습격(raids surge - 재생 중 부하 급등)은 개척지 둘레에 실제 몬스터가 나타나는 것으로 (surge_raid)
 - 마인크래프트 이름은 영문 (MC_NAMES, 없으면 V+해시)
 - 켜기: .env PORING_MINECRAFT=1 (서버를 띄운 뒤). API 주소 PORING_MC_API (기본 http://127.0.0.1:3010).
@@ -503,6 +510,11 @@ def hourly(now: datetime | None = None, speak=None, post=None, llm=None) -> list
 
         def post(n, t):
             (ag._post(by[n], t) if n in by else ag._post_as(n, t))
+    try:
+        checkup(now, post=post)                # 자가 점검 (고칠 수 있는 건 고치고, 못 고치면 알림)
+        st = _load()
+    except Exception as e:  # noqa: BLE001
+        print(f"[개척지] 자가 점검 실패: {e}")
     review = evaluate_plan(st, now)            # 지난 한 시간 목표를 실제 장부로 평가
     if review:
         post(NAME, f"-# {NAME} · {now:%H:%M} · 목표 평가\n{review}")
@@ -712,7 +724,7 @@ def _gather_for(sim: dict, bp: str) -> str:
     return RES_TASK.get(short_of(sim, bp), "gather")
 
 
-def decide(people: list[dict], st: dict, day: bool | None, llm=None) -> list[dict]:
+def decide(people: list[dict], st: dict, day: bool | None, llm=None, now: datetime | None = None) -> list[dict]:
     """할 일 정하기 (LLM 한 번) + 규칙으로 바로잡기 - 자원은 예약한 만큼 st['res']에서 미리 뺀 것처럼 계산.
     규칙: 못 짓는 건물 -> 모자란 자원 모으기 / 밭이 없으면 farm 대신 밭 짓기(또는 나무) / 식량이 바닥났거나 목표가 식량이면
     한 명은 밭 수확 / 목표 일을 아무도 안 맡으면 한 명에게 / 밤엔 가장 센 사람이 순찰"""
@@ -757,6 +769,12 @@ def decide(people: list[dict], st: dict, day: bool | None, llm=None) -> list[dic
         tasks.append({"name": p["name"], "task": task, "blueprint": bp if task == "build" else "",
                       "say": str(t.get("say") or "").strip()[:60]})
 
+    avoid = avoided(st, now)
+    for t in tasks:          # 자가 점검이 잠시 쉬게 한 일은 다른 일로
+        if t["task"] in avoid:
+            t.update(task=next(x for x in ("mine", "gather", "farm" if farms else "rest", "rest") if x not in avoid),
+                     blueprint="")
+
     def assign(task: str, bp: str = "") -> None:
         """그 일을 아무도 안 맡았으면, 직업이 맞는 사람(없으면 맨 뒤 사람)에게 (순찰 중인 사람은 빼고)"""
         if any(t["task"] == task for t in tasks):
@@ -777,6 +795,189 @@ def decide(people: list[dict], st: dict, day: bool | None, llm=None) -> list[dic
         fighter = max(tasks, key=lambda t: raids.DEFENDERS.get(t["name"], 0))   # 가장 센 사람이 순찰
         fighter.update(task="patrol", blueprint="")
     return tasks
+
+
+# ===================================================================== 자가 점검
+ALERT_H = 6            # 같은 알림은 이 시간에 한 번
+RESTART_MAX = 3        # 봇 서비스 자동 재시작 하루 최대
+STALL_ALERT_H = 3      # 장부가 이만큼 그대로면 (결계 철수 말고) 사람에게
+REPORT_HOUR = 21       # 하루 보고 시각 (이후 첫 점검 때)
+AVOID_MIN = 60         # 되풀이되는 실패가 난 일을 쉬게 하는 시간
+
+
+def avoided(st: dict, now: datetime | None = None) -> set[str]:
+    now = now or now_kst()
+    return {k for k, until in (st.get("avoid") or {}).items() if str(until) > f"{now:%Y-%m-%d %H:%M}"}
+
+
+def progress(st: dict) -> int:
+    """장부 진척 숫자 (만든 자원 + 지은 건물 + 잡은 몬스터) - 늘지 않으면 멈춘 것"""
+    return sum(int(v) for v in (st.get("made") or {}).values()) + sum((st.get("built") or {}).values()) + int(st.get("kills", 0))
+
+
+def _restart_agents() -> str:
+    """docker restart mc-agents (봇이 도는 etc에서). 반환: '' 성공, 아니면 오류"""
+    import subprocess
+    try:
+        r = subprocess.run(["docker", "restart", "mc-agents"], capture_output=True, text=True, timeout=120)
+        return "" if r.returncode == 0 else (r.stderr or r.stdout or "실패").strip()[:200]
+    except Exception as e:  # noqa: BLE001
+        return str(e)[:200]
+
+
+def _steward() -> str:
+    try:
+        from . import stewards
+        return stewards.steward("minecraft")
+    except Exception:  # noqa: BLE001
+        return NAME
+
+
+def _alert(st: dict, now: datetime, post, key: str, what: str, todo: str) -> bool:
+    """사람에게 알림 (같은 key는 ALERT_H시간에 한 번). 반환: 올렸는지"""
+    alerts = st.setdefault("alerts", {})
+    last = alerts.get(key, "")
+    try:
+        if last and (now - datetime.strptime(last, "%Y-%m-%d %H:%M")).total_seconds() < ALERT_H * 3600:
+            return False
+    except ValueError:
+        pass
+    alerts[key] = f"{now:%Y-%m-%d %H:%M}"
+    post(_steward(), f"-# {NAME} · {now:%H:%M} · 자가 점검\n⚠️ **사람 손이 필요해요** - {what}\n> 할 일: {todo}")
+    print(f"[개척지] 자가 점검 알림: {what} / {todo}")
+    return True
+
+
+def heal_agents(st: dict, now: datetime, post, restart=None, why: str = "") -> str:
+    """봇 서비스 다시 띄우기 (한 시간에 한 번, 하루 RESTART_MAX번). 반환: 한 일 한 줄"""
+    ck = st.setdefault("check", {})
+    day = f"{now:%Y-%m-%d}"
+    if ck.get("restart_day") != day:
+        ck.update(restart_day=day, restarts=0)
+    last = ck.get("restart_at", "")
+    try:
+        recent = last and (now - datetime.strptime(last, "%Y-%m-%d %H:%M")).total_seconds() < 3600
+    except ValueError:
+        recent = False
+    if recent:
+        return ""
+    if ck["restarts"] >= RESTART_MAX:
+        _alert(st, now, post, "agents_down", f"개척지 봇 서비스(mc-agents)가 오늘 {ck['restarts']}번 다시 띄워도 또 멈췄어요 ({why})",
+               "etc에서 `docker logs --tail 50 mc-agents` 결과를 개발자에게 전해 주세요")
+        return ""
+    err = (restart or _restart_agents)()
+    ck["restart_at"] = f"{now:%Y-%m-%d %H:%M}"
+    ck["restarts"] += 1
+    if err:
+        _alert(st, now, post, "agents_restart", f"봇 서비스(mc-agents)를 다시 띄우지 못했어요: {err[:120]}",
+               "etc에서 `cd /mnt/discord_bot_v2/scripts/minecraft && docker compose up -d mc-agents`")
+        return ""
+    line = f"개척지 작업장(봇 서비스)이 멈춰 있어 다시 열었다 ({why})"
+    post(_steward(), f"-# {NAME} · {now:%H:%M} · 자가 점검\n🔧 {line}")
+    return line
+
+
+REMEDIES = [   # (교훈에 들어 있는 말, 쉬게 할 일, 다시 둘러보기, 이야기)
+    ("밭에 밀이 한 포기도", "", True, "밭이 사라졌다 - 개척지를 다시 둘러보고 밭을 다시 일구게 한다"),
+    ("짓기 실패", "build", True, "짓기가 자꾸 실패한다 - 한동안 짓기를 쉬고 개척지를 다시 둘러본다"),
+    ("나무 베기: 빈손", "gather", False, "숲에서 나무를 못 찾는다 - 한동안 돌을 캐게 한다"),
+    ("돌 캐기: 빈손", "mine", False, "근처에 돌이 없다 - 한동안 나무를 베게 한다"),
+    ("광석 캐기", "ore", False, "광석 캐기가 안 풀린다 - 한동안 쉬게 한다"),
+    ("나무 베기 실패", "gather", False, "나무 베기가 자꾸 실패한다 - 한동안 다른 일을 맡긴다"),
+    ("돌 캐기 실패", "mine", False, "돌 캐기가 자꾸 실패한다 - 한동안 다른 일을 맡긴다"),
+]
+
+
+def checkup(now: datetime | None = None, api: Api | None = None, post=None, restart=None) -> dict:
+    """[매시] 자가 점검 - 스스로 고칠 수 있는 건 고치고 못 고치는 것만 알린다. 반환 {"actions": [...], "alerts": [...]}"""
+    if not ENABLED:
+        return {}
+    from . import agents as ag
+    now = now or now_kst()
+    api = api or Api()
+    st = _load()
+    if post is None:
+        def post(n, t):
+            ag._post_as(n, t)
+    ck = st.setdefault("check", {})
+    acts: list[str] = []
+    before = dict(st.get("alerts") or {})
+    try:
+        health = api.get("/health")
+    except Exception as e:  # noqa: BLE001
+        health = None
+        line = heal_agents(st, now, post, restart, f"응답 없음: {str(e)[:60]}")
+        if line:
+            acts.append(line)
+    if health:
+        started = health.get("started")
+        if ck.get("started") and started and started != ck["started"]:
+            ck["crashes"] = (ck.get("crashes", 0) + 1) if ck.get("crash_day") == f"{now:%Y-%m-%d}" else 1
+            ck["crash_day"] = f"{now:%Y-%m-%d}"
+            acts.append(f"봇 서비스가 지난 점검 뒤 다시 시작됐다 (오늘 {ck['crashes']}번, 메모리 {health.get('heapMB', '?')}MB)")
+            if ck["crashes"] >= 3:
+                _alert(st, now, post, "agents_crash", f"봇 서비스(mc-agents)가 오늘 {ck['crashes']}번 죽었다 살아났어요",
+                       "etc에서 `docker logs --tail 80 mc-agents | grep -iE 'error|heap'` 결과를 개발자에게 전해 주세요")
+        ck["started"] = started
+        rc = health.get("rcon") or {}
+        if rc.get("ok") is False and "비밀번호" in str(rc.get("error", "")):
+            _alert(st, now, post, "rcon_pass", "봇 서비스가 서버 명령(RCON) 비밀번호가 틀렸다고 해요 - 짓기·밭·도구가 안 돼요",
+                   "etc에서 `docker exec mc-village printenv RCON_PASSWORD` 값으로 "
+                   "`cd /mnt/discord_bot_v2/scripts/minecraft && MC_RCON_PASSWORD=그값 docker compose up -d mc-agents`")
+        elif rc.get("ok") is False:
+            acts.append(f"서버 명령(RCON)이 잠시 끊겼다 ({rc.get('error', '')[:40]}) - 다시 붙는 중")
+    # 진척
+    metric = progress(st)
+    if metric != ck.get("metric") or not ck.get("metric_at"):
+        ck.update(metric=metric, metric_at=f"{now:%Y-%m-%d %H:%M}")
+    try:
+        stalled_h = (now - datetime.strptime(ck["metric_at"], "%Y-%m-%d %H:%M")).total_seconds() / 3600
+    except ValueError:
+        stalled_h = 0
+    resting = str(st.get("why", "")).startswith("쉬는 중")
+    if stalled_h >= 1 and not resting and health:
+        avoid = st.setdefault("avoid", {})
+        until = f"{datetime.fromtimestamp(now.timestamp() + AVOID_MIN * 60):%Y-%m-%d %H:%M}"
+        for x in (st.get("lessons") or [])[::-1]:
+            if x["n"] < 3:
+                continue
+            hit = next((r for r in REMEDIES if r[0] in x["text"]), None)
+            if not hit or x.get("healed"):
+                continue
+            key, task, reaudit, story = hit
+            if task:
+                avoid[task] = until
+            if reaudit:
+                st.pop("audited", None)
+            x["healed"] = f"{now:%Y-%m-%d %H:%M}"
+            acts.append(story)
+            break
+        if stalled_h >= STALL_ALERT_H:
+            _alert(st, now, post, "stalled",
+                   f"개척지 장부가 {int(stalled_h)}시간째 그대로예요 (접속 {len((health or {}).get('bots') or [])}명, "
+                   f"최근 교훈: {((st.get('lessons') or [{}])[-1]).get('text', '없음')[:60]})",
+                   "etc에서 `docker logs --since 1h mc-agents | tail -40` 결과를 개발자에게 전해 주세요")
+    for a in acts:
+        post(_steward(), f"-# {NAME} · {now:%H:%M} · 자가 점검\n🔧 {a}")
+    # 하루 보고
+    today = f"{now:%Y-%m-%d}"
+    if now.hour >= REPORT_HOUR and ck.get("report_day") != today:
+        snap = ck.get("report_snap") or {}
+        made, built = st.get("made") or {}, st.get("built") or {}
+        grew = [f"{RESOURCES[k]} +{int(v) - int(snap.get('made', {}).get(k, 0))}" for k, v in made.items()
+                if k in RESOURCES and int(v) > int(snap.get("made", {}).get(k, 0))]
+        newb = [f"{BLUEPRINTS[b][0]} +{n - int(snap.get('built', {}).get(b, 0))}" for b, n in built.items()
+                if b in BLUEPRINTS and n > int(snap.get("built", {}).get(b, 0))]
+        probs = problems(st)
+        post(_steward(), f"-# {NAME} · 개척 {day_no(st, now)}일째 보고\n📋 **{ERAS[era(st)][0]}** · 다음 시대까지: "
+             + (", ".join(unmet(st)) or "없음") + "\n오늘 늘어난 것: " + (", ".join(grew + newb) or "없음")
+             + "\n막힌 것: " + (" / ".join(probs[:3]) or "없음")
+             + (f"\n오늘 사람에게 알린 것: {len([k for k, v in (st.get('alerts') or {}).items() if v.startswith(today)])}건"))
+        ck.update(report_day=today, report_snap={"made": dict(made), "built": dict(built)})
+    _save(st)
+    alerts = [k for k, v in (st.get("alerts") or {}).items() if before.get(k) != v]
+    print(f"[개척지] 자가 점검 · 조치 {len(acts)} · 알림 {alerts or '없음'} · 멈춤 {stalled_h:.1f}시간")
+    return {"actions": acts, "alerts": alerts, "stalled_h": round(stalled_h, 1)}
 
 
 # ===================================================================== 한 바퀴
@@ -801,7 +1002,12 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
         health = api.get("/health")
     except Exception as e:  # noqa: BLE001
         _note(st, f"봇 서비스(mc-agents)에 연결 못 함: {str(e)[:100]}")
+        st["down_ticks"] = st.get("down_ticks", 0) + 1
+        if st["down_ticks"] >= 2:
+            heal_agents(st, now, post or (lambda n, t: ag._post_as(n, t)), None, f"{st['down_ticks']}바퀴째 응답 없음")
+        _save(st)
         return {"down": str(e)[:120]}
+    st["down_ticks"] = 0
     agents = agents if agents is not None else ag.load_agents()
     by_name = {a["name"]: a for a in agents}
     by_mc = {mc_name(a["name"]): a["name"] for a in agents}
@@ -884,7 +1090,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
     except Exception:  # noqa: BLE001
         working = set()
     idle = [a for a in chosen if mc_name(a["name"]) not in working]
-    plan = decide(idle, st, day, llm)
+    plan = decide(idle, st, day, llm, now)
     if plan and not st.get("audited") and (st.get("built") or {}):
         # 한 번: 장부의 건물이 실제로 서 있는지 둘러보기 (명령이 RCON으로 바뀌기 전엔 권한이 없어 장부에만 지어진 건물이 있다)
         t = plan[-1]
