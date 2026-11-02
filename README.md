@@ -314,7 +314,7 @@ python app.py
   **웹 지도**: BlueMap 플러그인(`MODRINTH_PROJECTS: bluemap`)으로 브라우저 `http://etc:8100`에서 개척지를 3D로 본다. 처음 한 번
   `bash scripts/minecraft/bluemap-setup.sh`(리소스 내려받기 동의 + 그리기 스레드 1개 + 다시 불러오기). 서버가 비어 멈추면 그리기도 멈춘다.
   **베드락 유저 접속**: GeyserMC + Floodgate(`PLUGINS`, GeyserMC 공식 다운로드) + ViaVersion. 모바일/콘솔/윈10 마인크래프트에서 `서버 주소 : 19132`(UDP,
-  베드락 기본 포트 - 예전 Bedrock 전용 서버 mc-be-server는 없앴다). Floodgate가 Xbox 계정으로 확인하므로 바깥에 열려면 **19132 (UDP+TCP, 새 베드락은 TCP로 접속 신호를 먼저 주고받는다)만** 연다
+  베드락 기본 포트 - 예전 Bedrock 전용 서버 mc-be-server는 없앴다). Floodgate가 Xbox 계정으로 확인하므로 바깥에 열려면 **19132(UDP+TCP)와 19133(UDP)만** (Geyser config.yml: `transport: both`, `webrtc-port: 19133`) 연다
   (25565는 온라인 인증이 꺼져 있어 바깥에 열면 누구나 OP 봇 이름으로 들어올 수 있다). 베드락 유저 이름은 앞에 `.`이 붙는다.
   **서버 사정과 엮기**: 마을에서는 '숲 너머 개척지'. 인물 매시 판단에 개척지 사정(창고/건물/처치/지금 나가 있는 사람/쉬는 이유)과
   내가 거기서 한 일이 들어가고, 서버 사정(결계 단계·환영극 손님·몬스터 습격)과 엮어 말하라고 안내한다. 개척지 일을 정할 때도

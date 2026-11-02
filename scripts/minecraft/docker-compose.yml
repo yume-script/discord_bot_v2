@@ -47,6 +47,10 @@ services:
       # 새 베드락(1.26.x)은 Geyser의 '접속 신호(signaling)'를 같은 번호의 TCP(HTTP)로 먼저 찾는다 - UDP만 열면
       # InitialConnection 오류(Terracotta)로 못 들어온다. 바깥에 열 때도 TCP/UDP 19132 둘 다 연다.
       - "19132:19132/tcp"
+      # Geyser 2.12+ 기본값은 transport: nethernet(새 방식)만이라 예전 방식(RakNet) 접속/핑이 막힌다.
+      # data/plugins/Geyser-Spigot/config.yml 에서 transport: both, webrtc-port: 19133 으로 바꿔 쓴다
+      # (RakNet = UDP 19132, NetherNet = UDP 19133, 접속 신호 = TCP 19132)
+      - "19133:19133/udp"
     volumes:
       - ./data:/data
     deploy:
