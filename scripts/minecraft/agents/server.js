@@ -336,14 +336,26 @@ async function ensureTools(bot) {
 // ------------------------------------------------------------------ 건물 (마을 중심 기준 자리마다)
 // 자리: 반지름 18 둘레에 8칸 (건물 종류마다 같은 자리 목록을 따로 쓴다 - slot은 poring_food가 센다)
 function slotOrigin(blueprint, slot, groundY) {
-  const ring = { hut: 18, well: 8, smithy: 22, hall: 0, farm: 26, tower: 34, wall: 40 }[blueprint] || 18;
+  const ring = { hut: 18, well: 8, smithy: 22, hall: 0, farm: 26, tower: 34, wall: 40, grove: 54, golem: 6 }[blueprint] || 18;
   if (blueprint === 'hall') return { x: VX - 4, y: groundY, z: VZ + 10 };   // 마을회관은 광장 북쪽 한가운데
   const n = 8;
   const a = (2 * Math.PI * (slot % n)) / n + (blueprint === 'farm' ? 0.4 : blueprint === 'tower' ? 0.2 : 0);
   return { x: Math.round(VX + ring * Math.cos(a)), y: groundY, z: Math.round(VZ + ring * Math.sin(a)) };
 }
 
+// 묘목장 9x9: 4칸 간격 3x3 = 묘목 9그루 (아래는 흙). 나무가 다 자라면 나무꾼이 베고 다시 심는다 (doForest)
+const GROVE_SPOTS = [0, 4, 8].flatMap((dx) => [0, 4, 8].map((dz) => [dx, dz]));
+
 const BLUEPRINTS = {
+  grove: (o) => [
+    `fill ${o.x - 1} ${o.y + 1} ${o.z - 1} ${o.x + 9} ${o.y + 8} ${o.z + 9} air`,
+    ...GROVE_SPOTS.flatMap(([dx, dz]) => [
+      `setblock ${o.x + dx} ${o.y} ${o.z + dz} grass_block`,
+      `setblock ${o.x + dx} ${o.y + 1} ${o.z + dz} oak_sapling`,
+    ]),
+  ],
+  // 철 골렘: 철 블록 4 + 조각 호박 대신 바로 불러낸다 (사람이 만든 골렘 = 사람을 공격하지 않음). 마을 광장 근처를 지킨다
+  golem: (o) => [`summon minecraft:iron_golem ${o.x} ${o.y + 1} ${o.z} {PlayerCreated:1b}`],
   // 오두막 5x4x5: 바닥, 벽(속 빔), 지붕, 문, 횃불
   hut: (o) => [
     `fill ${o.x} ${o.y} ${o.z} ${o.x + 4} ${o.y} ${o.z + 4} oak_planks`,
@@ -423,7 +435,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 건물마다 그 자리 기둥(세로줄)에 있어야 할 블록 - 실제로 서 있는지 확인(둘러보기/밭 고치기)에 쓴다
 const SIGNS = {
-  hut: /oak_planks|spruce_slab|oak_door/, farm: /farmland|wheat/, well: /cobblestone|water/,
+  hut: /oak_planks|spruce_slab|oak_door|cobblestone/, farm: /farmland|wheat/, grove: /oak_sapling|oak_log|oak_leaves/, well: /cobblestone|water/,
   tower: /cobblestone|oak_planks/, smithy: /stone_bricks|cobblestone|dark_oak_slab/,
   hall: /polished_andesite|spruce_planks|stone_bricks|dark_oak_slab/, wall: /cobblestone_wall|lantern/,
 };
@@ -664,6 +676,73 @@ async function doOre(entry, count) {
   return { coal, iron };
 }
 
+const groveAt = new Map();   // 묘목장 자리 -> 마지막으로 돌본 시각 (흐른 시간만큼 묘목이 나무로 자란 것으로 친다)
+
+async function golemCount() {
+  // 마을 둘레(96칸)의 철 골렘 수 (못 세면 null)
+  if (!RCON_PASS || VX === null) return null;
+  try {
+    const t = await rcon(`execute if entity @e[type=minecraft:iron_golem,x=${VX},y=${VY},z=${VZ},distance=..96]`);
+    const m = /count:\s*(\d+)/i.exec(t);
+    return m ? parseInt(m[1], 10) : (/failed/i.test(t) ? 0 : null);
+  } catch (e) { return null; }
+}
+
+async function doForest(entry, slots, growMin, count) {
+  // 나무 가꾸기 - 묘목장마다: 자란 시간이 지났으면 묘목을 나무로 키우고(place feature), 다 자란 나무를 베고, 빈 자리에 다시 심는다.
+  // (밭처럼 묘목장 청크는 사람이 근처에 없으면 시간이 안 흐르므로 흐른 시간으로 셈)
+  const bot = entry.bot;
+  const logIds = ['oak_log'].map((n) => bot.registry.blocksByName[n] && bot.registry.blocksByName[n].id).filter(Boolean);
+  let grown = 0;
+  let planted = 0;
+  let cut = 0;
+  for (let slot = 0; slot < slots && !entry.cancel; slot++) {
+    const probe = slotOrigin('grove', slot, 0);
+    await goNear(bot, probe.x + 4, probe.z + 4, 5);
+    try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+    if (!bot.blockAt(new Vec3(probe.x + 4, 60, probe.z + 4))) continue;
+    const y = groundY(bot, probe.x, probe.z);
+    const ready = !groveAt.has(slot) || Date.now() - groveAt.get(slot) >= growMin * 60000;
+    for (const [dx, dz] of GROVE_SPOTS) {
+      const x = probe.x + dx;
+      const z = probe.z + dz;
+      const b = bot.blockAt(new Vec3(x, y + 1, z));
+      if (!b) continue;
+      if (b.name === 'oak_sapling' && ready) {
+        await run(bot, `setblock ${x} ${y + 1} ${z} air`);
+        const t = await run(bot, `place feature minecraft:oak ${x} ${y + 1} ${z}`);
+        if (/fail|invalid|unknown/i.test(String(t || ''))) await run(bot, `setblock ${x} ${y + 1} ${z} oak_sapling`);
+        else grown++;
+      } else if (b.name === 'air' || b.name === 'short_grass' || b.name === 'grass') {
+        await run(bot, `setblock ${x} ${y} ${z} grass_block`);
+        await run(bot, `setblock ${x} ${y + 1} ${z} oak_sapling`);
+        planted++;
+      }
+    }
+    if (ready) groveAt.set(slot, Date.now());
+    await sleep(600);
+    // 이 묘목장에서 다 자란 나무를 벤다 (둘레 10칸 안 참나무)
+    let misses = 0;
+    while (cut < count && !entry.cancel && misses < 3) {
+      const block = bot.findBlock({ matching: logIds, maxDistance: 16,
+        useExtraInfo: (bl) => Math.abs(bl.position.x - (probe.x + 4)) <= 6 && Math.abs(bl.position.z - (probe.z + 4)) <= 6 });
+      if (!block) break;
+      try { await collect(bot, block); cut++; } catch (e) { misses++; }
+    }
+    // 벤 자리(그루터기가 빈 곳)는 다시 심는다
+    for (const [dx, dz] of GROVE_SPOTS) {
+      const b = bot.blockAt(new Vec3(probe.x + dx, y + 1, probe.z + dz));
+      if (b && b.name === 'air') {
+        await run(bot, `setblock ${probe.x + dx} ${y} ${probe.z + dz} grass_block`);
+        await run(bot, `setblock ${probe.x + dx} ${y + 1} ${probe.z + dz} oak_sapling`);
+        planted++;
+      }
+    }
+  }
+  const stored = cut ? await depositAll(bot, 'logs') : 0;
+  return { logs: stored, cut, grown, planted };
+}
+
 async function doAudit(entry, slots) {
   // 둘러보기 - 장부에 지어졌다고 적힌 건물 자리마다 가서 실제로 서 있는지 본다. 반환 {found: {건물: 서 있는 수}, checked}
   const bot = entry.bot;
@@ -747,6 +826,7 @@ async function doBuild(entry, blueprint, slot, cost, material, alts) {
   }
   // 검증: 모든 건물은 (o.x, o.y+1, o.z)에 블록이 있다 - 정말 서 있는지 확인 (청크가 안 보이면 확인 못 함 = 믿는다)
   await sleep(800);
+  if (blueprint === 'golem') return { blueprint, slot, x: o.x, y: o.y, z: o.z, verified: (await golemCount()) !== null, cost, material: '' };
   const check = bot.blockAt(new Vec3(o.x, o.y + 1, o.z));
   if (check && check.name === 'air') throw new Error('명령은 보냈지만 건물이 서 있지 않음 (권한/위치 확인)');
   return { blueprint, slot, x: o.x, y: o.y, z: o.z, verified: !!check, cost, material: material || '' };
@@ -798,7 +878,7 @@ async function runTask(name, kind, args, say) {
   // repeat: 모으는 일(gather/mine/ore)은 다음 일을 받을 때까지 이어서 한다 (한 번 끝날 때마다 done) -
   // 일을 10분마다 나눠 주므로 금방 끝나면 남는 시간 동안 놀던 것을 없앤다. 빈손이면 멈춘다 (같은 헛수고 반복 X)
   // 농부(farm repeat)는 밭을 돌고 잠깐 기다렸다가(밀이 자라게) 다시 돈다 - 빈손이어도 계속 (밀은 자라는 중)
-  const repeat = args.repeat && ['gather', 'mine', 'ore', 'farm'].includes(kind);
+  const repeat = args.repeat && ['gather', 'mine', 'ore', 'farm', 'forest'].includes(kind);
   try {
     for (let round = 0; ; round++) {
       entry.roundAt = Date.now();
@@ -816,10 +896,15 @@ async function runTask(name, kind, args, say) {
       else if (kind === 'patrol') { entry.limitMs = Math.min(900, args.seconds || 300) * 1000; result = await doPatrol(entry, Math.min(900, args.seconds || 300)); }
       else if (kind === 'rest') { await goNear(entry.bot, VX, VZ, 4); result = {}; }
       else if (kind === 'audit') result = await doAudit(entry, args.slots || {});
+      else if (kind === 'forest') {
+        if (round) { for (let w = 0; w < 36 && !entry.cancel; w++) await sleep(5000); }   // 3분 기다렸다 다시 (묘목이 자라게)
+        if (entry.cancel) break;
+        result = await doForest(entry, Math.min(4, args.slots || 1), args.grow_min || 20, Math.min(32, args.count || 18));
+      }
       emit(name, 'done', { task: kind, result, round });
       const gained = Object.values(result).some((v) => typeof v === 'number' && v > 0);
       if (!repeat || entry.cancel) break;
-      if (kind === 'farm' ? round >= 7 : (!gained || round >= 5)) break;
+      if (kind === 'farm' || kind === 'forest' ? round >= 7 : (!gained || round >= 5)) break;
     }
   } catch (e) {
     emit(name, 'failed', { task: kind, error: String(e.message || e).slice(0, 200), ...(e.have ? { have: e.have } : {}) });
@@ -897,7 +982,7 @@ setInterval(() => {
     const far = Math.hypot(p.x - VX, p.z - VZ);
     if (deep && still > (e.task === 'ore' ? 300000 : 180000)) { rescue(name, e, '깊은 구덩이/동굴에 갇힘'); continue; }
     // 정체 의심 60초 (V6 30.3): 일하는 중 60초 제자리면 길찾기를 다시 하고 살짝 움직여 본다 - 세 번째면 구조
-    if (e.task && !['farm', 'rest', 'build'].includes(e.task) && still > 60000) {
+    if (e.task && !['farm', 'forest', 'rest', 'build'].includes(e.task) && still > 60000) {
       e.nudges = (e.nudges || 0) + 1;
       e.rMoved = Date.now();
       if (e.nudges >= 3 && far > 20) { e.nudges = 0; rescue(name, e, '막힌 곳에 갇힘'); continue; }
@@ -1044,6 +1129,7 @@ http.createServer(async (req, res) => {
         heapMB: Math.round(process.memoryUsage().heapUsed / 1048576) });
     }
     if (req.method === 'GET' && url.pathname === '/state') return send(res, 200, state());
+    if (req.method === 'GET' && url.pathname === '/golems') return send(res, 200, { golems: await golemCount() });
     if (req.method === 'GET' && url.pathname === '/storage') {
       // 공동 창고 실제 재고 (상자 안 아이템) - poring_food 장부의 기준
       const any = [...bots.values()][0];
@@ -1083,7 +1169,7 @@ http.createServer(async (req, res) => {
       if (!NAME_RE.test(name)) return send(res, 400, { error: '이름은 영문/숫자/_ 3~16자' });
       if (url.pathname === '/join') { queueJoin(name); return send(res, 200, { ok: true }); }
       if (url.pathname === '/task') {
-        if (!['gather', 'mine', 'farm', 'ore', 'build', 'patrol', 'rest', 'audit'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
+        if (!['gather', 'mine', 'farm', 'ore', 'build', 'patrol', 'rest', 'audit', 'forest'].includes(b.kind)) return send(res, 400, { error: '모르는 일' });
         if (!bots.has(name) && joinQueue.includes(name)) {
           // 아직 접속 차례를 기다리는 중 - 들어가면 바로 하게 잠깐 기다렸다가 맡긴다
           const until = Date.now() + 60000;
