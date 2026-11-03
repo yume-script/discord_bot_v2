@@ -133,10 +133,3 @@ def test_surge_due_cooldown_and_run(monkeypatch, fake_llm):
     assert rec2 and len([r for r in raids._load()["days"].values() if r.get("raid")]) == 2   # 같은 날 두 번째 습격도 따로 기록
     assert not raids.should_run(datetime(2026, 11, 1, raids.RAID_HOUR))            # surge 모드에선 밤 고정 침입 없음
     assert "불시" in raids.summary(t2)
-
-
-def test_note_surge_records_without_story():
-    t = datetime(2026, 11, 2, 15, 0)
-    rec = raids.note_surge(t, {"peak": 88, "base": 30, "rise": 58, "playing": 2}, {"count": 6, "mob": "zombie"})
-    assert rec["raid"] and rec["outcome"] == "개척지 습격" and rec["monster"] == "zombie 6마리"
-    assert raids.last(t.replace(minute=5))["outcome"] == "개척지 습격"

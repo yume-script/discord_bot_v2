@@ -445,23 +445,6 @@ def run(now: datetime | None = None, force: bool = False, inject=None, post=None
     return rec
 
 
-def note_surge(now: datetime | None, surge_info: dict, got: dict | None = None) -> dict:
-    """[개척지 모드] 습격을 오아시스 이야기 없이 기록만 (쿨다운/하루 최대/최근 습격 표시용).
-    got: 개척지에 실제로 나타난 몬스터 {"count", "mob"} (아무도 없어서 안 나타났으면 None)"""
-    now = now or now_kst()
-    data = _load()
-    days = data.setdefault("days", {})
-    key = now.strftime("%Y-%m-%d") + (f"#{now:%H%M}" if done_today(now) else "")
-    rec = {"at": now.isoformat(timespec="minutes"), "raid": True, "surge": surge_info, "score": 0, "level": "", "why": [],
-           "monster": f"{(got or {}).get('mob', '몬스터')} {(got or {}).get('count', '')}마리".strip(),
-           "outcome": "개척지 습격" if got else "개척지가 비어 있어 지나감", "summary": "", "defense": 0, "strength": 0}
-    days[key] = rec
-    data["days"] = {d: v for d, v in days.items() if d >= (now - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")}
-    _save(data)
-    print(f"[침입] 개척지 습격 기록 ({rec['outcome']})")
-    return rec
-
-
 def summary(now: datetime | None = None, limit: int = 7) -> str:
     """관리자 조회(/포링푸드침입)용: 지금 예보 + 최근 밤들."""
     now = now or now_kst()
