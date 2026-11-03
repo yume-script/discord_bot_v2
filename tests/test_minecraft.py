@@ -653,3 +653,38 @@ def test_no_trees_expires():
     assert minecraft.no_trees(st)
     minecraft.apply_events(st, [], {}, datetime(2026, 11, 3, 12, 30))
     assert not minecraft.no_trees(st) and minecraft.cost_of(st, "farm") == {"logs": 8}
+
+
+def test_build_sends_alternative_and_ledger_follows_real_material(monkeypatch, tmp_path):
+    # 봇 서비스가 실제 상자를 보고 다른 재료(돌)로 지었으면 장부도 그 재료를 뺀다
+    from poring_food.clock import now_kst
+    now = now_kst()
+    st = {"res": {"logs": 10, "stone": 10, "food": 50}, "built": {}}
+    api = FakeApi()
+    minecraft.send_task(st, api, now, {"name": "페른", "task": "build", "blueprint": "farm", "job": "farm"},
+                        lambda n, x: None, False)
+    body = next(b for p, b in api.calls if p == "/task")
+    assert body["args"]["cost"] == {"logs": 8} and body["args"]["alts"] == [{"cost": {"stone": 8}, "material": "stone"}]
+    assert st["res"] == {"logs": 2, "stone": 10, "food": 50}
+    minecraft.apply_events(st, [{"id": 1, "name": "Fern", "kind": "done", "task": "build",
+                                 "result": {"blueprint": "farm", "cost": {"stone": 8}, "material": "stone"}}],
+                           {"Fern": "페른"}, now)
+    assert st["res"]["logs"] == 10 and st["res"]["stone"] == 2 and st["built"]["farm"] == 1
+
+
+def test_fast_resyncs_storage_when_build_short(monkeypatch, tmp_path):
+    _live_state(monkeypatch, tmp_path)
+    st = minecraft._load()
+    st["res"]["stone"] = 30                                  # 장부만 돌이 있다 (실제 상자는 0)
+    minecraft._save(st)
+
+    class Short(Live):
+        def get(self, path):
+            if path == "/storage":
+                return {"ok": True, "counts": {"logs": 5, "stone": 0, "food": 50, "coal": 0, "iron": 0}}
+            return super().get(path)
+    api = Short([{"id": 1, "name": "Fern", "kind": "failed", "task": "build", "error": "창고에 stone 부족 (0/20)"}])
+    minecraft.fast(datetime(2026, 11, 3, 12), api=api, post=lambda n, t: None, llm=lambda s, u: {},
+                   agents=[_ag("페른"), _ag("게르도")])
+    assert minecraft._load()["res"]["stone"] == 0
+    assert not any(p == "/task" and b["kind"] == "build" for p, b in api.calls)   # 없는 돌로 또 짓지 않는다

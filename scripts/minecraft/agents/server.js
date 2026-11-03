@@ -242,6 +242,8 @@ function parseItems(text) {
 
 async function readChest(c) {
   const t = await rcon(`data get block ${c.x} ${c.y} ${c.z} Items`);
+  // 창고 청크가 안 불러와졌으면 "비었다"가 아니라 "모른다" (예전엔 0개로 읽혀 재료가 있는데도 부족으로 실패)
+  if (/not loaded/i.test(t)) throw new Error('창고 청크가 안 불러와짐');
   if (/No block entity|not a block entity|Found no elements/i.test(t)) return [];
   return parseItems(t);
 }
@@ -250,7 +252,9 @@ async function storageCounts() {
   const counts = { logs: 0, stone: 0, food: 0, coal: 0, iron: 0 };
   if (!storage || !RCON_PASS) return null;
   for (const c of storage) {
-    for (const it of await readChest(c)) {
+    let items;
+    try { items = await readChest(c); } catch (e) { return null; }      // 못 읽으면 모름 (장부를 그대로 둔다)
+    for (const it of items) {
       const k = categoryOf(it.id);
       if (k) counts[k] += it.id === 'bread' ? it.count * 3 : it.count;   // 빵 1 = 밀 3
     }
@@ -706,15 +710,29 @@ function withMaterial(cmd, material) {
   return STONE_SWAP.reduce((c, [re, to]) => c.replace(re, to), cmd);
 }
 
-async function doBuild(entry, blueprint, slot, cost, material) {
+async function doBuild(entry, blueprint, slot, cost, material, alts) {
   const bot = entry.bot;
   const plan = BLUEPRINTS[blueprint];
   if (!plan) throw new Error(`모르는 건물: ${blueprint}`);
   // 재료는 공동 창고에서 꺼낸다 - 다 있을 때만 (없으면 짓지 않고 실패: 재료 부족)
   if (cost && RCON_PASS) {
     await ensureStorage(bot);
-    const have = await storageCounts();
-    for (const [k, n] of Object.entries(cost)) if ((have[k] || 0) < n) throw new Error(`창고에 ${k} 부족 (${have[k] || 0}/${n})`);
+    let have = await storageCounts();
+    if (!have) {                                     // 창고 청크가 안 보이면 창고로 걸어가서 다시 읽는다
+      await goNear(bot, storage[0].x, storage[0].z, 3);
+      try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+      have = await storageCounts();
+      if (!have) throw new Error('창고를 못 읽음 (청크)');
+    }
+    // 정해 준 재료가 모자라면 다른 방법(alts: 나무 대신 돌 등)으로 - 실제 상자 기준
+    const options = [{ cost, material }, ...(alts || [])];
+    const pick = options.find((o) => Object.entries(o.cost).every(([k, n]) => (have[k] || 0) >= n));
+    if (!pick) {
+      const [k, n] = Object.entries(cost).find(([k2, n2]) => (have[k2] || 0) < n2);
+      throw new Error(`창고에 ${k} 부족 (${have[k] || 0}/${n})`);
+    }
+    cost = pick.cost;
+    material = pick.material;
     for (const [k, n] of Object.entries(cost)) await takeFromStorage(k, n);
   }
   const probe = slotOrigin(blueprint, slot, 0);
@@ -729,7 +747,7 @@ async function doBuild(entry, blueprint, slot, cost, material) {
   await sleep(800);
   const check = bot.blockAt(new Vec3(o.x, o.y + 1, o.z));
   if (check && check.name === 'air') throw new Error('명령은 보냈지만 건물이 서 있지 않음 (권한/위치 확인)');
-  return { blueprint, slot, x: o.x, y: o.y, z: o.z, verified: !!check };
+  return { blueprint, slot, x: o.x, y: o.y, z: o.z, verified: !!check, cost, material: material || '' };
 }
 
 function nearLava(bot, pos) {
@@ -784,7 +802,7 @@ async function runTask(name, kind, args, say) {
       entry.roundAt = Date.now();
       let result = {};
       if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8), !!args.near);
-      else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0, args.cost, args.material);
+      else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0, args.cost, args.material, args.alts);
       else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8), !!args.near);
       else if (kind === 'farm') {
         if (round) { for (let w = 0; w < 36 && !entry.cancel; w++) await sleep(5000); }   // 3분 기다렸다 다시
