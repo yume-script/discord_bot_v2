@@ -688,3 +688,21 @@ def test_fast_resyncs_storage_when_build_short(monkeypatch, tmp_path):
                    agents=[_ag("페른"), _ag("게르도")])
     assert minecraft._load()["res"]["stone"] == 0
     assert not any(p == "/task" and b["kind"] == "build" for p, b in api.calls)   # 없는 돌로 또 짓지 않는다
+
+
+def test_short_build_uses_real_counts_and_woodcutters_mine_without_trees():
+    from poring_food.clock import now_kst
+    now = now_kst()
+    st = {"res": {"logs": 3, "stone": 40, "food": 50}, "built": {"farm": 2}, "no_trees": f"{now:%Y-%m-%d %H:%M}",
+          "jobs": {"카브루": "gather", "다니": "build"},
+          "pending": {"Dani": {"task": "build", "blueprint": "hut", "cost": {"stone": 20}}}}
+    minecraft.apply_events(st, [{"id": 1, "name": "Dani", "kind": "failed", "task": "build",
+                                 "error": "창고에 stone 부족 (0/20)",
+                                 "have": {"logs": 3, "stone": 0, "food": 50, "coal": 0, "iron": 0}}], {"Dani": "다니"}, now)
+    assert st["res"]["stone"] == 0                         # 실제 상자대로 (되돌린 20을 믿지 않는다)
+    assert minecraft.job_task(st, "카브루", st, True) == ("mine", "")   # 나무가 없으니 나무꾼도 돌
+    assert minecraft.job_task(st, "다니", st, True) == ("mine", "")
+    api = FakeApi()
+    t = {"name": "다니", "task": "build", "blueprint": "hut", "job": "build"}
+    minecraft.send_task(st, api, now, t, lambda n, x: None, False)       # 재료가 없으면 짓기를 보내지 않는다
+    assert [b["kind"] for p, b in api.calls if p == "/task"] == ["mine"]

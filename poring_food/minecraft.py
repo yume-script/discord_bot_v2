@@ -796,6 +796,9 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
             if task == "build":
                 for k, v in ((pend.get(e.get("name")) or {}).get("cost") or {}).items():   # 못 지었으면 자원을 되돌린다
                     res[k] = res.get(k, 0) + int(v)
+                if isinstance(e.get("have"), dict):     # 봇 서비스가 방금 읽은 실제 상자 - 장부를 그대로 맞춘다
+                    for k in RESOURCES:
+                        res[k] = int(e["have"].get(k, 0) or 0)
             if task in TASKS:
                 stats[task]["failed"] += 1
                 lesson(st, f"{TASKS[task]} 실패: {str(e.get('error') or '이유 모름')[:60]}")
@@ -1015,9 +1018,10 @@ def job_task(st: dict, name: str, sim: dict, day: bool | None) -> tuple[str, str
         want_ore = any(h < n and k in ("coal", "iron") for kd, k, h, n in conditions(sim)) or any(
             short_of(sim, b) in ("coal", "iron") for b in needed(sim) if not can_afford(sim, b))
         return ("ore" if want_ore else "mine"), ""
+    wood = "mine" if no_trees(sim) else "gather"      # 근처에 나무가 없으면 나무꾼도 돌을 캔다 (돌로 짓는다)
     if job == "patrol":
-        return ("patrol" if day is False else "gather"), ""
-    return "gather", ""
+        return ("patrol" if day is False else wood), ""
+    return wood, ""
 
 
 def decide(people: list[dict], st: dict, day: bool | None, llm=None, now: datetime | None = None) -> list[dict]:
@@ -1352,6 +1356,10 @@ def send_task(st: dict, api, now: datetime, t: dict, post, lite: bool = False) -
         st["farm_at"] = f"{now:%Y-%m-%d %H:%M}"
     elif t["task"] == "build":
         cost = cost_of(st, t["blueprint"])
+        if not all(res.get(k, 0) >= v for k, v in cost.items()):
+            # 장부로도 지을 재료가 없다 (같은 바퀴에 다른 사람이 먼저 썼거나 장부가 바뀜) - 짓지 않고 모자란 재료를 모은다
+            t.update(task=RES_TASK.get(short_of(st, t["blueprint"]), "mine"), blueprint="")
+            return send_task(st, api, now, t, post, lite)
         for k, v in cost.items():
             res[k] = res.get(k, 0) - v
         args = {"blueprint": t["blueprint"], "slot": slots.get(t["blueprint"], 0), "cost": cost,
