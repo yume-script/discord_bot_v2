@@ -554,7 +554,7 @@ async function doGather(entry, count, near) {
   // 모은 통나무는 마을 창고로 (가방에서 빼서 장부로 - 실제 건물은 /fill)
   if (got) forest = bot.entity.position.floored();          // 다음에 나무 베러 갈 곳
   const stored = await depositAll(bot, 'logs');               // 창고로 운반 (실제로 상자에 들어간 수)
-  return { logs: stored, cut: got };
+  return { logs: stored, cut: got, near: !!near };
 }
 
 async function doMine(entry, count, near) {
@@ -697,7 +697,16 @@ async function doRaid(count, mob) {
   return { count, mob };
 }
 
-async function doBuild(entry, blueprint, slot, cost) {
+// 나무가 모자라 돌로 지을 때 (material=stone): 나무 블록을 돌 블록으로 바꿔 놓는다 (문은 그대로)
+const STONE_SWAP = [[/\b(oak|spruce|dark_oak)_planks\b/g, 'cobblestone'], [/\b(oak|spruce|dark_oak)_slab\b/g, 'cobblestone_slab'],
+  [/\boak_fence\b/g, 'cobblestone_wall'], [/\b(oak|spruce)_log\b/g, 'stone_bricks']];
+
+function withMaterial(cmd, material) {
+  if (material !== 'stone') return cmd;
+  return STONE_SWAP.reduce((c, [re, to]) => c.replace(re, to), cmd);
+}
+
+async function doBuild(entry, blueprint, slot, cost, material) {
   const bot = entry.bot;
   const plan = BLUEPRINTS[blueprint];
   if (!plan) throw new Error(`모르는 건물: ${blueprint}`);
@@ -713,7 +722,7 @@ async function doBuild(entry, blueprint, slot, cost) {
   const o = slotOrigin(blueprint, slot, groundY(bot, probe.x, probe.z));
   for (const cmd of plan(o)) {
     if (entry.cancel) throw new Error('짓다가 멈춤');
-    await run(bot, cmd);
+    await run(bot, withMaterial(cmd, material));
     await sleep(RCON_PASS ? 100 : 400);
   }
   // 검증: 모든 건물은 (o.x, o.y+1, o.z)에 블록이 있다 - 정말 서 있는지 확인 (청크가 안 보이면 확인 못 함 = 믿는다)
@@ -775,7 +784,7 @@ async function runTask(name, kind, args, say) {
       entry.roundAt = Date.now();
       let result = {};
       if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8), !!args.near);
-      else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0, args.cost);
+      else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0, args.cost, args.material);
       else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8), !!args.near);
       else if (kind === 'farm') {
         if (round) { for (let w = 0; w < 36 && !entry.cancel; w++) await sleep(5000); }   // 3분 기다렸다 다시

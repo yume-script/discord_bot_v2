@@ -95,6 +95,9 @@ BLUEPRINTS = {
     "smithy": ("대장간", {"logs": 16, "stone": 16, "coal": 4}),
     "hall": ("마을회관", {"logs": 40, "stone": 40, "iron": 6}),
 }
+# 나무 대신 돌로도 지을 수 있는 건물 (근처에 나무가 없을 때 - 통나무 수만큼 돌을 쓰고 나무 블록을 돌 블록으로)
+STONE_OK = ("hut", "farm", "tower", "smithy")
+NO_TREES_MIN = 180      # 나무 베기가 빈손으로 온 뒤 이 시간(분) 동안은 "근처에 나무가 없다"로 보고 돌로 짓는 쪽을 먼저
 RESOURCES = {"logs": "통나무", "stone": "돌", "food": "식량", "coal": "석탄", "iron": "철"}
 TASKS = {"gather": "나무 베기", "mine": "돌 캐기", "farm": "밭 수확", "ore": "광석 캐기", "build": "짓기",
          "patrol": "몬스터 순찰", "rest": "광장에서 쉬기", "audit": "개척지 둘러보기"}
@@ -218,15 +221,61 @@ def unmet(st: dict) -> list[str]:
     return out
 
 
+def no_trees(st: dict, now: datetime | None = None) -> bool:
+    """최근 나무 베기가 나무를 하나도 못 찾았나. now를 주면 NO_TREES_MIN이 지난 표시는 지운다 (사건을 볼 때마다)"""
+    at = st.get("no_trees")
+    if not at:
+        return False
+    if now is not None:
+        try:
+            if (now - datetime.strptime(at, "%Y-%m-%d %H:%M")).total_seconds() >= NO_TREES_MIN * 60:
+                st.pop("no_trees", None)
+                return False
+        except ValueError:
+            st.pop("no_trees", None)
+            return False
+    return True
+
+
+def costs(bp: str) -> list[dict]:
+    """그 건물을 짓는 방법들 [기본(나무), 돌로]"""
+    base = BLUEPRINTS[bp][1]
+    out = [dict(base)]
+    if bp in STONE_OK and base.get("logs"):
+        alt = {k: v for k, v in base.items() if k != "logs"}
+        alt["stone"] = alt.get("stone", 0) + base["logs"]
+        out.append(alt)
+    return out
+
+
+def cost_of(st: dict, bp: str) -> dict:
+    """지금 쓸 재료: 있는 재료로 지을 수 있는 방법 (나무가 없으면 돌부터), 아무것도 안 되면 가장 덜 모자란 방법
+    (나무가 없을 때는 돌로 - 나무를 기다리지 않고 돌을 모으게)"""
+    res = st.get("res") or {}
+    opts = costs(bp)
+    if no_trees(st):
+        opts = opts[::-1]
+    for c in opts:
+        if all(res.get(k, 0) >= v for k, v in c.items()):
+            return c
+    if no_trees(st):
+        return opts[0]
+    return min(opts, key=lambda c: sum(max(0, v - res.get(k, 0)) for k, v in c.items()))
+
+
+def material(bp: str, cost: dict) -> str:
+    return "stone" if BLUEPRINTS[bp][1].get("logs") and not cost.get("logs") else ""
+
+
 def can_afford(st: dict, bp: str) -> bool:
     res = st.get("res") or {}
-    return all(res.get(k, 0) >= v for k, v in BLUEPRINTS[bp][1].items())
+    return any(all(res.get(k, 0) >= v for k, v in c.items()) for c in costs(bp))
 
 
 def short_of(st: dict, bp: str) -> str:
-    """그 건물에 가장 모자란 자원 (logs/stone)"""
+    """그 건물에 가장 모자란 자원 (logs/stone) - 지금 쓸 재료 기준"""
     res = st.get("res") or {}
-    gaps = {k: v - res.get(k, 0) for k, v in BLUEPRINTS[bp][1].items()}
+    gaps = {k: v - res.get(k, 0) for k, v in cost_of(st, bp).items()}
     return max(gaps, key=gaps.get)
 
 
@@ -334,8 +383,10 @@ def problems(st: dict, people: int | None = None) -> list[str]:
         if have < need:
             out.append(f"다음 시대 조건: {RESOURCES[k]} {'창고' if kind == 'stock' else '지금까지 캔 양'} "
                        f"{max(have, 0)}/{need}")
+    if no_trees(st):
+        out.append("근처에 나무가 없다 - 밭·오두막·감시탑·대장간은 통나무 대신 돌로 짓는다 (나무꾼은 더 멀리 숲을 찾는다)")
     for b in needed(st)[:2]:
-        gaps = {k: v - res.get(k, 0) for k, v in BLUEPRINTS[b][1].items() if res.get(k, 0) < v}
+        gaps = {k: v - res.get(k, 0) for k, v in cost_of(st, b).items() if res.get(k, 0) < v}
         if gaps:
             out.append(f"{BLUEPRINTS[b][0]}을(를) 지으려면 " + ", ".join(f"{RESOURCES[k]} {v}" for k, v in gaps.items())
                        + " 더 필요")
@@ -683,6 +734,7 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
     res = st.setdefault("res", {})
     made = st.setdefault("made", {})
     stats = st.setdefault("stats", {})
+    no_trees(st, now)                     # 오래된 "나무 없음" 표시는 지운다 (다시 나무를 찾아 나서게)
     for e in events:
         who = by_mc.get(e.get("name", ""), e.get("name", ""))
         kind = e.get("kind")
@@ -700,6 +752,14 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
                     if not made.get(key) and key in ("coal", "iron"):
                         out.append((NAME, history(st, now, f"{who}이(가) 처음으로 {RESOURCES[key]}을(를) 캐 왔다")))
                     made[key] = made.get(key, 0) + n
+            if task == "gather" and not r.get("near"):
+                if gained.get("logs"):
+                    st.pop("no_trees", None)
+                elif "cut" in r and not r.get("cut"):
+                    if not no_trees(st, now):        # 처음 알게 됐을 때 한 번 알린다
+                        out.append((NAME, history(st, now, f"{who}이(가) 멀리까지 걸었지만 나무를 한 그루도 못 찾았다 - "
+                                                  "당분간 밭·오두막은 돌로 짓기로 한다")))
+                    st["no_trees"] = f"{now:%Y-%m-%d %H:%M}"
             if task == "farm" and r.get("rebuilt"):
                 out.append((who, f"망가진(또는 장부에만 있던) 밭 {r['rebuilt']}곳을 다시 일구고 밀을 심었다"))
             if gained:
@@ -933,14 +993,14 @@ def job_task(st: dict, name: str, sim: dict, day: bool | None) -> tuple[str, str
             return "farm", ""
         if can_afford(sim, "farm"):
             return "build", "farm"
-        return "gather", ""                      # 밭 지을 통나무부터
+        return _gather_for(sim, "farm"), ""      # 밭 지을 재료부터 (나무가 없으면 돌)
     if job == "build":
         for b in needed(sim) or allowed(sim):
             if can_afford(sim, b):
                 return "build", b
         need = needed(sim) or ["hut"]
         k = short_of(sim, need[0])                # 재료가 모자라면 그 재료를 만드는 직업에게 부탁하고, 나도 모은다
-        gap = BLUEPRINTS[need[0]][1].get(k, 0) - (sim.get("res") or {}).get(k, 0)
+        gap = cost_of(sim, need[0]).get(k, 0) - (sim.get("res") or {}).get(k, 0)
         if gap > 0:
             open_request(st, now_kst(), name, k, gap, f"{BLUEPRINTS[need[0]][0]} 재료")
         return _gather_for(sim, need[0]), ""
@@ -964,13 +1024,13 @@ def decide(people: list[dict], st: dict, day: bool | None, llm=None, now: dateti
         give_job(st, p, now)
     plan = st.get("plan") if (st.get("plan") or {}).get("focus") in FOCUS else None
     sim = {"res": dict(st.get("res") or {}), "built": dict(st.get("built") or {}), "era": st.get("era", 0),
-           "made": dict(st.get("made") or {})}
+           "made": dict(st.get("made") or {}), "no_trees": st.get("no_trees")}
     farms = sim["built"].get("farm", 0)       # 이번 바퀴 전에 이미 있는 밭 (짓는 중인 밭은 아직 수확 못 함)
     tasks = []
     for p in people:
         task, bp = job_task(st, p["name"], sim, day)
         if task == "build":
-            for k, v in BLUEPRINTS[bp][1].items():
+            for k, v in cost_of(sim, bp).items():
                 sim["res"][k] = sim["res"].get(k, 0) - v
             sim["built"][bp] = sim["built"].get(bp, 0) + 1          # 같은 건물을 둘이 짓지 않게
         tasks.append({"name": p["name"], "task": task, "blueprint": bp, "say": "", "job": role(st, p["name"])})
@@ -1284,10 +1344,11 @@ def send_task(st: dict, api, now: datetime, t: dict, post, lite: bool = False) -
                 "grow": grow_stages(st, now), "repeat": True, "grow_min": GROW_MIN}
         st["farm_at"] = f"{now:%Y-%m-%d %H:%M}"
     elif t["task"] == "build":
-        cost = BLUEPRINTS[t["blueprint"]][1]
+        cost = cost_of(st, t["blueprint"])
         for k, v in cost.items():
             res[k] = res.get(k, 0) - v
-        args = {"blueprint": t["blueprint"], "slot": slots.get(t["blueprint"], 0), "cost": cost}
+        args = {"blueprint": t["blueprint"], "slot": slots.get(t["blueprint"], 0), "cost": cost,
+                "material": material(t["blueprint"], cost)}
         slots[t["blueprint"]] = slots.get(t["blueprint"], 0) + 1
         pend[mc] = {"task": "build", "blueprint": t["blueprint"], "cost": cost}
     elif t["task"] == "patrol":
@@ -1297,14 +1358,15 @@ def send_task(st: dict, api, now: datetime, t: dict, post, lite: bool = False) -
     sent = api.post("/task", {"name": mc, "kind": t["task"], "args": args, "say": t.get("say", "")})
     if sent.get("error"):                  # 못 맡겼으면 예약한 재료/자리를 되돌리고 다음에
         if t["task"] == "build":
-            for k, v in BLUEPRINTS[t["blueprint"]][1].items():
+            for k, v in cost.items():
                 res[k] = res.get(k, 0) + v
             slots[t["blueprint"]] = max(0, slots.get(t["blueprint"], 1) - 1)
             pend.pop(mc, None)
         t["task"] = "-"
         return False
     what = (f"{JOBS[t['job']]} · " if t.get("job") in JOBS else "") + TASKS[t["task"]] + (
-        f" ({BLUEPRINTS[t['blueprint']][0]})" if t.get("blueprint") else "")
+        f" ({BLUEPRINTS[t['blueprint']][0]}" + (", 돌로" if args.get("material") == "stone" else "") + ")"
+        if t.get("blueprint") else "")
     post(t["name"], f"-# {NAME} · {now:%H:%M} · {what}" + (f" · {t['why']}" if t.get("why") else "")
          + f"\n{t.get('say') or '…'}")
     _remember_line(st, t["name"], f"{what} 하러 감", now)
@@ -1543,6 +1605,7 @@ URGENT = ("failed", "stuck", "died", "hungry", "rescued")
 REACT_SYSTEM = """너는 숲 너머 개척지(마인크래프트 마을)의 현장 감독이다. 한 일꾼에게 방금 문제가 생겼다.
 원인을 짧게 짚고 그 사람이 바로 할 다음 일을 하나 고른다: gather(나무) / mine(돌) / farm(밭 수확) / ore(석탄·철) /
 build(짓기 - blueprint 필요) / patrol(순찰) / rest(쉬기). 같은 실패를 되풀이하지 말고, 공동체에 지금 가장 필요한 일을 고른다.
+근처에 나무가 없으면 밭·오두막·감시탑·대장간은 통나무 대신 같은 수의 돌로 지을 수 있다 (돌을 캐서 짓자).
 say: 그 사람이 게임 채팅에 칠 한마디(그 사람 말투, 20자 안팎). lesson: 공동체가 기억할 교훈 한 줄(없으면 빈칸).
 JSON으로만: {"task": "...", "blueprint": "", "why": "한 문장", "say": "...", "lesson": ""}"""
 
@@ -1580,9 +1643,9 @@ def _valid_task(st: dict, task: str, bp: str) -> tuple[str, str] | None:
 
 def react_event(st: dict, e: dict, who: str, agent: dict, now: datetime, llm=None) -> dict:
     """막힌 일 하나에 대한 다음 일 (LLM 한 번 또는 규칙). 반환 task dict"""
-    avoid = avoided(st, now) | ({e.get("task")} if e.get("kind") in ("failed", "stuck") and e.get("task") else set())
+    avoid = avoided(st, now) | ({e.get("task")} if e.get("kind") in ("failed", "stuck", "empty") and e.get("task") else set())
     sim = {"res": dict(st.get("res") or {}), "built": dict(st.get("built") or {}), "era": st.get("era", 0),
-           "made": dict(st.get("made") or {})}
+           "made": dict(st.get("made") or {}), "no_trees": st.get("no_trees")}
     rule_task, rule_bp = job_task(st, who, sim, None)
     if rule_task in avoid:
         rule_task, rule_bp = next(x for x in ("mine", "gather", "rest") if x not in avoid), ""
@@ -1592,6 +1655,8 @@ def react_event(st: dict, e: dict, who: str, agent: dict, now: datetime, llm=Non
     what = {"failed": f"'{TASKS.get(e.get('task'), e.get('task'))}' 실패: {e.get('error', '')}",
             "stuck": f"'{TASKS.get(e.get('task'), e.get('task'))}'가 {e.get('minutes', '?')}분 넘게 안 끝나 멈춤",
             "died": "몬스터에게 쓰러졌다 다시 일어남", "hungry": "배가 고픈데 창고에 먹을 게 없음",
+            "empty": f"'{TASKS.get(e.get('task'), e.get('task'))}'를 하러 갔지만 빈손으로 돌아옴"
+                     + (" - 멀리까지 걸었는데 나무가 한 그루도 없었다" if e.get("task") == "gather" else " (근처에 없음)"),
             "rescued": f"{e.get('why', '갇힘')} - 하던 '{TASKS.get(e.get('task'), e.get('task') or '일')}'를 멈추고 마을 광장으로 "
                        "데려옴"}[e["kind"]]
     facts = (f"[일꾼] {who} ({JOBS.get(role(st, who), '일꾼')}) - {str(agent.get('profile', ''))[:80]}\n[방금 생긴 일] {what}\n"
@@ -1706,7 +1771,11 @@ def _fast(now: datetime | None = None, api: Api | None = None, post=None, llm=No
             continue
         if not who or who in seen or mc_name(who) not in online or stop:
             continue
-        if kind in URGENT:
+        r = e.get("result") or {}
+        if kind == "done" and e.get("task") in ("gather", "mine", "ore") and not any(int(r.get(k) or 0) for k in RESOURCES):
+            e = {**e, "kind": "empty"}             # 빈손 - 바로 판단하고 한마디 (나무가 없으면 돌로 짓자 등)
+            kind = "empty"
+        if kind in URGENT or kind == "empty":
             ra = st.setdefault("react_at", {})
             try:
                 recent = ra.get(who) and (now - datetime.strptime(ra[who], "%Y-%m-%d %H:%M")).total_seconds() < REACT_MIN * 60
@@ -1734,7 +1803,7 @@ def _fast(now: datetime | None = None, api: Api | None = None, post=None, llm=No
             if kind == "joined" and (st.get("assigned_at") or {}).get(who, "") >= f"{now:%Y-%m-%d %H:%M}"[:-1]:
                 continue
             sim = {"res": dict(st.get("res") or {}), "built": dict(st.get("built") or {}), "era": st.get("era", 0),
-                   "made": dict(st.get("made") or {})}
+                   "made": dict(st.get("made") or {}), "no_trees": st.get("no_trees")}
             task, bp = job_task(st, who, sim, None)
             if task in avoided(st, now):
                 task, bp = "mine" if task != "mine" else "gather", ""
