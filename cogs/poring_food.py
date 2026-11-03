@@ -18,7 +18,6 @@
   · /포링푸드연대기 [날짜] - 그날 세계에서 있었던 일(하루 요약/원본 사건)과 진행 중인 일을 본다
   · /포링푸드명단 [소속] - 지금 스스로 사는 인물들의 소속/자리/맡은 일/고정 여부/지금 하는 일, 최근 교체
   · /포링푸드침입 [지금] - 몬스터 침입 예보(위험도)와 최근 밤들, 지금=True면 바로 침입 (시험용)
-  · /포링푸드마크 [지금] - 마인크래프트 마을 장부(창고/건물/처치)와 접속 중인 인물, 지금=True면 결계 단계와 상관없이 한 바퀴 (시험용)
   · /시청현황 - 지금 재생 중인 수 (Plex 종류별 + YM_PLAYER 텔레그램/IPTV, 숫자만 - 제목·계정 없음)
   · /포링푸드골목 - 마을 방어 배치 판 그림 + 방어 기금/놓인 것과 상태/손봐야 할 것/최근 기록
   · /포링푸드이웃 [작품] - 애니메이션 인물들을 지금 바로 마을로 이사 오게 한다 (원래는 주 1회 자동)
@@ -72,17 +71,13 @@ class PoringFood(commands.Cog):
         if settings.PORING_FOOD_ENABLED:
             self.hourly.start()
             self.drain_outbox.start()
-            from poring_food import minecraft
-            if not minecraft.mc_world():   # 개척지 모드에선 오아시스 마을 실시간 대화/상영·도서관 이야기를 멈춘다
-                self.live_runner.start()
-                self.plex_watch.start()
-                self.book_watch.start()
+            self.live_runner.start()
+            self.plex_watch.start()
+            self.book_watch.start()
             self.load_guard.start()
             self.waitfree_pilot.start()
             self.app_updater.start()
             self.avatar_maker.start()
-            self.minecraft_tick.start()
-            self.minecraft_fast.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -101,8 +96,6 @@ class PoringFood(commands.Cog):
         self.waitfree_pilot.cancel()
         self.app_updater.cancel()
         self.avatar_maker.cancel()
-        self.minecraft_tick.cancel()
-        self.minecraft_fast.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -192,13 +185,8 @@ class PoringFood(commands.Cog):
         try:
             sg = await asyncio.to_thread(raids.surge_due)
             if sg:
-                from poring_food import minecraft
                 async with self._lock:
-                    if minecraft.mc_world():   # 개척지 둘레에 실제 몬스터 (아무도 없으면 기록만 - 쿨다운용)
-                        got = await asyncio.to_thread(minecraft.surge_raid, sg)
-                        await asyncio.to_thread(raids.note_surge, None, sg, got)
-                    else:
-                        await asyncio.to_thread(raids.run, None, False, None, None, sg)
+                    await asyncio.to_thread(raids.run, None, False, None, None, sg)
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 몬스터 불시 습격 실패")
         # 사람이 직접 끄고 켠 컨테이너도 방금 잰 목록으로 바로 잡는다 (감시탑 - 원래는 매시 회차에만 봤다)
@@ -219,10 +207,6 @@ class PoringFood(commands.Cog):
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 결계 조절/감시탑 알림 실패")
         # 2) 인물 세계엔 잠금 안에서 바로 이어서 (마을 사건 + 관련 인물이 다음 회차를 기다리지 않고 지금 반응)
-        #    개척지 모드에선 오아시스 마을 반응은 없다 (결계 사정은 개척지 철수/회의로 이어진다)
-        from poring_food import minecraft
-        if minecraft.mc_world():
-            return
         async with self._lock:
             try:
                 if done:
@@ -275,38 +259,6 @@ class PoringFood(commands.Cog):
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 인물 초상화 만들기 실패")
 
-    @tasks.loop(minutes=10)
-    async def minecraft_tick(self) -> None:
-        """마인크래프트 마을 - 인물들이 봇으로 들어가 나무 모으기/짓기/몬스터 순찰 (poring_food/minecraft.py, PORING_MINECRAFT=1)"""
-        from poring_food import minecraft
-        if not minecraft.ENABLED:
-            return
-        try:
-            async with self._lock:   # 결과를 인물 기억/연대기에 쓰므로 회차와 겹치지 않게
-                await asyncio.to_thread(minecraft.tick)
-        except Exception:  # noqa: BLE001
-            log.exception("포링푸드 마인크래프트 마을 실패")
-
-    @minecraft_tick.before_loop
-    async def _before_minecraft(self) -> None:
-        await self.bot.wait_until_ready()
-
-    @tasks.loop(seconds=30)
-    async def minecraft_fast(self) -> None:
-        """마인크래프트 실시간 - 막힌 일 바로 판단, 게임 채팅 답, 손이 빈 사람 다음 일 (poring_food/minecraft.py fast).
-        회차 잠금(self._lock)은 쓰지 않는다 (회의가 길어도 채팅 답이 밀리지 않게) - 장부는 minecraft 안의 잠금이 지킨다"""
-        from poring_food import minecraft
-        if not minecraft.ENABLED:
-            return
-        try:
-            await asyncio.to_thread(minecraft.fast)
-        except Exception:  # noqa: BLE001
-            log.exception("포링푸드 마인크래프트 실시간 실패")
-
-    @minecraft_fast.before_loop
-    async def _before_minecraft_fast(self) -> None:
-        await self.bot.wait_until_ready()
-
     @avatar_maker.before_loop
     async def _before_avatar(self) -> None:
         await self.bot.wait_until_ready()
@@ -326,9 +278,8 @@ class PoringFood(commands.Cog):
         if (not settings.PORING_FOOD_ENABLED or not street_mail.ENABLED or not message.webhook_id
                 or message.channel.id not in street_mail.channels()):
             return
-        from poring_food import minecraft
         ev = street_mail.parse(message.author.name, message.content)
-        if ev and not minecraft.mc_world():   # 개척지 모드에선 오아시스 거리 이야기를 쓰지 않는다
+        if ev:
             asyncio.create_task(self._street_mail(ev))
         if message.channel.id == street_mail.HIDDEN_CHANNEL_ID and street_mail.DELETE_HIDDEN:
             try:   # 02 숨김 방식: 신호 글은 읽은 뒤 지운다 (메시지 관리 권한 필요 - 없으면 그냥 둔다)
@@ -610,14 +561,6 @@ class PoringFood(commands.Cog):
 
     @tasks.loop(time=RUN_TIMES)
     async def hourly(self) -> None:
-        from poring_food import minecraft
-        if minecraft.mc_world():   # 개척지 모드: 오아시스 마을 회차 대신 개척지 회의
-            async with self._lock:
-                try:
-                    await asyncio.to_thread(minecraft.hourly)
-                except Exception:  # noqa: BLE001
-                    log.exception("포링푸드 개척지 회의 실패")
-            return
         if self._lock.locked():
             log.info("모임/관리자 개입이 진행 중 - 끝나면 이번 회차를 이어서 실행")
         await self._run_once(wait=True)
@@ -633,12 +576,6 @@ class PoringFood(commands.Cog):
             return
         if self._lock.locked():
             await interaction.response.send_message("⏳ 이미 한 회차가 실행 중이에요.", ephemeral=True)
-            return
-        from poring_food import minecraft
-        if minecraft.mc_world():
-            await interaction.response.send_message("▶️ 개척지 회의를 지금 열게요. 에이전트 채널로 나가요.", ephemeral=True)
-            async with self._lock:
-                await asyncio.to_thread(minecraft.hourly)
             return
         await interaction.response.send_message("▶️ 포링푸드 회차를 실행할게요. 결과는 방송 채널/카톡방으로 나가요.", ephemeral=True)
         await self._run_once()
@@ -718,26 +655,6 @@ class PoringFood(commands.Cog):
             await interaction.followup.send(text, file=discord.File(path), ephemeral=True)
         else:
             await interaction.followup.send(text + "\n-# (판 그림은 글꼴/Pillow가 없어서 못 그렸어요)", ephemeral=True)
-
-    @app_commands.command(name="포링푸드마크", description="[관리자] 마인크래프트 마을 - 장부와 접속 중인 인물 (지금 한 바퀴 돌리기도 가능)")
-    @app_commands.describe(지금="True면 결계 단계와 상관없이 지금 인물들을 접속시키고 일을 맡긴다 (시험용 - 재생 중이면 피하기)")
-    async def minecraft_view(self, interaction: Interaction, 지금: bool = False):
-        if not is_admin(interaction.user.id):
-            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
-            return
-        await interaction.response.defer(ephemeral=True)
-        from poring_food import minecraft
-        line = ""
-        if 지금:
-            async with self._lock:
-                try:
-                    out = await asyncio.to_thread(minecraft.tick, None, None, None, None, None, True)
-                    line = "\n" + (f"맡긴 일: {', '.join(t['name'] + '-' + minecraft.TASKS.get(t['task'], '못 맡김') for t in out.get('assigned', []))}"
-                                    if out.get("assigned") is not None else f"결과: {out}")
-                except Exception as e:  # noqa: BLE001
-                    log.exception("포링푸드 마인크래프트 실행 실패")
-                    line = f"\n실패: {e}"
-        await interaction.followup.send((minecraft.summary() + line)[:1990], ephemeral=True)
 
     @app_commands.command(name="포링푸드침입", description="[관리자] 몬스터 침입 - 오늘 밤 숲의 기척(위험도)과 최근 밤들 (지금 침입시키기도 가능)")
     @app_commands.describe(지금="True면 위험도와 상관없이 지금 바로 몬스터가 쳐들어온다 (시험용)")
