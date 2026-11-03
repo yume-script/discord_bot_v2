@@ -37,12 +37,14 @@ const API_PORT = parseInt(process.env.API_PORT || '3010', 10);
 const FIXED_CENTER = /^-?\d+$/.test(process.env.VILLAGE_X || '') && /^-?\d+$/.test(process.env.VILLAGE_Z || '');
 let VX = FIXED_CENTER ? parseInt(process.env.VILLAGE_X, 10) : null;   // null = 첫 봇이 들어올 때 월드 스폰으로
 let VZ = FIXED_CENTER ? parseInt(process.env.VILLAGE_Z, 10) : null;
+let VY = null;   // 마을 바닥 높이 (스폰 발밑) - 창고처럼 한 높이로 맞춰야 하는 것에 쓴다
 
 function setCenter(bot) {
   if (VX !== null) return;
   const p = bot.spawnPoint && (bot.spawnPoint.x || bot.spawnPoint.z) ? bot.spawnPoint : bot.entity.position;
   VX = Math.round(p.x);
   VZ = Math.round(p.z);
+  VY = Math.round(p.y) - 1;
   console.log(`마을 중심 = 월드 스폰 (${VX}, ${VZ})`);
 }
 const NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
@@ -174,27 +176,47 @@ const CATEGORY = {            // 장부 자원 -> 아이템
 function categoryOf(id) { return Object.keys(CATEGORY).find((k) => CATEGORY[k].test(id)) || null; }
 
 async function ensureStorage(bot) {
-  // 상자 자리: 마을 중심 북쪽 (VX+2.., VZ-4). 이미 상자가 있으면 그대로, 없으면 놓는다
+  // 상자 자리: 마을 중심 북쪽 (VX+2.., VZ-4) 한 줄. 높이는 마을 중심 땅 높이 하나로 맞추고(나무 위에 뜨지 않게),
+  // 그 자리에 돌바닥을 깔고 위를 비운 뒤 상자를 놓는다. 이미 상자가 있으면 그대로 쓴다.
+  // 청크가 아직 안 보이면 아무것도 하지 않는다 (예전엔 안 보이는 걸 "상자 없음"으로 보고 다른 높이에 또 놓았다)
   if (storage) return storage;
-  const out = [];
   const base = { x: VX + 2, z: VZ - 4 };
   try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
   for (let i = 0; i < STORAGE_CHESTS; i++) {
-    const x = base.x + i * 2;
-    const z = base.z;
-    let y = null;
-    for (let yy = 120; yy > -40; yy--) {          // 이미 놓인 상자가 있으면 그 자리
-      const b = bot.blockAt(new Vec3(x, yy, z));
-      if (b && b.name === 'chest') { y = yy; break; }
-    }
-    if (y === null) {
-      y = groundY(bot, x, z) + 1;
-      await run(bot, `setblock ${x} ${y} ${z} chest[facing=south]`);
-    }
-    out.push({ x, y, z });
+    if (!bot.blockAt(new Vec3(base.x + i * 2, 64, base.z))) throw new Error('창고 자리 청크가 아직 안 보임');
   }
-  storage = out;
-  console.log(`공동 창고 = ${out.map((c) => `(${c.x},${c.y},${c.z})`).join(' ')}`);
+  const found = [];
+  for (let i = 0; i < STORAGE_CHESTS; i++) {
+    const x = base.x + i * 2;
+    for (let yy = 120; yy > -40; yy--) {
+      const b = bot.blockAt(new Vec3(x, yy, base.z));
+      if (b && b.name === 'chest') { found.push({ x, y: yy, z: base.z }); break; }
+    }
+  }
+  if (found.length === STORAGE_CHESTS && new Set(found.map((c) => c.y)).size === 1) {
+    storage = found;
+  } else {
+    // 한 높이로 새로 만든다 (흩어진 예전 상자가 있으면 그 안 물건은 새 상자로 옮긴다)
+    const y = VY !== null ? VY : groundY(bot, VX, VZ);
+    await run(bot, `fill ${base.x - 1} ${y} ${base.z - 1} ${base.x + STORAGE_CHESTS * 2 - 1} ${y} ${base.z + 1} stone_bricks`);
+    await run(bot, `fill ${base.x - 1} ${y + 1} ${base.z - 1} ${base.x + STORAGE_CHESTS * 2 - 1} ${y + 4} ${base.z + 1} air`
+      + ' replace #minecraft:replaceable');
+    const old = found.filter((c) => c.y !== y + 1);
+    const moved = [];
+    for (const c of old) moved.push(...await readChest(c));
+    for (const c of old) await run(bot, `setblock ${c.x} ${c.y} ${c.z} air`);   // 상자를 치우면 안 물건이 바닥에 떨어지니 먼저 읽어 둔다
+    for (const c of old) await run(bot, `kill @e[type=item,x=${c.x},y=${c.y},z=${c.z},distance=..3]`);
+    const chests = [];
+    for (let i = 0; i < STORAGE_CHESTS; i++) {
+      const x = base.x + i * 2;
+      for (let yy = y + 1; yy <= y + 4; yy++) await run(bot, `setblock ${x} ${yy} ${base.z} air`);
+      await run(bot, `setblock ${x} ${y + 1} ${base.z} chest[facing=south]`);
+      chests.push({ x, y: y + 1, z: base.z });
+    }
+    storage = chests;
+    for (const it of moved) await putIntoStorage(it.id, it.count);
+  }
+  console.log(`공동 창고 = ${storage.map((c) => `(${c.x},${c.y},${c.z})`).join(' ')}`);
   return storage;
 }
 
