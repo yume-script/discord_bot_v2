@@ -723,6 +723,12 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
                 out.append((who, f"개척지 둘레를 돌며 몬스터 {k}마리를 쓰러뜨렸다 (모두 {st['kills']}마리)"))
         elif kind == "ate":                     # 배고파서 마을 식량을 먹음 (농부가 거둔 밀)
             res["food"] = max(0, res.get("food", START_FOOD) - MEAL)
+        elif kind == "rescued":                 # 갇혀서(구덩이/동굴/물) 마을로 데려옴
+            st["rescues"] = st.get("rescues", 0) + 1
+            if task in TASKS:
+                stats.setdefault(task, {"done": 0, "failed": 0, "empty": 0})["failed"] += 1
+            lesson(st, f"{TASKS.get(task, '일')} 중 {e.get('why', '갇힘')} - 마을로 데려옴")
+            out.append((who, f"{e.get('why', '갇혀서')} 꼼짝 못 하다가 마을 광장으로 돌아왔다"))
         elif kind == "stuck":                   # 봇 서비스 지킴이가 너무 오래 걸린 일을 멈춤
             if task in TASKS:
                 stats.setdefault(task, {"done": 0, "failed": 0, "empty": 0})["failed"] += 1
@@ -1075,6 +1081,8 @@ REMEDIES = [   # (교훈에 들어 있는 말, 쉬게 할 일, 다시 둘러보�
     ("돌 캐기: 빈손", "mine", False, "근처에 돌이 없다 - 한동안 나무를 베게 한다"),
     ("광석 캐기", "ore", False, "광석 캐기가 안 풀린다 - 한동안 쉬게 한다"),
     ("나무 베기 실패", "gather", False, "나무 베기가 자꾸 실패한다 - 한동안 다른 일을 맡긴다"),
+    ("나무 베기 중", "gather", False, "숲에서 자꾸 갇힌다(물/구덩이) - 한동안 나무 대신 다른 일을 맡긴다"),
+    ("돌 캐기 중", "mine", False, "채석하다 자꾸 구덩이에 갇힌다 - 한동안 돌 대신 다른 일을 맡긴다"),
     ("돌 캐기 실패", "mine", False, "돌 캐기가 자꾸 실패한다 - 한동안 다른 일을 맡긴다"),
 ]
 
@@ -1481,7 +1489,7 @@ def update_requests(st: dict, now: datetime) -> list[tuple[str, str]]:
 FAST_SEC = 30
 REACT_MIN = 5
 LLM_DAY = int(os.getenv("PORING_MC_LLM_DAY", "200"))
-URGENT = ("failed", "stuck", "died", "hungry")
+URGENT = ("failed", "stuck", "died", "hungry", "rescued")
 
 REACT_SYSTEM = """너는 숲 너머 개척지(마인크래프트 마을)의 현장 감독이다. 한 일꾼에게 방금 문제가 생겼다.
 원인을 짧게 짚고 그 사람이 바로 할 다음 일을 하나 고른다: gather(나무) / mine(돌) / farm(밭 수확) / ore(석탄·철) /
@@ -1534,7 +1542,9 @@ def react_event(st: dict, e: dict, who: str, agent: dict, now: datetime, llm=Non
         return t
     what = {"failed": f"'{TASKS.get(e.get('task'), e.get('task'))}' 실패: {e.get('error', '')}",
             "stuck": f"'{TASKS.get(e.get('task'), e.get('task'))}'가 {e.get('minutes', '?')}분 넘게 안 끝나 멈춤",
-            "died": "몬스터에게 쓰러졌다 다시 일어남", "hungry": "배가 고픈데 창고에 먹을 게 없음"}[e["kind"]]
+            "died": "몬스터에게 쓰러졌다 다시 일어남", "hungry": "배가 고픈데 창고에 먹을 게 없음",
+            "rescued": f"{e.get('why', '갇힘')} - 하던 '{TASKS.get(e.get('task'), e.get('task') or '일')}'를 멈추고 마을 광장으로 "
+                       "데려옴"}[e["kind"]]
     facts = (f"[일꾼] {who} ({JOBS.get(role(st, who), '일꾼')}) - {str(agent.get('profile', ''))[:80]}\n[방금 생긴 일] {what}\n"
              f"[개척지 장부] {ledger(st)}\n[지금 문제] " + (" / ".join(problems(st)) or "없음")
              + "\n[교훈] " + (" / ".join(x["text"] for x in (st.get("lessons") or [])[-4:]) or "없음")

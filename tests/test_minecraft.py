@@ -557,3 +557,17 @@ def test_roster_is_fixed_and_sized_by_stage(monkeypatch, tmp_path):
     assert len(first) == 5 and [minecraft.role(st, n) for n in first] == minecraft.ROSTER_JOBS
     assert [a["name"] for a in minecraft.roster(st, agents)] == first             # 다음에도 같은 사람들
     assert [minecraft.team_size(s) for s in (0, 1, 2, 3)] == [5, 5, 3, 1]
+
+
+def test_rescued_event(monkeypatch, tmp_path):
+    st = {"res": {}}
+    lines = minecraft.apply_events(st, [{"id": 1, "name": "Geld", "kind": "rescued", "task": "ore",
+                                         "why": "깊은 구덩이/동굴에 갇힘"}], {"Geld": "게르도"}, datetime(2026, 11, 3))
+    assert st["rescues"] == 1 and "광장으로 돌아왔다" in lines[0][1] and "광석 캐기 중" in st["lessons"][-1]["text"]
+    _live_state(monkeypatch, tmp_path)
+    api = Live([{"id": 3, "name": "Geld", "kind": "rescued", "task": "mine", "why": "물속에 갇힘"}])
+    seen = []
+    out = minecraft.fast(datetime(2026, 11, 3, 12), api=api, post=lambda n, t: None,
+                         llm=lambda s, u: seen.append(u) or {"task": "gather", "say": "물은 이제 질색이야"},
+                         agents=[_ag("페른"), _ag("게르도")])
+    assert ("게르도", "gather") in out["reacted"] and "물속에 갇힘" in seen[0]

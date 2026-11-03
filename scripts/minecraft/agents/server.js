@@ -324,6 +324,9 @@ async function ensureTools(bot) {
     if (!max || used < max * 0.9) have[it.name] = true;
   }
   for (const tool of ['iron_pickaxe', 'iron_axe', 'iron_sword']) if (!have[tool]) await run(bot, `give @s ${tool}`);
+  // 발판용 흙 - 구덩이/물에서 쌓아 올라올 때 쓴다 (창고로 가는 돌과 섞이지 않게 흙)
+  const dirt = bot.inventory.items().filter((it) => it.name === 'dirt').reduce((a, it) => a + it.count, 0);
+  if (dirt < 16) await run(bot, `give @s dirt ${32 - dirt}`);
 }
 
 // ------------------------------------------------------------------ 건물 (마을 중심 기준 자리마다)
@@ -748,6 +751,56 @@ setInterval(() => {
   }
 }, 30000);
 
+// ------------------------------------------------------------------ 구조 (갇힘 대비)
+// 깊은 웅덩이/동굴/물속에 갇혀 못 움직이면 하던 일을 멈추고 마을 광장으로 데려온다 (RCON tp - 봇이 OP가 아니어도 됨).
+//   - 물속 60초 넘게, 또는 숨(산소)이 거의 다 떨어짐 -> 바로
+//   - 마을 바닥보다 12칸 넘게 아래에서 3분 넘게 제자리 (광석 캐기 중엔 5분) -> 동굴/구덩이
+//   - 일하는 중인데 3분 넘게 제자리, 마을에서 20칸 넘게 떨어짐 -> 막힌 곳
+//   - 일이 없는데 마을에서 80칸 넘게 떨어져 2분 넘게 있음 -> 길을 잃음
+// 데려온 뒤엔 'rescued' 이벤트 (poring_food가 다음 일을 바로 다시 정하고, 같은 일이 되풀이되면 교훈으로)
+const RESCUE_COOLDOWN = 120000;
+
+async function rescue(name, e, why) {
+  if (Date.now() - (e.rescuedAt || 0) < RESCUE_COOLDOWN || VX === null) return;
+  e.rescuedAt = Date.now();
+  e.cancel = true;
+  try { e.bot.pathfinder.stop(); e.bot.pvp.stop(); e.bot.stopDigging(); } catch (x) { /* 무시 */ }
+  const y = (VY !== null ? VY : Math.floor(e.bot.entity.position.y)) + 1;
+  const from = e.bot.entity ? e.bot.entity.position.floored() : null;
+  try {
+    await run(e.bot, `tp @s ${VX} ${y} ${VZ + 2}`);
+    await run(e.bot, 'effect give @s regeneration 10 1 true');
+  } catch (x) { /* 다음에 */ }
+  e.lastPos = null;
+  e.waterSince = null;
+  e.idleFarSince = null;
+  emit(name, 'rescued', { why, task: e.task, from: from && { x: from.x, y: from.y, z: from.z } });
+}
+
+setInterval(() => {
+  for (const [name, e] of bots) {
+    const b = e.bot;
+    if (!b.entity || VX === null) continue;
+    const p = b.entity.position;
+    // 물속 / 숨 막힘
+    if (b.entity.isInWater) e.waterSince = e.waterSince || Date.now(); else e.waterSince = null;
+    if (typeof b.oxygenLevel === 'number' && b.oxygenLevel < 6) { rescue(name, e, '숨이 막힘'); continue; }
+    if (e.waterSince && Date.now() - e.waterSince > 60000) { rescue(name, e, '물속에 갇힘'); continue; }
+    // 제자리 (일하는 중)
+    if (!e.rLast || p.distanceTo(e.rLast) > 1.5) { e.rLast = p.clone(); e.rMoved = Date.now(); }
+    const still = Date.now() - (e.rMoved || Date.now());
+    const deep = VY !== null && p.y < VY - 12;
+    const far = Math.hypot(p.x - VX, p.z - VZ);
+    if (deep && still > (e.task === 'ore' ? 300000 : 180000)) { rescue(name, e, '깊은 구덩이/동굴에 갇힘'); continue; }
+    if (e.task && e.task !== 'farm' && e.task !== 'rest' && still > 180000 && far > 20) { rescue(name, e, '막힌 곳에 갇힘'); continue; }
+    // 길을 잃음 (일이 없는데 멀리)
+    if (!e.task && far > 80) {
+      e.idleFarSince = e.idleFarSince || Date.now();
+      if (Date.now() - e.idleFarSince > 120000) rescue(name, e, '길을 잃음');
+    } else e.idleFarSince = null;
+  }
+}, 15000);
+
 // ------------------------------------------------------------------ 접속
 // 같은 IP에서 몇 초 안에 여러 명이 들어가면 서버가 "Connection throttled"로 쫓아낸다 - 한 명씩 6초 간격으로
 const joinQueue = [];
@@ -783,6 +836,8 @@ function join(name) {
     setCenter(bot);
     const moves = new Movements(bot);
     moves.canDig = true;
+    moves.allow1by1towers = true;       // 구덩이에선 발밑에 흙을 쌓아 올라온다 (흙은 ensureTools가 챙긴다)
+    moves.allowSprinting = true;
     bot.pathfinder.setMovements(moves);
     // 맨손으로는 돌이 안 나온다 - 개척지 공용 도구 (RCON으로 주니 OP가 아니어도 받는다)
     (async () => {
