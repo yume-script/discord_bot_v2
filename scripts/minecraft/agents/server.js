@@ -450,10 +450,72 @@ function withTimeout(promise, ms, onTimeout) {
   })]).finally(() => clearTimeout(t));
 }
 
+// ------------------------------------------------------------------ 이동 (V6 30.3: 이동 재시도 2~3회, 3회 실패 시 목적지 포기)
+// 같은 목적지(8칸 격자)로 3번 못 가면 30분 동안 그 목적지를 포기한다 - 같은 곳을 계속 두드리다 갇히지 않게.
+// 반환: 도착했는지
+const moveFails = new Map();     // 목적지 키 -> {n, until}
+function targetKey(x, z) { return `${Math.round(x / 8)},${Math.round(z / 8)}`; }
+function givenUp(x, z) {
+  const f = moveFails.get(targetKey(x, z));
+  return !!(f && f.until && f.until > Date.now());
+}
+
 async function goNear(bot, x, z, range = 3) {
-  try {
-    await withTimeout(bot.pathfinder.goto(new goals.GoalNearXZ(x, z, range)), 90000, () => bot.pathfinder.stop());
-  } catch (e) { /* 막혀도 근처에서 진행 */ }
+  const key = targetKey(x, z);
+  if (givenUp(x, z) || inDanger({ x, y: bot.entity ? bot.entity.position.y : 64, z })) return false;
+  for (let attempt = 0; attempt < 2; attempt++) {           // 한 번 부를 때 최대 두 번 시도
+    try {
+      await withTimeout(bot.pathfinder.goto(new goals.GoalNearXZ(x, z, range)), 90000, () => bot.pathfinder.stop());
+    } catch (e) { /* 아래에서 거리로 판단 */ }
+    const p = bot.entity && bot.entity.position;
+    if (p && Math.hypot(p.x - x, p.z - z) <= range + 2) { moveFails.delete(key); return true; }
+  }
+  const f = moveFails.get(key) || { n: 0 };
+  f.n += 1;
+  if (f.n >= 3) {
+    f.until = Date.now() + 30 * 60000;
+    f.n = 0;
+    emit(bot.username, 'gave_up', { x: Math.round(x), z: Math.round(z) });
+  }
+  moveFails.set(key, f);
+  return false;
+}
+
+// ------------------------------------------------------------------ 위험 지역 (V6 29.3/22: 낙하·용암·익사, 사망 위치)
+// 쓰러진 곳, 갇혀서 구조한 곳은 위험 지역으로 둔다 (반지름 10, 24시간) - 그쪽으로는 길을 찾지 않고 자원도 캐지 않는다.
+// poring_food가 장부에 모아 두고 바퀴마다 POST /danger로 다시 알려 준다 (봇 서비스를 다시 띄워도 기억).
+let dangerZones = [];            // [{x,y,z,r,why,until}]
+function inDanger(p) {
+  const now = Date.now();
+  return dangerZones.some((d) => (!d.until || d.until > now) && Math.hypot(p.x - d.x, p.z - d.z) <= (d.r || 10)
+    && Math.abs((p.y || d.y) - d.y) <= 16);
+}
+function addDanger(pos, why) {
+  if (!pos) return;
+  if (VX !== null && Math.hypot(pos.x - VX, pos.z - VZ) < 24) return;   // 마을 안은 위험 지역으로 막지 않는다 (지켜야 할 곳)
+  dangerZones.push({ x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z), r: 10, why,
+    until: Date.now() + 24 * 3600000 });
+  dangerZones = dangerZones.slice(-30);
+}
+
+function safeMovements(bot) {
+  // 길찾기 위험 회피: 용암/불/마그마/선인장은 피하고, 4칸 넘게 뛰어내리지 않고, 물은 되도록 돌아간다,
+  // 위험 지역을 지나는 길은 비싸게
+  const moves = new Movements(bot);
+  moves.canDig = true;
+  moves.allow1by1towers = true;       // 구덩이에선 발밑에 흙을 쌓아 올라온다 (흙은 ensureTools가 챙긴다)
+  moves.allowSprinting = true;
+  moves.maxDropDown = 3;
+  moves.infiniteLiquidDropdownDistance = false;
+  moves.liquidCost = 8;
+  for (const n of ['lava', 'fire', 'soul_fire', 'magma_block', 'cactus', 'sweet_berry_bush', 'powder_snow', 'campfire']) {
+    const b = bot.registry.blocksByName[n];
+    if (b && moves.blocksToAvoid) moves.blocksToAvoid.add(b.id);
+  }
+  if (Array.isArray(moves.exclusionAreasStep)) {
+    moves.exclusionAreasStep.push((block) => (block && block.position && inDanger(block.position) ? 50 : 0));
+  }
+  return moves;
 }
 
 async function collect(bot, block) {
@@ -474,7 +536,8 @@ async function doGather(entry, count, near) {
   let got = 0;
   let misses = 0;
   while (got < count && !entry.cancel && misses < (near ? 2 : 6)) {
-    const block = bot.findBlock({ matching: logIds, maxDistance: near ? 32 : 64 });
+    const block = bot.findBlock({ matching: logIds, maxDistance: near ? 32 : 64,
+      useExtraInfo: (b) => !inDanger(b.position) && !givenUp(b.position.x, b.position.z) });
     if (!block && near) { misses++; continue; }
     if (!block) {
       // 근처에 나무가 없으면 한쪽으로 점점 멀리 (50, 100, 150칸...) 걸어가서 다시 찾는다
@@ -504,7 +567,8 @@ async function doMine(entry, count, near) {
   let misses = 0;
   while (got < count && !entry.cancel && misses < (near ? 2 : 5)) {
     const block = bot.findBlock({ matching: ids, maxDistance: 32,
-      useExtraInfo: (b) => b.position.y >= bot.entity.position.y - 6 });   // 너무 깊이는 안 판다
+      useExtraInfo: (b) => b.position.y >= bot.entity.position.y - 6 && !inDanger(b.position)
+        && !givenUp(b.position.x, b.position.z) });   // 너무 깊이는 안 판다
     if (!block) {
       misses++;
       if (near) continue;            // 결계가 높을 땐 멀리 안 간다
@@ -577,7 +641,9 @@ async function doOre(entry, count) {
   const got = { coal: 0, iron: 0 };
   let misses = 0;
   while (got.coal + got.iron < count && !entry.cancel && misses < 4) {
-    const block = bot.findBlock({ matching: ids, maxDistance: 48 });
+    // 광석은 용암 옆이면 캐지 않는다 (둘레 2칸에 용암이 있으면 건너뜀)
+    const block = bot.findBlock({ matching: ids, maxDistance: 48, useExtraInfo: (b) => !inDanger(b.position)
+      && !givenUp(b.position.x, b.position.z) && !nearLava(bot, b.position) });
     if (!block) {
       misses++;
       const a = Math.random() * Math.PI * 2;
@@ -655,6 +721,14 @@ async function doBuild(entry, blueprint, slot, cost) {
   const check = bot.blockAt(new Vec3(o.x, o.y + 1, o.z));
   if (check && check.name === 'air') throw new Error('명령은 보냈지만 건물이 서 있지 않음 (권한/위치 확인)');
   return { blueprint, slot, x: o.x, y: o.y, z: o.z, verified: !!check };
+}
+
+function nearLava(bot, pos) {
+  for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) for (let dz = -2; dz <= 2; dz++) {
+    const b = bot.blockAt(pos.offset(dx, dy, dz));
+    if (b && (b.name === 'lava' || b.name === 'flowing_lava')) return true;
+  }
+  return false;
 }
 
 function isHostile(e) {
@@ -771,6 +845,7 @@ async function rescue(name, e, why) {
     await run(e.bot, `tp @s ${VX} ${y} ${VZ + 2}`);
     await run(e.bot, 'effect give @s regeneration 10 1 true');
   } catch (x) { /* 다음에 */ }
+  if (from) addDanger(from, why);
   e.lastPos = null;
   e.waterSince = null;
   e.idleFarSince = null;
@@ -792,7 +867,21 @@ setInterval(() => {
     const deep = VY !== null && p.y < VY - 12;
     const far = Math.hypot(p.x - VX, p.z - VZ);
     if (deep && still > (e.task === 'ore' ? 300000 : 180000)) { rescue(name, e, '깊은 구덩이/동굴에 갇힘'); continue; }
-    if (e.task && e.task !== 'farm' && e.task !== 'rest' && still > 180000 && far > 20) { rescue(name, e, '막힌 곳에 갇힘'); continue; }
+    // 정체 의심 60초 (V6 30.3): 일하는 중 60초 제자리면 길찾기를 다시 하고 살짝 움직여 본다 - 세 번째면 구조
+    if (e.task && !['farm', 'rest', 'build'].includes(e.task) && still > 60000) {
+      e.nudges = (e.nudges || 0) + 1;
+      e.rMoved = Date.now();
+      if (e.nudges >= 3 && far > 20) { e.nudges = 0; rescue(name, e, '막힌 곳에 갇힘'); continue; }
+      try {
+        b.pathfinder.stop();
+        b.setControlState('jump', true);
+        b.setControlState('back', true);
+        setTimeout(() => { b.setControlState('jump', false); b.setControlState('back', false); }, 1200);
+      } catch (x) { /* 무시 */ }
+      emit(name, 'stall', { task: e.task, n: e.nudges });
+      continue;
+    }
+    if (still < 15000) e.nudges = 0;
     // 길을 잃음 (일이 없는데 멀리)
     if (!e.task && far > 80) {
       e.idleFarSince = e.idleFarSince || Date.now();
@@ -834,11 +923,7 @@ function join(name) {
   bot.loadPlugin(collectBlock);
   bot.once('spawn', () => {
     setCenter(bot);
-    const moves = new Movements(bot);
-    moves.canDig = true;
-    moves.allow1by1towers = true;       // 구덩이에선 발밑에 흙을 쌓아 올라온다 (흙은 ensureTools가 챙긴다)
-    moves.allowSprinting = true;
-    bot.pathfinder.setMovements(moves);
+    bot.pathfinder.setMovements(safeMovements(bot));
     // 맨손으로는 돌이 안 나온다 - 개척지 공용 도구 (RCON으로 주니 OP가 아니어도 받는다)
     (async () => {
       if (!worldReady) {
@@ -874,7 +959,12 @@ function join(name) {
     if (isHostile(e) && bot.pvp.target === e) { entry.kills++; emit(name, 'kill', { mob: e.name }); }
   });
   bot.on('death', () => {        // 한 번 쓰러질 때 신호가 여러 번 올 수 있다 - 1분에 한 번만 센다
-    if (Date.now() - (entry.diedAt || 0) > 60000) { entry.diedAt = Date.now(); emit(name, 'died'); }
+    if (Date.now() - (entry.diedAt || 0) > 60000) {
+      entry.diedAt = Date.now();
+      const p = bot.entity ? bot.entity.position.floored() : null;    // 사망 위치 기록 (V6 22.4)
+      if (p) addDanger(p, '쓰러진 곳');
+      emit(name, 'died', { task: entry.task, pos: p && { x: p.x, y: p.y, z: p.z } });
+    }
   });
   bot.on('kicked', (reason) => emit(name, 'kicked', { reason: String(reason).slice(0, 120) }));
   bot.on('error', (e) => emit(name, 'error', { error: String(e.message || e).slice(0, 120) }));
@@ -942,6 +1032,14 @@ http.createServer(async (req, res) => {
       const name = String(b.name || '');
       if (url.pathname === '/leave') { leave(name === '*' ? '*' : name); return send(res, 200, { ok: true }); }
       if (url.pathname === '/rations') { rations = !!b.ok; return send(res, 200, { ok: true, rations }); }
+      if (url.pathname === '/danger') {
+        // poring_food가 기억하는 위험 지역 (봇 서비스를 다시 띄워도 이어지게)
+        const zones = Array.isArray(b.zones) ? b.zones.slice(-30) : [];
+        dangerZones = zones.filter((z) => Number.isFinite(z.x) && Number.isFinite(z.z))
+          .map((z) => ({ x: z.x, y: z.y || 64, z: z.z, r: z.r || 10, why: String(z.why || '').slice(0, 40),
+            until: z.until ? Date.parse(z.until) || 0 : 0 }));
+        return send(res, 200, { ok: true, zones: dangerZones.length });
+      }
       if (url.pathname === '/raid') {
         const mob = /^[a-z_]{3,24}$/.test(String(b.mob || '')) ? b.mob : 'zombie';
         const result = await doRaid(Math.max(1, Math.min(12, b.count || 4)), mob);

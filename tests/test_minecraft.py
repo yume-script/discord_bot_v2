@@ -571,3 +571,34 @@ def test_rescued_event(monkeypatch, tmp_path):
                          llm=lambda s, u: seen.append(u) or {"task": "gather", "say": "물은 이제 질색이야"},
                          agents=[_ag("페른"), _ag("게르도")])
     assert ("게르도", "gather") in out["reacted"] and "물속에 갇힘" in seen[0]
+
+
+def test_v6_danger_streak_and_rejoin(monkeypatch, tmp_path):
+    now = datetime(2026, 11, 3, 12)
+    st = {"res": {}}
+    by = {"Geld": "게르도"}
+    minecraft.apply_events(st, [
+        {"id": 1, "name": "Geld", "kind": "died", "task": "ore", "pos": {"x": -300, "y": 20, "z": -90}},
+        {"id": 2, "name": "Geld", "kind": "rescued", "task": "mine", "why": "물속에 갇힘", "from": {"x": -350, "y": 60, "z": -10}},
+        {"id": 3, "name": "Geld", "kind": "gave_up", "x": -500, "z": -40}], by, now)
+    assert [d["why"] for d in st["danger"]] == ["쓰러진 곳", "물속에 갇힘"] and "세 번 못 감" in st["lessons"][-1]["text"]
+    # 같은 사람이 같은 일로 3번 연속 실패 -> 바로 쉬게
+    st2 = {"res": {}}
+    lines = minecraft.apply_events(st2, [{"id": i, "name": "Geld", "kind": "stuck", "task": "gather", "minutes": 3}
+                                         for i in (1, 2, 3)], by, now)
+    assert minecraft.avoided(st2, now) == {"gather"} and any("연달아 막혀" in x for _, x in lines)
+    st3 = {"res": {}}
+    minecraft.apply_events(st3, [{"id": 1, "name": "Geld", "kind": "stuck", "task": "gather"},
+                                 {"id": 2, "name": "Geld", "kind": "done", "task": "gather", "result": {"logs": 5}},
+                                 {"id": 3, "name": "Geld", "kind": "stuck", "task": "gather"}], by, now)
+    assert not minecraft.avoided(st3, now)                                    # 중간에 성공하면 다시 셈
+    # 다시 접속한 사람은 바로 직업 일 + 위험 지역을 봇 서비스에 알림
+    _live_state(monkeypatch, tmp_path, danger=st["danger"])
+    api = Live([{"id": 9, "name": "Geld", "kind": "joined"}])
+    out = minecraft.fast(now, api=api, post=lambda n, t: None, llm=lambda s, u: {}, agents=[_ag("페른"), _ag("게르도")])
+    assert out["idle"] and out["idle"][0][0] == "게르도"
+    api2 = FakeApi()
+    minecraft.tick(now, api=api2, agents=[_ag("페른"), _ag("게르도")], post=lambda n, t: None,
+                   llm=lambda s, u: {}, react=lambda *a, **k: None)
+    zones = [b for p, b in api2.calls if p == "/danger"]
+    assert zones and len(zones[0]["zones"]) == 2
