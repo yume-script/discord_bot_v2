@@ -58,6 +58,16 @@ def test_conversations_per_hour_cap(fake_llm, monkeypatch, caplog):
     caplog.set_level(logging.INFO, logger="poring_food")
     _quiet(monkeypatch)
     fake_llm(_handler)
+    # 두 번의 tick이 정시를 사이에 두고 돌면 다른 시간으로 세어져 실패하므로 시각을 그 시간 10분으로 고정
+    from poring_food import clock
+    fixed = clock.datetime.now(clock.KST).replace(minute=10, second=0, microsecond=0)
+
+    class _Fixed(clock.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(clock, "datetime", _Fixed)
     agents.tick(characters.load_roster())
     talks = _talks(caplog)
     assert len(talks) == agents.MAX_CONVOS_PER_HOUR

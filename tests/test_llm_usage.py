@@ -8,7 +8,11 @@ from ai import llm_usage
 from poring_food import kpi, metrics
 
 KST = timezone(timedelta(hours=9))
-TODAY = datetime.now(KST).strftime("%Y-%m-%d")
+
+
+def _today() -> str:
+    # import 시점에 계산하면 테스트 도중 한국 시간 자정을 넘길 때 날짜가 어긋난다
+    return datetime.now(KST).strftime("%Y-%m-%d")
 
 
 def _mcp_script():
@@ -23,7 +27,7 @@ def test_record_and_by_day():
     llm_usage.record("채팅", True, 10, 5)
     llm_usage.record("채팅", False)
     llm_usage.record("포링푸드", True, 100, 20)
-    d = llm_usage.by_day(3)[TODAY]
+    d = llm_usage.by_day(3)[_today()]
     assert d["requests"] == 3 and d["failures"] == 1 and d["tokens"] == 135
     assert d["sources"] == {"채팅": 2, "포링푸드": 1}
 
@@ -40,7 +44,7 @@ def test_poring_llm_counts_requests(fake_llm):
     from poring_food.llm import llm_json
     fake_llm(lambda system, user: {"ok": 1})
     assert llm_json("s", "u") == {"ok": 1}
-    assert llm_usage.by_day(1)[TODAY]["sources"] == {"포링푸드": 1}
+    assert llm_usage.by_day(1)[_today()]["sources"] == {"포링푸드": 1}
 
 
 def test_proxy_response_parsing():
