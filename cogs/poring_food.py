@@ -82,6 +82,7 @@ class PoringFood(commands.Cog):
             self.app_updater.start()
             self.avatar_maker.start()
             self.minecraft_tick.start()
+            self.minecraft_fast.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -101,6 +102,7 @@ class PoringFood(commands.Cog):
         self.app_updater.cancel()
         self.avatar_maker.cancel()
         self.minecraft_tick.cancel()
+        self.minecraft_fast.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -287,6 +289,22 @@ class PoringFood(commands.Cog):
 
     @minecraft_tick.before_loop
     async def _before_minecraft(self) -> None:
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(seconds=30)
+    async def minecraft_fast(self) -> None:
+        """마인크래프트 실시간 - 막힌 일 바로 판단, 게임 채팅 답, 손이 빈 사람 다음 일 (poring_food/minecraft.py fast).
+        회차 잠금(self._lock)은 쓰지 않는다 (회의가 길어도 채팅 답이 밀리지 않게) - 장부는 minecraft 안의 잠금이 지킨다"""
+        from poring_food import minecraft
+        if not minecraft.ENABLED:
+            return
+        try:
+            await asyncio.to_thread(minecraft.fast)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 마인크래프트 실시간 실패")
+
+    @minecraft_fast.before_loop
+    async def _before_minecraft_fast(self) -> None:
         await self.bot.wait_until_ready()
 
     @avatar_maker.before_loop

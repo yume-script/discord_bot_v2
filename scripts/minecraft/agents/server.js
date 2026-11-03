@@ -12,7 +12,7 @@
 //   POST /raid  {count, mob}          몬스터 습격 - 마을 둘레에 몬스터 소환
 //   POST /rations {ok}                마을 창고에 식량이 있는지 - 있으면 배고픈 봇이 먹고('ate' 이벤트, 장부에서 식량을 뺀다),
 //                                     없으면 굶는다 (쉬움 난이도라 굶어 죽지는 않지만 체력이 안 찬다)
-//   GET  /events?after=N          [{id, at, name, kind, ...}] - 끝난 일, 잡은 몬스터, 죽음
+//   GET  /events?after=N          [{id, at, name, kind, ...}] - 끝난 일, 잡은 몬스터, 죽음, 게임 채팅(chat {from, text})
 // 건물은 마을 중심 둘레의 자리(slot)에 /fill 명령으로 세운다. 마을 중심은 VILLAGE_X/Z가 있으면 그 자리, 없으면(기본)
 // 월드 스폰 - 봇은 늘 스폰에서 나타나는데 예전 기본값 0,0은 스폰에서 수백 칸 떨어져 청크가 안 불러와져서
 // 짓기/밭 명령이 "That position is not loaded"로 실패하고 봇은 가다가 포기했다.
@@ -801,6 +801,12 @@ function join(name) {
       emit(name, 'ate');
     } catch (e) { /* 다음에 */ }
   }, 30000);
+  // 게임 채팅 -> poring_food (봇끼리 말은 빼고, 여러 봇이 같은 말을 들으니 맨 앞 봇 하나만 전한다)
+  bot.on('chat', (username, message) => {
+    if (!username || bots.has(username) || username === bot.username) return;
+    if ([...bots.keys()][0] !== name) return;
+    emit(name, 'chat', { from: String(username).slice(0, 32), text: String(message).slice(0, 200) });
+  });
   bot.on('entityDead', (e) => {
     if (isHostile(e) && bot.pvp.target === e) { entry.kills++; emit(name, 'kill', { mob: e.name }); }
   });

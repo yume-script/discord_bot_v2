@@ -463,3 +463,70 @@ def test_storage_is_the_ledger_and_event_reset(monkeypatch, tmp_path):
     assert st["storage_at"] and st["res"]["stone"] == 90                # 창고 실제 재고가 장부
     builds = [b for p, b in api.calls if p == "/task" and b["kind"] == "build"]
     assert builds and builds[0]["args"]["cost"]                          # 짓기는 창고에서 꺼낼 재료를 들고 간다
+
+
+class Live(FakeApi):
+    def __init__(self, events):
+        super().__init__(bots=["Fern", "Geld"])
+        self.evs = events
+
+    def get(self, path):
+        if path.startswith("/events"):
+            after = int(path.split("after=")[1]) if "after=" in path else 0
+            return {"events": [e for e in self.evs if e["id"] > after], "last": max([e["id"] for e in self.evs] or [0])}
+        return super().get(path)
+
+
+def _live_state(monkeypatch, tmp_path, **kw):
+    _env(monkeypatch, tmp_path)
+    st = minecraft._load()
+    st.update(online=["Fern", "Geld"], jobs={"페른": "build", "게르도": "mine"}, res={"logs": 5, "food": 50},
+              built={"farm": 1}, **kw)
+    minecraft._save(st)
+
+
+def test_fast_reacts_to_stuck_with_llm_and_opens_request(monkeypatch, tmp_path):
+    _live_state(monkeypatch, tmp_path)
+    api = Live([{"id": 1, "name": "Geld", "kind": "stuck", "task": "mine", "minutes": 3},
+                {"id": 2, "name": "Fern", "kind": "failed", "task": "build", "error": "창고에 logs 부족 (5/20)"}])
+    posts = []
+    seen = []
+
+    def llm(s, u):
+        seen.append(u)
+        return {"task": "gather", "why": "돌이 막혔으니 나무", "say": "숲으로 간다", "lesson": "채석장 길이 막힘"}
+    out = minecraft.fast(datetime(2026, 11, 3, 12), api=api, post=lambda n, t: posts.append((n, t)), llm=llm,
+                         agents=[_ag("페른"), _ag("게르도")])
+    tasks = {b["name"]: b["kind"] for p, b in api.calls if p == "/task"}
+    assert tasks["Geld"] == "gather" and "돌 캐기" in seen[0] and "3분" in seen[0]
+    st = minecraft._load()
+    assert st["requests"][0]["resource"] == "logs" and st["requests"][0]["qty"] == 15
+    assert any("채석장 길이 막힘" in x["text"] for x in st["lessons"]) and st["llm_day"]["n"] == 2
+    assert ("게르도", "gather") in out["reacted"]
+    assert minecraft.fast(datetime(2026, 11, 3, 12, 1), api=api, post=lambda n, t: None, llm=llm,
+                          agents=[_ag("페른"), _ag("게르도")]) == {}             # 이미 본 사건은 다시 안 본다
+
+
+def test_fast_chat_reply_and_request_complete(monkeypatch, tmp_path):
+    _live_state(monkeypatch, tmp_path, requests=[{"id": 1, "from": "페른", "resource": "logs", "qty": 10, "base": 5,
+                                                  "status": "ACCEPTED", "by": "게르도", "at": "2026-11-03 11:50"}])
+    st = minecraft._load()
+    st["res"]["logs"] = 16
+    minecraft._save(st)
+    api = Live([{"id": 7, "name": "Fern", "kind": "chat", "from": ".Steve", "text": "Geld 나무 좀 더 베어 줘"}])
+    posts = []
+    out = minecraft.fast(datetime(2026, 11, 3, 12), api=api, post=lambda n, t: posts.append((n, t)),
+                         llm=lambda s, u: {"say": "알았어, 지금 숲으로 간다!", "task": "gather"},
+                         agents=[_ag("페른"), _ag("게르도")])
+    assert out["chat"] == ["게르도"] and ("/say", {"name": "Geld", "text": "알았어, 지금 숲으로 간다!"}) in api.calls
+    assert any(p == "/task" and b["name"] == "Geld" and b["kind"] == "gather" for p, b in api.calls)
+    assert any("부탁한 통나무 10개" in t for _, t in posts) and minecraft._load()["requests"][0]["status"] == "COMPLETE"
+    assert ".Steve" not in " ".join(t for _, t in posts)                    # 손님 게임 이름은 채널에 안 남긴다
+
+
+def test_request_is_accepted_by_matching_job():
+    st = {"res": {"logs": 0, "food": 50}, "built": {"farm": 1}, "jobs": {"리그루드": "gather", "게르도": "mine"},
+          "requests": [{"id": 3, "from": "페른", "resource": "stone", "qty": 12, "base": 0, "status": "PENDING",
+                        "at": "2026-11-03 12:00"}]}
+    got = {t["name"]: t for t in minecraft.decide([_ag("리그루드"), _ag("게르도")], st, day=True, llm=lambda s, u: {})}
+    assert got["게르도"]["task"] == "mine" and got["게르도"]["request"] == 3
