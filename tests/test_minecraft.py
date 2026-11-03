@@ -437,3 +437,29 @@ def test_stuck_event_is_a_lesson():
     minecraft.apply_events(st, [{"id": 1, "name": "Geld", "kind": "stuck", "task": "farm", "minutes": 13}],
                            {"Geld": "게르도"}, datetime(2026, 11, 1))
     assert st["stats"]["farm"]["failed"] == 1 and "13분 넘게" in st["lessons"][-1]["text"]
+
+
+def test_storage_is_the_ledger_and_event_reset(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    st = minecraft._load()
+    st.update(res={"logs": 7, "stone": 0, "food": 0}, last_event=1762070000000)
+    minecraft._save(st)
+
+    class Real(FakeApi):
+        def get(self, path):
+            if path == "/storage":
+                return {"ok": True, "counts": {"logs": 52, "stone": 90, "food": 0, "coal": 0, "iron": 0}}
+            if path.startswith("/events?after=0"):
+                return {"events": [{"id": 5, "name": "Fern", "kind": "done", "task": "gather", "result": {"logs": 18}}],
+                        "last": 5}
+            if path.startswith("/events"):
+                return {"events": [], "last": 5}            # 봇 서비스가 처음부터 다시 셈
+            return super().get(path)
+    api = Real()
+    minecraft.tick(datetime(2026, 11, 1, 12), api=api, agents=[_ag("페른")], post=lambda n, t: None,
+                   llm=lambda s, u: {}, react=lambda *a, **k: None)
+    st = minecraft._load()
+    assert st["last_event"] == 5 and st["made"]["logs"] == 18          # 다시 센 번호도 받는다
+    assert st["storage_at"] and st["res"]["stone"] == 90                # 창고 실제 재고가 장부
+    builds = [b for p, b in api.calls if p == "/task" and b["kind"] == "build"]
+    assert builds and builds[0]["args"]["cost"]                          # 짓기는 창고에서 꺼낼 재료를 들고 간다
