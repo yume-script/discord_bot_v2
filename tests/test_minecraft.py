@@ -701,8 +701,46 @@ def test_short_build_uses_real_counts_and_woodcutters_mine_without_trees():
                                  "have": {"logs": 3, "stone": 0, "food": 50, "coal": 0, "iron": 0}}], {"Dani": "다니"}, now)
     assert st["res"]["stone"] == 0                         # 실제 상자대로 (되돌린 20을 믿지 않는다)
     assert minecraft.job_task(st, "카브루", st, True) == ("mine", "")   # 나무가 없으니 나무꾼도 돌
-    assert minecraft.job_task(st, "다니", st, True) == ("mine", "")
+    assert minecraft.job_task(st, "다니", st, True) == ("build", "grove")       # 나무가 없으니 묘목장부터
     api = FakeApi()
     t = {"name": "다니", "task": "build", "blueprint": "hut", "job": "build"}
     minecraft.send_task(st, api, now, t, lambda n, x: None, False)       # 재료가 없으면 짓기를 보내지 않는다
     assert [b["kind"] for p, b in api.calls if p == "/task"] == ["mine"]
+
+
+def test_grove_forest_and_golem():
+    from poring_food.clock import now_kst
+    now = now_kst()
+    st = {"res": {"logs": 0, "stone": 0, "iron": 0, "food": 50}, "built": {"farm": 1}, "no_trees": f"{now:%Y-%m-%d %H:%M}",
+          "jobs": {"카브루": "gather", "다니": "build"}}
+    api = FakeApi()
+    minecraft.send_task(st, api, now, {"name": "다니", "task": "build", "blueprint": "grove", "job": "build"},
+                        lambda n, x: None, False)
+    assert next(b for p, b in api.calls if p == "/task")["args"]["cost"] == {}
+    minecraft.apply_events(st, [{"id": 1, "name": "Dani", "kind": "done", "task": "build",
+                                 "result": {"blueprint": "grove"}}], {"Dani": "다니"}, now)
+    assert st["built"]["grove"] == 1
+    assert minecraft.job_task(st, "카브루", st, True) == ("forest", "")       # 묘목장이 생기면 나무꾼은 나무를 가꾼다
+    api = FakeApi()
+    minecraft.send_task(st, api, now, {"name": "카브루", "task": "forest", "job": "gather"}, lambda n, x: None, False)
+    args = next(b for p, b in api.calls if p == "/task")["args"]
+    assert args["slots"] == 1 and args["grow_min"] == minecraft.TREE_MIN and args["repeat"]
+    out = minecraft.apply_events(st, [{"id": 2, "name": "Kabru", "kind": "done", "task": "forest",
+                                       "result": {"logs": 0, "cut": 0, "grown": 0, "planted": 3}}], {"Kabru": "카브루"}, now)
+    assert any("새로 심음 3" in line for _, line in out) and not (st.get("streak") or {}).get("카브루")
+    minecraft.apply_events(st, [{"id": 3, "name": "Kabru", "kind": "done", "task": "forest",
+                                 "result": {"logs": 20, "cut": 20, "grown": 9, "planted": 9}}], {"Kabru": "카브루"}, now)
+    assert st["res"]["logs"] == 20
+    # 골렘: 쓰러진 적이 있고 철이 있으면 건축가가 만든다 (묘목장 2곳을 다 지은 뒤)
+    st["built"]["grove"] = 2
+    st.update(deaths=1)
+    st["res"]["iron"] = 6
+    assert minecraft.job_task(st, "다니", st, True) == ("build", "golem")
+    st["built"]["golem"] = minecraft.GOLEM_MAX
+    assert minecraft.job_task(st, "다니", st, True) != ("build", "golem")
+
+    class G(FakeApi):
+        def get(self, path):
+            return {"golems": 0} if path == "/golems" else super().get(path)
+    minecraft.sync_golems(st, G())
+    assert "golem" not in st["built"]                                         # 골렘이 쓰러지면 다시 만든다

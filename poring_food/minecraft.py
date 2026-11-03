@@ -81,7 +81,7 @@ NAME = "⛏️ 개척지"
 # 철수한 뒤에는 REJOIN_MIN분 동안 다시 들어가지 않는다 (접속할 때 스폰 청크를 불러오는 부하로 단계가 들썩이지 않게)
 MAX_STAGE = int(os.getenv("PORING_MC_MAX_STAGE", "2"))
 LIGHT_STAGE = int(os.getenv("PORING_MC_LIGHT_STAGE", "3"))
-LIGHT_TASKS = ("farm", "build", "patrol", "rest", "audit", "gather", "mine")   # gather/mine은 near로
+LIGHT_TASKS = ("farm", "build", "patrol", "rest", "audit", "gather", "mine", "forest")   # gather/mine은 near로
 REJOIN_MIN = int(os.getenv("PORING_MC_REJOIN_MIN", "20"))
 TALK_LINES = 5         # 매시 회의 발언 수
 
@@ -94,14 +94,21 @@ BLUEPRINTS = {
     "tower": ("감시탑", {"stone": 24, "logs": 6}),
     "smithy": ("대장간", {"logs": 16, "stone": 16, "coal": 4}),
     "hall": ("마을회관", {"logs": 40, "stone": 40, "iron": 6}),
+    # 시대 목표는 아니지만 사정에 따라 짓는 것
+    "grove": ("묘목장", {}),               # 근처에 나무가 없을 때 - 묘목 9그루, 나무꾼이 키우고 베고 다시 심는다
+    "golem": ("철 골렘", {"iron": 6}),     # 마을 지킴이 (쓰러지거나 습격이 있었을 때, 철이 있으면)
 }
+GROVE_MAX = 2          # 묘목장 수
+TREE_MIN = int(os.getenv("PORING_MC_TREE_MIN", "20"))   # 묘목이 나무로 자라는 데 걸리는 시간(분)
+GOLEM_MAX = int(os.getenv("PORING_MC_GOLEMS", "2"))     # 마을 둘레 철 골렘 수
 # 나무 대신 돌로도 지을 수 있는 건물 (근처에 나무가 없을 때 - 통나무 수만큼 돌을 쓰고 나무 블록을 돌 블록으로)
 STONE_OK = ("hut", "farm", "tower", "smithy")
 NO_TREES_MIN = 180      # 나무 베기가 빈손으로 온 뒤 이 시간(분) 동안은 "근처에 나무가 없다"로 보고 돌로 짓는 쪽을 먼저
 RESOURCES = {"logs": "통나무", "stone": "돌", "food": "식량", "coal": "석탄", "iron": "철"}
 TASKS = {"gather": "나무 베기", "mine": "돌 캐기", "farm": "밭 수확", "ore": "광석 캐기", "build": "짓기",
-         "patrol": "몬스터 순찰", "rest": "광장에서 쉬기", "audit": "개척지 둘러보기"}
-TASK_RES = {"gather": "logs", "mine": "stone", "farm": "food", "ore": "iron"}   # 일 -> 주로 얻는 자원
+         "patrol": "몬스터 순찰", "rest": "광장에서 쉬기", "audit": "개척지 둘러보기",
+         "forest": "나무 가꾸기"}
+TASK_RES = {"gather": "logs", "mine": "stone", "farm": "food", "ore": "iron", "forest": "logs"}   # 일 -> 주로 얻는 자원
 RES_TASK = {"logs": "gather", "stone": "mine", "food": "farm", "coal": "ore", "iron": "ore"}
 ROLES = {"gather": "나무꾼", "mine": "광부", "farm": "농부", "ore": "광산꾼", "build": "건축가", "patrol": "경비"}
 ROLE_AFTER = 3            # (직업이 없을 때) 이만큼 해내면 그 일이 직업이 된다
@@ -384,7 +391,8 @@ def problems(st: dict, people: int | None = None) -> list[str]:
             out.append(f"다음 시대 조건: {RESOURCES[k]} {'창고' if kind == 'stock' else '지금까지 캔 양'} "
                        f"{max(have, 0)}/{need}")
     if no_trees(st):
-        out.append("근처에 나무가 없다 - 밭·오두막·감시탑·대장간은 통나무 대신 돌로 짓는다 (나무꾼은 더 멀리 숲을 찾는다)")
+        out.append("근처에 나무가 없다 - 밭·오두막·감시탑·대장간은 통나무 대신 돌로 짓고, 묘목장을 만들어 나무를 키운다"
+                   + (f" (묘목장 {built['grove']}곳)" if built.get("grove") else ""))
     for b in needed(st)[:2]:
         gaps = {k: v - res.get(k, 0) for k, v in cost_of(st, b).items() if res.get(k, 0) < v}
         if gaps:
@@ -743,7 +751,7 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
         if task in TASKS and kind in ("done", "failed"):
             stats.setdefault(task, {"done": 0, "failed": 0, "empty": 0})
         gained = {}
-        if kind == "done" and task in ("gather", "mine", "farm", "ore"):
+        if kind == "done" and task in ("gather", "mine", "farm", "ore", "forest"):
             for key in RESOURCES:
                 n = int(r.get(key) or 0)
                 if n > 0:
@@ -770,6 +778,10 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
                 stats[task]["empty"] += 1
                 if task == "farm" and r.get("rebuilt"):
                     pass
+                elif task == "forest":            # 묘목이 아직 자라는 중 (심은 것/키운 것은 소식으로)
+                    if r.get("planted") or r.get("grown"):
+                        out.append((who, f"묘목장을 돌봤다 - 나무로 키움 {int(r.get('grown') or 0)}, "
+                                         f"새로 심음 {int(r.get('planted') or 0)}"))
                 elif task == "farm" and "crops" in r and not r.get("crops"):
                     lesson(st, "밭 수확: 밭에 밀이 한 포기도 없음 (밭이 망가졌거나 자리를 못 찾음 - 밭을 새로 지어야)")
                 else:
@@ -789,7 +801,8 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
                 first = not built.get(bp)
                 built[bp] = built.get(bp, 0) + 1
                 gained = {"build": 1}
-                out.append((who, f"개척지에 {BLUEPRINTS[bp][0]}을(를) 새로 지었다 (모두 {built[bp]}채)"))
+                out.append((who, f"마을을 지킬 철 골렘을 불러냈다 (모두 {built[bp]}마리)" if bp == "golem" else
+                            f"개척지에 {BLUEPRINTS[bp][0]}을(를) 새로 지었다 (모두 {built[bp]}채)"))
                 if first:
                     out.append((NAME, history(st, now, f"{who}이(가) 개척지 첫 {BLUEPRINTS[bp][0]}을(를) 세웠다")))
         elif kind == "failed":
@@ -854,8 +867,9 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
             sk[task] = sk.get(task, 0) + 1
             if role(st, who) and role(st, who) != before:
                 out.append((NAME, history(st, now, f"{who}이(가) 개척지의 {ROLES[role(st, who)]}이(가) 되었다")))
-        bad = kind in ("failed", "stuck", "rescued") or (kind == "done" and task in ("gather", "mine", "farm", "ore")
-                                                        and not gained and not (r.get("rebuilt")))
+        bad = kind in ("failed", "stuck", "rescued") or (kind == "done" and task in ("gather", "mine", "farm", "ore", "forest")
+                                                        and not gained and not (r.get("rebuilt") or r.get("planted")
+                                                                                or r.get("grown")))
         if who and task in TASKS and (bad or (kind == "done" and gained)):
             streak(st, who, task, bad, now, out)
         if kind in ("done", "failed", "left"):
@@ -1005,6 +1019,9 @@ def job_task(st: dict, name: str, sim: dict, day: bool | None) -> tuple[str, str
             return "build", "farm"
         return _gather_for(sim, "farm"), ""      # 밭 지을 재료부터 (나무가 없으면 돌)
     if job == "build":
+        extra = extra_build(sim, st)
+        if extra:
+            return "build", extra
         for b in needed(sim) or allowed(sim):
             if can_afford(sim, b):
                 return "build", b
@@ -1018,10 +1035,22 @@ def job_task(st: dict, name: str, sim: dict, day: bool | None) -> tuple[str, str
         want_ore = any(h < n and k in ("coal", "iron") for kd, k, h, n in conditions(sim)) or any(
             short_of(sim, b) in ("coal", "iron") for b in needed(sim) if not can_afford(sim, b))
         return ("ore" if want_ore else "mine"), ""
-    wood = "mine" if no_trees(sim) else "gather"      # 근처에 나무가 없으면 나무꾼도 돌을 캔다 (돌로 짓는다)
+    # 근처에 나무가 없으면: 묘목장이 있으면 나무를 가꾸고(키우고·베고·다시 심기), 없으면 돌을 캔다 (돌로 짓는다)
+    wood = ("forest" if (sim.get("built") or {}).get("grove") else "mine") if no_trees(sim) else "gather"
     if job == "patrol":
         return ("patrol" if day is False else wood), ""
     return wood, ""
+
+
+def extra_build(sim: dict, st: dict) -> str:
+    """시대 목표 말고 지금 사정이 부르는 건물 - 나무가 없으면 묘목장, 쓰러지거나 습격이 있었고 철이 있으면 철 골렘"""
+    built = sim.get("built") or {}
+    if no_trees(sim) and built.get("grove", 0) < GROVE_MAX:
+        return "grove"
+    if (built.get("golem", 0) < GOLEM_MAX and (st.get("deaths") or st.get("kills") or era(st) >= 2)
+            and can_afford(sim, "golem")):
+        return "golem"
+    return ""
 
 
 def decide(people: list[dict], st: dict, day: bool | None, llm=None, now: datetime | None = None) -> list[dict]:
@@ -1316,6 +1345,20 @@ def sync_storage(st: dict, api, now: datetime) -> dict | None:
     return counts
 
 
+def sync_golems(st: dict, api) -> None:
+    """살아 있는 철 골렘 수로 장부를 맞춘다 (골렘은 쓰러질 수 있다 - 그러면 다시 만든다)"""
+    try:
+        n = (api.get("/golems") or {}).get("golems")
+    except Exception:  # noqa: BLE001
+        return
+    if isinstance(n, int):
+        built = st.setdefault("built", {})
+        if n:
+            built["golem"] = n
+        else:
+            built.pop("golem", None)
+
+
 def apply_and_post(st: dict, evs: list[dict], by_mc: dict, now: datetime, post) -> list[str]:
     """이벤트를 장부에 반영하고 소식을 올린다 (10분 바퀴와 실시간이 같이 쓴다 - 먼저 본 쪽이 반영, 번호로 한 번만).
     반환: 건물을 지은 사람들"""
@@ -1368,6 +1411,9 @@ def send_task(st: dict, api, now: datetime, t: dict, post, lite: bool = False) -
                 "alts": [{"cost": c, "material": material(t["blueprint"], c)} for c in costs(t["blueprint"]) if c != cost]}
         slots[t["blueprint"]] = slots.get(t["blueprint"], 0) + 1
         pend[mc] = {"task": "build", "blueprint": t["blueprint"], "cost": cost}
+    elif t["task"] == "forest":
+        args = {"slots": min(GROVE_MAX, (st.get("built") or {}).get("grove", 0)), "grow_min": TREE_MIN,
+                "count": SPECIALIST_COUNT, "repeat": True}
     elif t["task"] == "patrol":
         args = {"seconds": TICK_MIN * 60 - 30}
     elif t["task"] == "audit":
@@ -1457,6 +1503,7 @@ def _tick(now: datetime | None = None, api: Api | None = None, llm=None, post=No
     builders = []
     builders = apply_and_post(st, evs, by_mc, now, post)
     sync_storage(st, api, now)                 # 장부 = 공동 창고 상자 안 실제 아이템 (Inventory Manager)
+    sync_golems(st, api)
     for speaker, line in update_requests(st, now):
         post(speaker, f"-# {NAME} · {now:%H:%M} · 부탁 완료\n{line}")
     new_era = advance(st)
@@ -1621,6 +1668,7 @@ URGENT = ("failed", "stuck", "died", "hungry", "rescued")
 
 REACT_SYSTEM = """너는 숲 너머 개척지(마인크래프트 마을)의 현장 감독이다. 한 일꾼에게 방금 문제가 생겼다.
 원인을 짧게 짚고 그 사람이 바로 할 다음 일을 하나 고른다: gather(나무) / mine(돌) / farm(밭 수확) / ore(석탄·철) /
+forest(묘목장 나무 가꾸기 - 묘목장이 있을 때) /
 build(짓기 - blueprint 필요) / patrol(순찰) / rest(쉬기). 같은 실패를 되풀이하지 말고, 공동체에 지금 가장 필요한 일을 고른다.
 근처에 나무가 없으면 밭·오두막·감시탑·대장간은 통나무 대신 같은 수의 돌로 지을 수 있다 (돌을 캐서 짓자).
 say: 그 사람이 게임 채팅에 칠 한마디(그 사람 말투, 20자 안팎). lesson: 공동체가 기억할 교훈 한 줄(없으면 빈칸).
@@ -1654,6 +1702,8 @@ def _valid_task(st: dict, task: str, bp: str) -> tuple[str, str] | None:
             return None
         return "build", bp
     if task == "farm" and not (st.get("built") or {}).get("farm"):
+        return None
+    if task == "forest" and not (st.get("built") or {}).get("grove"):
         return None
     return task, ""
 
