@@ -101,7 +101,8 @@ def test_tick_assigns_era_and_backs_off(monkeypatch, tmp_path):
     react = lambda d, t, people, kind="": reacted.append((t, people, d))  # noqa: E731
     out = minecraft.tick(datetime(2026, 11, 1, 21), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
                          llm=lambda s, u: {"tasks": []}, react=react)
-    assert len(out["assigned"]) == minecraft.MAX_BOTS and posts
+    assert len(out["assigned"]) == len(agents) and posts                     # 고정 일꾼 (5명 자리에 4명뿐)
+    assert minecraft._load()["roster"][0] in {a["name"] for a in agents}
     gathers = [b for p, b in api.calls if p == "/task" and b["kind"] == "gather"]
     assert gathers and gathers[0]["args"]["repeat"] is True                 # 다음 바퀴까지 이어서 모은다
     # 오두막 2채 + 밭 1채가 다 지어지면 다음 시대 + 개척지 반응
@@ -117,7 +118,8 @@ def test_tick_assigns_era_and_backs_off(monkeypatch, tmp_path):
     api.events = []
     out = minecraft.tick(datetime(2026, 11, 1, 21, 15), api=api, agents=agents, post=lambda n, t: posts.append((n, t)),
                          llm=lambda s, u: {"tasks": []}, react=react)
-    assert "assigned" in out and len(api.bots) == minecraft.MAX_BOTS
+    assert "assigned" in out and len(api.bots) == 3                          # 2단계는 3명
+    assert set(api.bots) == {minecraft.mc_name(n) for n in minecraft._load()["roster"][:3]}   # 앞 세 사람
     # 3단계 + 아무도 안 봄 -> 한 사람만, 마을 안 일만
     monkeypatch.setattr(loadshed, "stage", lambda now=None, fresh_min=15: 3)
     mark = len(api.calls)
@@ -544,3 +546,14 @@ def test_fast_applies_build_before_next_job(monkeypatch, tmp_path):
     assert st["built"]["farm"] == 1 and st["last_event"] == 1               # 실시간이 장부에 먼저 반영
     fern = [b for p, b in api.calls if p == "/task" and b["name"] == "Fern"]
     assert fern and fern[0]["kind"] == "farm"                               # 방금 지은 밭을 또 짓지 않고 수확
+
+
+
+def test_roster_is_fixed_and_sized_by_stage(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    agents = [_ag(n) for n in ("페른", "게르도", "카이진", "리그루드", "센시", "베니마루", "슈나")]
+    st = {}
+    first = [a["name"] for a in minecraft.roster(st, agents)]
+    assert len(first) == 5 and [minecraft.role(st, n) for n in first] == minecraft.ROSTER_JOBS
+    assert [a["name"] for a in minecraft.roster(st, agents)] == first             # 다음에도 같은 사람들
+    assert [minecraft.team_size(s) for s in (0, 1, 2, 3)] == [5, 5, 3, 1]

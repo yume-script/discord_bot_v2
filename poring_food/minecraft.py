@@ -25,7 +25,8 @@
   1) 지난 일 결과(이벤트) → 마을 장부 (창고, 지은 건물, 잡은 몬스터, 쓰러짐) - 시대가 오르면 개척지 회의
   2) 결계 경보 4단계 이상, 3단계에 영상 재생 중, 영상이 버벅이면 모두 철수 (서버는 비면 스스로 멈춤 - 시청·독서가 먼저).
      3단계(아무도 안 볼 때)는 1명만 마을 안 일만 - 철수 뒤 REJOIN_MIN분은 다시 안 들어간다
-  3) 깨어 있는 인물 MAX_BOTS명 접속 (이미 있던 사람 먼저, 밤이면 싸움꾼 먼저)
+  3) 고정 일꾼(ROSTER) 중 결계 단계에 맞는 인원만 접속 - 0~1단계 5명, 2단계 3명, 3단계 1명 (같은 사람들이 계속 있어
+     대화와 일이 이어진다. 예전엔 깨어 있는 사람을 바퀴마다 섞어 들여보내 대화 흐름이 끊겼다)
   4) 할 일이 없는 사람들의 일을 LLM 한 번으로 (이번 시대 목표, 창고, 서버 사정을 보고) - 규칙으로 바로잡는다:
      못 짓는 건물은 모자란 자원 모으기로, 밤엔 가장 센 사람이 순찰
   5) 채널(⛏️ 개척지)에 그 인물 이름으로 한마디 + 끝난 일 소식, 기억/연대기
@@ -63,7 +64,11 @@ _LOCK = threading.RLock()      # 10분 바퀴 · 매시 회의 · 실시간(30�
 ENABLED = os.getenv("PORING_MINECRAFT", "0") not in ("0", "false", "False", "")
 WORLD_MODE = os.getenv("PORING_WORLD_MODE", "minecraft").strip().lower()
 API = os.getenv("PORING_MC_API", "http://127.0.0.1:3010").rstrip("/")
-MAX_BOTS = int(os.getenv("PORING_MC_MAX_BOTS", "3"))
+MAX_BOTS = int(os.getenv("PORING_MC_MAX_BOTS", "5"))
+# 고정 일꾼 - 한 번 정하면 그대로 (자는 시간과 상관없이). 순서대로 들어간다: 1명이면 맨 앞(농부), 3명이면 앞 셋.
+# PORING_MC_ROSTER="게르도,페른,..."로 직접 정할 수 있다 (없으면 직업별로 한 사람씩 골라 장부에 저장)
+ROSTER_JOBS = ["farm", "gather", "build", "mine", "patrol"]
+TEAM_SIZES = [int(x) for x in os.getenv("PORING_MC_TEAM", "5,5,3,1").split(",")]   # 결계 0,1,2,3단계 인원
 TICK_MIN = 10
 STATE_PATH = os.path.join(STATE_DIR, "minecraft.json")
 NAME = "⛏️ 개척지"
@@ -319,7 +324,7 @@ def problems(st: dict, people: int | None = None) -> list[str]:
     res = st.get("res") or {}
     built = st.get("built") or {}
     out = []
-    eaters = max(1, people if people is not None else len(st.get("online") or []) or MAX_BOTS)
+    eaters = max(1, people if people is not None else len(st.get("online") or []) or 3)
     food = res.get("food", START_FOOD)
     if food <= 0:
         out.append("식량이 바닥났다 - 일하는 사람들이 굶고 있다" + ("" if built.get("farm") else " (밭도 없다)"))
@@ -762,6 +767,37 @@ def eat(st: dict, people: int, now: datetime) -> str | None:
         st.pop("hungry")
         return history(st, now, f"밭에서 거둔 밀로 식량 부족을 넘겼다 (창고 식량 {res['food']})")
     return None
+
+
+def team_size(stage: int | None = None) -> int:
+    """결계 단계에 따른 접속 인원 (0~1단계 5, 2단계 3, 3단계 1 - PORING_MC_TEAM)"""
+    if stage is None:
+        from . import loadshed
+        stage = loadshed.stage()
+    return TEAM_SIZES[min(max(int(stage), 0), len(TEAM_SIZES) - 1)]
+
+
+def roster(st: dict, agents: list[dict], now: datetime | None = None) -> list[dict]:
+    """고정 일꾼 (순서 = 들어가는 순서). 처음 한 번 정해 장부에 둔다 - 직업마다 한 사람"""
+    by = {a["name"]: a for a in agents}
+    env = [n.strip() for n in os.getenv("PORING_MC_ROSTER", "").split(",") if n.strip() in by]
+    names = env or [n for n in (st.get("roster") or []) if n in by]
+    if len(names) < min(len(ROSTER_JOBS), len(agents)):
+        for a in agents:                            # 직업을 아직 안 정한 사람도 정해 둔다
+            give_job(st, a, now)
+        for job in ROSTER_JOBS[len(names):]:
+            cand = sorted((a for a in agents if a["name"] not in names and role(st, a["name"]) == job),
+                          key=lambda a: (-sum((st.get("skill") or {}).get(a["name"], {}).values()), a["name"]))
+            pick_one = cand[0] if cand else next((a for a in sorted(agents, key=lambda a: a["name"])
+                                                 if a["name"] not in names), None)
+            if not pick_one:
+                break
+            if role(st, pick_one["name"]) != job:
+                st.setdefault("jobs", {})[pick_one["name"]] = job
+            names.append(pick_one["name"])
+        if not env:
+            st["roster"] = names
+    return [by[n] for n in names if n in by]
 
 
 def needed_jobs(st: dict, day: bool | None) -> list[str]:
@@ -1337,7 +1373,8 @@ def _tick(now: datetime | None = None, api: Api | None = None, llm=None, post=No
     except Exception:  # noqa: BLE001
         day = None
     hist_before = len(st.get("history") or [])
-    chosen = pick(agents, online, day, k=1 if lite else MAX_BOTS, st=st)
+    size = 1 if lite else team_size()
+    chosen = roster(st, agents, now)[:size]       # 고정 일꾼 중 결계 단계에 맞는 인원 (바퀴마다 바꾸지 않는다)
     if lite and (not st.get("lite")):
         post(NAME, f"-# {NAME} · {now:%H:%M}\n결계가 높아 개척지는 한 사람만 남아 마을 둘레 일(밭, 짓기, 가까운 나무·돌, 순찰)만 한다")
     st["lite"] = lite
