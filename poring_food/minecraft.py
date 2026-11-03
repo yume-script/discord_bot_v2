@@ -1156,6 +1156,26 @@ def sync_storage(st: dict, api, now: datetime) -> dict | None:
     return counts
 
 
+def apply_and_post(st: dict, evs: list[dict], by_mc: dict, now: datetime, post) -> list[str]:
+    """이벤트를 장부에 반영하고 소식을 올린다 (10분 바퀴와 실시간이 같이 쓴다 - 먼저 본 쪽이 반영, 번호로 한 번만).
+    반환: 건물을 지은 사람들"""
+    from . import chronicle, memory
+    builders = []
+    for who, line in apply_events(st, evs, by_mc, now):
+        post(who, f"-# {NAME} · {now:%H:%M}\n{line}")
+        if who == NAME:               # 연대기 줄
+            continue
+        _remember_line(st, who, line, now)
+        try:
+            memory.remember(who, f"숲 너머 개척지에서 {line}", 4, [], "개척지")
+            if "지었다" in line:
+                chronicle.record_event("개척지", f"{who}: {line}", line, [who])
+                builders.append(who)
+        except Exception as e:  # noqa: BLE001
+            print(f"[개척지] 기록 실패: {e}")
+    return builders
+
+
 def send_task(st: dict, api, now: datetime, t: dict, post, lite: bool = False) -> bool:
     """[Task Manager] 일 하나를 봇 서비스에 맡긴다 (일마다 인자, 짓기는 자리 예약). 못 맡기면 예약을 되돌리고 t["task"]="-"."""
     mc = mc_name(t["name"])
@@ -1217,7 +1237,7 @@ def _tick(now: datetime | None = None, api: Api | None = None, llm=None, post=No
     """[봇, TICK_MIN분마다, 스레드에서] 반환 {"busy"|"down"|"assigned": ...}"""
     if not ENABLED:
         return {}
-    from . import agents as ag, chronicle, memory
+    from . import agents as ag, chronicle
     now = now or now_kst()
     api = api or Api()
     st = _load()
@@ -1266,18 +1286,7 @@ def _tick(now: datetime | None = None, api: Api | None = None, llm=None, post=No
     except Exception:  # noqa: BLE001
         evs = []
     builders = []
-    for who, line in apply_events(st, evs, by_mc, now):
-        post(who, f"-# {NAME} · {now:%H:%M}\n{line}")
-        if who == NAME:               # 연대기 줄
-            continue
-        _remember_line(st, who, line, now)
-        try:
-            memory.remember(who, f"숲 너머 개척지에서 {line}", 4, [], "개척지")
-            if "지었다" in line:
-                chronicle.record_event("개척지", f"{who}: {line}", line, [who])
-                builders.append(who)
-        except Exception as e:  # noqa: BLE001
-            print(f"[개척지] 기록 실패: {e}")
+    builders = apply_and_post(st, evs, by_mc, now, post)
     sync_storage(st, api, now)                 # 장부 = 공동 창고 상자 안 실제 아이템 (Inventory Manager)
     for speaker, line in update_requests(st, now):
         post(speaker, f"-# {NAME} · {now:%H:%M} · 부탁 완료\n{line}")
@@ -1554,25 +1563,26 @@ def _fast(now: datetime | None = None, api: Api | None = None, post=None, llm=No
     now = now or now_kst()
     api = api or Api()
     st = _load()
-    cursor = st.get("fast_event") or st.get("last_event", 0)
+    cursor = st.get("last_event", 0)       # 10분 바퀴와 같은 번호 - 먼저 본 쪽이 장부에 반영 (두 번 세지 않게)
     try:
         got = api.get(f"/events?after={cursor}")
     except Exception:  # noqa: BLE001
         return {}
     evs = got.get("events") or []
-    if not evs and int(got.get("last") or 0) < int(cursor or 0):
-        st["fast_event"] = int(got.get("last") or 0)          # 봇 서비스가 다시 셈
+    if not evs and int(got.get("last") or 0) and int(got.get("last") or 0) < int(cursor or 0):
+        st["last_event"] = 0                                    # 봇 서비스가 처음부터 다시 셈 - 다음에 처음부터
         _save(st)
         return {}
     if not evs:
         return {}
-    st["fast_event"] = max(int(e.get("id") or 0) for e in evs)
     agents = agents if agents is not None else ag.load_agents()
     by_name = {a["name"]: a for a in agents}
     by_mc = {mc_name(a["name"]): a["name"] for a in agents}
     if post is None:
         def post(name, text):
             (ag._post(by_name[name], text) if name in by_name else ag._post_as(name, text))
+    # 장부에 먼저 반영 (지은 건물/모은 자원) - 그래야 손이 빈 사람의 다음 일이 방금 지은 밭을 또 짓지 않는다
+    apply_and_post(st, evs, by_mc, now, post)          # (새 시대 알림은 10분 바퀴가 한다)
     out = {"reacted": [], "chat": [], "idle": []}
     stop = busy()
     lite = light()

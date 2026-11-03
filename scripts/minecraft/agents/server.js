@@ -175,7 +175,15 @@ const CATEGORY = {            // 장부 자원 -> 아이템
 };
 function categoryOf(id) { return Object.keys(CATEGORY).find((k) => CATEGORY[k].test(id)) || null; }
 
+let storageBusy = null;       // 여러 봇이 동시에 창고를 만들지 않게 (한 번에 하나)
 async function ensureStorage(bot) {
+  if (storage) return storage;
+  if (storageBusy) return storageBusy;
+  storageBusy = makeStorage(bot).finally(() => { storageBusy = null; });
+  return storageBusy;
+}
+
+async function makeStorage(bot) {
   // 상자 자리: 마을 중심 북쪽 (VX+2.., VZ-4) 한 줄. 높이는 마을 중심 땅 높이 하나로 맞추고(나무 위에 뜨지 않게),
   // 그 자리에 돌바닥을 깔고 위를 비운 뒤 상자를 놓는다. 이미 상자가 있으면 그대로 쓴다.
   // 청크가 아직 안 보이면 아무것도 하지 않는다 (예전엔 안 보이는 걸 "상자 없음"으로 보고 다른 높이에 또 놓았다)
