@@ -640,6 +640,40 @@ def light() -> bool:
     return loadshed.stage() > MAX_STAGE
 
 
+DANGER_H = 24        # 위험 지역 기억 시간
+REPEAT_N = 3         # V6 30.3 반복 행동 감지: 같은 사람이 같은 일로 3번 연속 실패하면
+
+
+def add_danger(st: dict, pos: dict, why: str, now: datetime) -> None:
+    """위험 지역 (쓰러진 곳, 갇힌 곳) - 봇 서비스에 알려 그쪽으로 길을 찾거나 캐지 않게 (V6 29.3, 22.4 사망 위치 기록)"""
+    try:
+        x, z = int(pos["x"]), int(pos["z"])
+    except (KeyError, TypeError, ValueError):
+        return
+    until = datetime.fromtimestamp(now.timestamp() + DANGER_H * 3600)
+    zones = [d for d in st.get("danger") or [] if d.get("until", "") > f"{now:%Y-%m-%dT%H:%M}"]
+    zones.append({"x": x, "y": int(pos.get("y") or 64), "z": z, "why": why[:40], "at": f"{now:%Y-%m-%d %H:%M}",
+                  "until": f"{until:%Y-%m-%dT%H:%M}"})
+    st["danger"] = zones[-30:]
+
+
+def streak(st: dict, who: str, task: str, bad: bool, now: datetime, out: list) -> None:
+    """같은 사람이 같은 일로 REPEAT_N번 연속 실패하면 그 일을 바로 쉬게 한다 (매시 점검을 기다리지 않음)"""
+    sk = st.setdefault("streak", {})
+    cur = sk.get(who) or {}
+    if not bad:
+        sk.pop(who, None)
+        return
+    n = cur.get("n", 0) + 1 if cur.get("task") == task else 1
+    sk[who] = {"task": task, "n": n}
+    if n >= REPEAT_N:
+        sk.pop(who, None)
+        until = datetime.fromtimestamp(now.timestamp() + AVOID_MIN * 60)
+        st.setdefault("avoid", {})[task] = f"{until:%Y-%m-%d %H:%M}"
+        lesson(st, f"{who}의 {TASKS[task]}가 {n}번 연속 실패 - {AVOID_MIN}분 쉬게 함")
+        out.append((NAME, history(st, now, f"{who}이(가) {TASKS[task]}에서 {n}번 연달아 막혀 그 일을 잠시 멈췄다")))
+
+
 def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datetime | None = None) -> list[tuple[str, str]]:
     """이벤트 -> 장부 (+ 일 성적, 직업 경험, 교훈, 연대기). 반환 [(인물, 소식 한 줄)] (알릴 만한 것만)"""
     now = now or now_kst()
@@ -725,6 +759,8 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
             res["food"] = max(0, res.get("food", START_FOOD) - MEAL)
         elif kind == "rescued":                 # 갇혀서(구덩이/동굴/물) 마을로 데려옴
             st["rescues"] = st.get("rescues", 0) + 1
+            if e.get("from"):
+                add_danger(st, e["from"], str(e.get("why") or "갇힌 곳"), now)
             if task in TASKS:
                 stats.setdefault(task, {"done": 0, "failed": 0, "empty": 0})["failed"] += 1
             lesson(st, f"{TASKS.get(task, '일')} 중 {e.get('why', '갇힘')} - 마을로 데려옴")
@@ -733,8 +769,13 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
             if task in TASKS:
                 stats.setdefault(task, {"done": 0, "failed": 0, "empty": 0})["failed"] += 1
                 lesson(st, f"{TASKS[task]} 실패: {int(e.get('minutes') or 0)}분 넘게 끝나지 않아 멈춤 (길이 막혔거나 닿을 수 없는 곳)")
+        elif kind == "gave_up":                 # 같은 목적지로 3번 못 감 -> 30분 포기 (봇 서비스)
+            lesson(st, f"({e.get('x')}, {e.get('z')}) 쪽으로 세 번 못 감 - 그쪽은 30분 동안 포기")
         elif kind == "died":
             st["deaths"] = st.get("deaths", 0) + 1
+            pos = e.get("pos") or {}
+            if pos:
+                add_danger(st, pos, "쓰러진 곳", now)
             out.append((who, "몬스터에게 당해 쓰러졌다가 광장에서 다시 일어났다"))
             lesson(st, "밤에 몬스터에게 쓰러짐 - 순찰을 늘리거나 감시탑/성벽이 필요")
         if gained and task in ROLES:          # 해낸 일 -> 그 사람 경험 (직업 분화)
@@ -743,6 +784,10 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
             sk[task] = sk.get(task, 0) + 1
             if role(st, who) and role(st, who) != before:
                 out.append((NAME, history(st, now, f"{who}이(가) 개척지의 {ROLES[role(st, who)]}이(가) 되었다")))
+        bad = kind in ("failed", "stuck", "rescued") or (kind == "done" and task in ("gather", "mine", "farm", "ore")
+                                                        and not gained and not (r.get("rebuilt")))
+        if who and task in TASKS and (bad or (kind == "done" and gained)):
+            streak(st, who, task, bad, now, out)
         if kind in ("done", "failed", "left"):
             pend.pop(e.get("name"), None)
         st["last_event"] = max(st.get("last_event", 0), int(e.get("id") or 0))
@@ -1263,6 +1308,7 @@ def send_task(st: dict, api, now: datetime, t: dict, post, lite: bool = False) -
     post(t["name"], f"-# {NAME} · {now:%H:%M} · {what}" + (f" · {t['why']}" if t.get("why") else "")
          + f"\n{t.get('say') or '…'}")
     _remember_line(st, t["name"], f"{what} 하러 감", now)
+    st.setdefault("assigned_at", {})[t["name"]] = f"{now:%Y-%m-%d %H:%M}"
     if t.get("request"):
         accept_request(st, api, now, t, post)
     return True
@@ -1403,6 +1449,9 @@ def _tick(now: datetime | None = None, api: Api | None = None, llm=None, post=No
             post(NAME, f"-# {NAME} · {now:%H:%M}\n📜 {h['text']}")
     try:
         api.post("/rations", {"ok": (st.get("res") or {}).get("food", START_FOOD) >= MEAL})   # 창고가 비면 배급 끊김
+        zones = [d for d in st.get("danger") or [] if d.get("until", "") > f"{now:%Y-%m-%dT%H:%M}"]
+        st["danger"] = zones
+        api.post("/danger", {"zones": zones})          # 위험 지역 (봇 서비스를 다시 띄워도 이어지게)
     except Exception:  # noqa: BLE001
         pass
     if plan and not st.get("audited") and (st.get("built") or {}):
@@ -1679,8 +1728,11 @@ def _fast(now: datetime | None = None, api: Api | None = None, post=None, llm=No
             send_task(st, api, now, t, post, lite)
             seen.add(who)
             out["reacted"].append((who, t["task"]))
-        elif kind == "done" and e.get("task") in ("build", "audit", "rest"):
-            # 손이 빈 사람 -> 바로 직업 일 (LLM 없이)
+        elif kind == "done" and e.get("task") in ("build", "audit", "rest") or kind == "joined":
+            # 손이 빈 사람 / 다시 접속한 사람 -> 바로 직업 일 (LLM 없이, V6 22.2 재접속 후 작업 복구)
+            # (방금 10분 바퀴가 일을 맡긴 사람이 접속한 것이면 그 일을 그대로 둔다)
+            if kind == "joined" and (st.get("assigned_at") or {}).get(who, "") >= f"{now:%Y-%m-%d %H:%M}"[:-1]:
+                continue
             sim = {"res": dict(st.get("res") or {}), "built": dict(st.get("built") or {}), "era": st.get("era", 0),
                    "made": dict(st.get("made") or {})}
             task, bp = job_task(st, who, sim, None)
