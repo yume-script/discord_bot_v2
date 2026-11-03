@@ -147,6 +147,7 @@ const bots = new Map();      // 이름 -> {bot, task, kills}
 let forest = null;           // 마지막으로 나무를 벤 곳 (모두가 같이 쓴다)
 let worldReady = false;      // 게임 규칙을 한 번 맞췄는지
 let rations = true;          // 마을 창고에 식량이 있는지 (poring_food가 바퀴마다 알려 준다)
+const farmRebuiltAt = new Map();   // 밭 자리 -> 마지막으로 다시 일군 시각
 const farmAt = new Map();    // 밭 자리 -> 마지막으로 돌본 시각 (밭 일을 이어서 할 때 자란 만큼 계산)
 const events = [];           // 최근 500개
 // 이벤트 번호는 시각(ms)에서 시작 - 봇 서비스를 다시 띄워도 번호가 1로 돌아가지 않게.
@@ -262,7 +263,18 @@ async function storageCounts() {
   return counts;
 }
 
-async function putIntoStorage(id, count) {
+// 창고 넣기/꺼내기는 한 번에 하나씩 (둘이 동시에 같은 빈 칸을 읽고 쓰면 한쪽 물건이 덮여 사라졌다 - 장부보다 돌이 74개 모자랐다)
+let storageQueue = Promise.resolve();
+function storageLocked(fn) {
+  const run2 = storageQueue.then(fn, fn);
+  storageQueue = run2.catch(() => {});
+  return run2;
+}
+
+function putIntoStorage(id, count) { return storageLocked(() => putIntoStorageNow(id, count)); }
+function takeFromStorage(category, count) { return storageLocked(() => takeFromStorageNow(category, count)); }
+
+async function putIntoStorageNow(id, count) {
   // 상자 빈 칸(또는 같은 아이템이 덜 찬 칸)에 넣는다. 다 못 넣으면 넣은 만큼 반환
   let left = count;
   for (const c of storage || []) {
@@ -285,7 +297,7 @@ async function putIntoStorage(id, count) {
   return count - left;
 }
 
-async function takeFromStorage(category, count) {
+async function takeFromStorageNow(category, count) {
   // 그 종류를 count만큼 꺼낸다 (모자라면 아무것도 안 꺼내고 false). 식량은 밀부터
   const all = [];
   for (const c of storage || []) for (const it of await readChest(c)) if (categoryOf(it.id) === category) all.push({ c, ...it });
@@ -368,7 +380,8 @@ const BLUEPRINTS = {
   // 밭 7x7: 물 한 칸 + 경작지 + 밀
   farm: (o) => [
     `fill ${o.x} ${o.y} ${o.z} ${o.x + 6} ${o.y} ${o.z + 6} farmland`,
-    `setblock ${o.x + 3} ${o.y} ${o.z + 3} water`,
+    // 가운데 물은 두지 않는다 (물이 넘쳐 마을이 잠겼다 - 밀이 자라는 건 흐른 시간으로 셈하므로 물이 없어도 된다)
+    `setblock ${o.x + 3} ${o.y} ${o.z + 3} composter`,
     `fill ${o.x} ${o.y + 1} ${o.z} ${o.x + 6} ${o.y + 1} ${o.z + 6} wheat[age=0] replace air`,
     `setblock ${o.x + 3} ${o.y + 1} ${o.z + 3} air`,
     `fill ${o.x - 1} ${o.y + 1} ${o.z - 1} ${o.x + 7} ${o.y + 1} ${o.z + 7} oak_fence outline`,
@@ -422,13 +435,30 @@ const BLUEPRINTS = {
   ],
 };
 
-function groundY(bot, x, z) {
-  // 지면 높이 (나뭇잎/풀은 건너뛴다, 못 찾으면 봇 발밑)
+// 땅이 아닌 것 - 나무(줄기/잎), 울타리/담, 풀/꽃. 예전엔 나무 줄기·울타리를 땅으로 읽어 밭이 나무 위(하늘)에 지어지고
+// 그 가운데 물 한 칸이 폭포가 되어 마을이 물에 잠겼다 (봇이 숨이 막혀 계속 쓰러짐)
+const NOT_GROUND = /leaves|_log$|_wood$|_stem$|fence|_wall$|grass|fern|flower|snow$|vine|mushroom|sapling|torch|lantern/;
+
+function surfaceAt(bot, x, z) {
+  // {y: 땅(또는 물) 높이, water: 물 위인가} - 못 찾으면 null
   for (let y = 120; y > -60; y--) {
     const b = bot.blockAt(new Vec3(x, y, z));
-    if (b && b.boundingBox === 'block' && !/leaves|grass|fern|flower|snow$/.test(b.name)) return y;
+    if (!b) continue;
+    if (b.name === 'water' || b.name === 'flowing_water') return { y, water: true };
+    if (b.boundingBox === 'block' && !NOT_GROUND.test(b.name)) return { y, water: false };
   }
-  return Math.floor(bot.entity.position.y) - 1;
+  return null;
+}
+
+function groundY(bot, x, z) {
+  const s = surfaceAt(bot, x, z);
+  return s ? s.y : Math.floor(bot.entity.position.y) - 1;
+}
+
+async function solidSite(bot, o, w, d) {
+  // 짓는 자리(w x d)가 물 위면 물 높이에 흙을 깔아 땅으로 만든다 (사람처럼 메워서 짓기)
+  const s = surfaceAt(bot, o.x + Math.floor(w / 2), o.z + Math.floor(d / 2));
+  if (s && s.water) await run(bot, `fill ${o.x - 1} ${o.y} ${o.z - 1} ${o.x + w} ${o.y} ${o.z + d} dirt replace water`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -506,9 +536,13 @@ function inDanger(p) {
   return dangerZones.some((d) => (!d.until || d.until > now) && Math.hypot(p.x - d.x, p.z - d.z) <= (d.r || 10)
     && Math.abs((p.y || d.y) - d.y) <= 16);
 }
+// 마을 일터 반지름 - 묘목장(54칸 + 9칸)까지. 예전엔 24칸이라 마을 둘레 밭/묘목장이 쓰러진 자리로 막혀 길을 못 찾았다
+const VILLAGE_R = 66;
+function inVillage(pos) { return VX !== null && Math.hypot(pos.x - VX, pos.z - VZ) < VILLAGE_R; }
+
 function addDanger(pos, why) {
   if (!pos) return;
-  if (VX !== null && Math.hypot(pos.x - VX, pos.z - VZ) < 24) return;   // 마을 안은 위험 지역으로 막지 않는다 (지켜야 할 곳)
+  if (inVillage(pos)) return;   // 마을(건물·밭·묘목장이 있는 곳)은 위험 지역으로 막지 않는다 (일해야 할 곳)
   dangerZones.push({ x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z), r: 10, why,
     until: Date.now() + 24 * 3600000 });
   dangerZones = dangerZones.slice(-30);
@@ -631,8 +665,12 @@ async function doFarm(entry, plots, grow, growMin) {
       }
     }
     if (!(crops - before) || standing(bot, 'farm', slot) === false) {
-      // 밭이 아예 없다 (예전에 명령 권한이 없어 장부에만 지어진 밭, 또는 망가짐) - 그 자리에 밭을 다시 일군다
+      // 밭이 아예 없다 (예전에 명령 권한이 없어 장부에만 지어진 밭, 또는 망가짐) - 그 자리에 밭을 다시 일군다.
+      // 같은 자리는 한 시간에 한 번만 (예전엔 바퀴마다 5곳을 다시 지어 물이 넘쳤다)
+      if (Date.now() - (farmRebuiltAt.get(slot) || 0) < 3600000) continue;
+      farmRebuiltAt.set(slot, Date.now());
       const o = slotOrigin('farm', slot, y);
+      await solidSite(bot, o, 7, 7);
       for (const cmd of BLUEPRINTS.farm(o)) await run(bot, cmd);
       rebuilt++;
       continue;
@@ -677,6 +715,26 @@ async function doOre(entry, count) {
 }
 
 const groveAt = new Map();   // 묘목장 자리 -> 마지막으로 돌본 시각 (흐른 시간만큼 묘목이 나무로 자란 것으로 친다)
+
+async function drainVillage() {
+  // 마을 물 빼기 - 나무 위(하늘)에 잘못 지어진 밭의 물이 폭포처럼 쏟아져 마을이 잠겼다.
+  // 마을 땅 높이(VY)보다 높은 곳의 물을 마을 둘레 64칸에서 없애고(흐르는 물은 근원이 없어지면 사라진다),
+  // 밭 자리 가운데(예전 물 한 칸)의 물도 없앤다. 바다/강(마을 땅보다 낮은 곳)은 건드리지 않는다
+  if (!RCON_PASS || VX === null) return { error: 'RCON 또는 마을 중심 없음' };
+  let fills = 0;
+  for (let x = VX - 64; x < VX + 64; x += 16) {
+    for (let z = VZ - 64; z < VZ + 64; z += 16) {
+      await rcon(`fill ${x} ${VY + 1} ${z} ${x + 15} ${VY + 40} ${z + 15} air replace water`).catch(() => {});
+      fills++;
+    }
+  }
+  for (let slot = 0; slot < 8; slot++) {
+    const o = slotOrigin('farm', slot, VY);
+    await rcon(`fill ${o.x + 2} ${VY - 14} ${o.z + 2} ${o.x + 4} ${VY} ${o.z + 4} air replace water`).catch(() => {});
+    fills++;
+  }
+  return { ok: true, fills };
+}
 
 async function golemCount() {
   // 마을 둘레(96칸)의 철 골렘 수 (못 세면 null)
@@ -819,6 +877,8 @@ async function doBuild(entry, blueprint, slot, cost, material, alts) {
   const probe = slotOrigin(blueprint, slot, 0);
   await goNear(bot, probe.x, probe.z, 4);
   const o = slotOrigin(blueprint, slot, groundY(bot, probe.x, probe.z));
+  const size = { hut: [5, 5], farm: [7, 7], well: [3, 3], tower: [3, 3], smithy: [6, 5], hall: [9, 9], wall: [5, 1], grove: [9, 9] }[blueprint];
+  if (size) await solidSite(bot, o, size[0], size[1]);
   for (const cmd of plan(o)) {
     if (entry.cancel) throw new Error('짓다가 멈춤');
     await run(bot, withMaterial(cmd, material));
@@ -956,6 +1016,7 @@ async function rescue(name, e, why) {
   const y = (VY !== null ? VY : Math.floor(e.bot.entity.position.y)) + 1;
   const from = e.bot.entity ? e.bot.entity.position.floored() : null;
   try {
+    await rcon(`fill ${VX - 1} ${y} ${VZ + 1} ${VX + 1} ${y + 2} ${VZ + 3} air replace water`).catch(() => {});   // 데려갈 자리에 물이 없게
     await run(e.bot, `tp @s ${VX} ${y} ${VZ + 2}`);
     await run(e.bot, 'effect give @s regeneration 10 1 true');
   } catch (x) { /* 다음에 */ }
@@ -1129,6 +1190,7 @@ http.createServer(async (req, res) => {
         heapMB: Math.round(process.memoryUsage().heapUsed / 1048576) });
     }
     if (req.method === 'GET' && url.pathname === '/state') return send(res, 200, state());
+    if (req.method === 'POST' && url.pathname === '/drain') return send(res, 200, await drainVillage());
     if (req.method === 'GET' && url.pathname === '/golems') return send(res, 200, { golems: await golemCount() });
     if (req.method === 'GET' && url.pathname === '/storage') {
       // 공동 창고 실제 재고 (상자 안 아이템) - poring_food 장부의 기준
@@ -1150,7 +1212,7 @@ http.createServer(async (req, res) => {
       if (url.pathname === '/danger') {
         // poring_food가 기억하는 위험 지역 (봇 서비스를 다시 띄워도 이어지게)
         const zones = Array.isArray(b.zones) ? b.zones.slice(-30) : [];
-        dangerZones = zones.filter((z) => Number.isFinite(z.x) && Number.isFinite(z.z))
+        dangerZones = zones.filter((z) => Number.isFinite(z.x) && Number.isFinite(z.z) && !inVillage(z))
           .map((z) => ({ x: z.x, y: z.y || 64, z: z.z, r: z.r || 10, why: String(z.why || '').slice(0, 40),
             until: z.until ? Date.parse(z.until) || 0 : 0 }));
         return send(res, 200, { ok: true, zones: dangerZones.length });
