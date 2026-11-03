@@ -530,3 +530,17 @@ def test_request_is_accepted_by_matching_job():
                         "at": "2026-11-03 12:00"}]}
     got = {t["name"]: t for t in minecraft.decide([_ag("리그루드"), _ag("게르도")], st, day=True, llm=lambda s, u: {})}
     assert got["게르도"]["task"] == "mine" and got["게르도"]["request"] == 3
+
+
+def test_fast_applies_build_before_next_job(monkeypatch, tmp_path):
+    _live_state(monkeypatch, tmp_path)
+    st = minecraft._load()
+    st.update(built={}, res={"logs": 30, "food": 50}, jobs={"페른": "farm", "게르도": "mine"}, last_event=0)
+    minecraft._save(st)
+    api = Live([{"id": 1, "name": "Fern", "kind": "done", "task": "build", "result": {"blueprint": "farm"}}])
+    minecraft.fast(datetime(2026, 11, 3, 12), api=api, post=lambda n, t: None, llm=lambda s, u: {},
+                   agents=[_ag("페른"), _ag("게르도")])
+    st = minecraft._load()
+    assert st["built"]["farm"] == 1 and st["last_event"] == 1               # 실시간이 장부에 먼저 반영
+    fern = [b for p, b in api.calls if p == "/task" and b["name"] == "Fern"]
+    assert fern and fern[0]["kind"] == "farm"                               # 방금 지은 밭을 또 짓지 않고 수확
