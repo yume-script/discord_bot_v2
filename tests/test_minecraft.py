@@ -744,3 +744,14 @@ def test_grove_forest_and_golem():
             return {"golems": 0} if path == "/golems" else super().get(path)
     minecraft.sync_golems(st, G())
     assert "golem" not in st["built"]                                         # 골렘이 쓰러지면 다시 만든다
+
+
+def test_drain_once():
+    from poring_food.clock import now_kst
+    st = {"online": ["Fern"]}
+    api = FakeApi()
+    posts = []
+    minecraft.drain_once(st, api, now_kst(), lambda n, t: posts.append(t))
+    minecraft.drain_once(st, api, now_kst(), lambda n, t: posts.append(t))
+    assert [p for p, b in api.calls if p == "/drain"] == ["/drain"] and st["drained"] == minecraft.DRAIN_VERSION
+    assert any("물" in t for t in posts)

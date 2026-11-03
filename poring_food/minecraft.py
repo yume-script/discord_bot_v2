@@ -1345,6 +1345,20 @@ def sync_storage(st: dict, api, now: datetime) -> dict | None:
     return counts
 
 
+DRAIN_VERSION = "v1"
+
+
+def drain_once(st: dict, api, now: datetime, post) -> None:
+    """마을 물 빼기 (한 번) - 예전 밭이 나무 위에 지어져 그 물이 마을을 잠기게 했다. 봇이 들어가 있을 때 봇 서비스에 맡긴다"""
+    if st.get("drained") == DRAIN_VERSION or not st.get("online"):
+        return
+    r = api.post("/drain", {})
+    if isinstance(r, dict) and r.get("ok"):
+        st["drained"] = DRAIN_VERSION
+        post(NAME, f"-# {NAME} · {now:%H:%M}\n" + history(st, now, "마을을 잠기게 한 물(잘못 지은 밭의 물)을 빼냈다 - "
+                                                          "다시 마른 땅에서 일한다"))
+
+
 def sync_golems(st: dict, api) -> None:
     """살아 있는 철 골렘 수로 장부를 맞춘다 (골렘은 쓰러질 수 있다 - 그러면 다시 만든다)"""
     try:
@@ -1504,6 +1518,7 @@ def _tick(now: datetime | None = None, api: Api | None = None, llm=None, post=No
     builders = apply_and_post(st, evs, by_mc, now, post)
     sync_storage(st, api, now)                 # 장부 = 공동 창고 상자 안 실제 아이템 (Inventory Manager)
     sync_golems(st, api)
+    drain_once(st, api, now, post)
     for speaker, line in update_requests(st, now):
         post(speaker, f"-# {NAME} · {now:%H:%M} · 부탁 완료\n{line}")
     new_era = advance(st)
