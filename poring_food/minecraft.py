@@ -1117,6 +1117,26 @@ def checkup(now: datetime | None = None, api: Api | None = None, post=None, rest
 
 
 # ===================================================================== 한 바퀴
+def sync_storage(st: dict, api, now: datetime) -> dict | None:
+    """공동 창고(마을 중심 옆 상자들)의 실제 아이템으로 장부 창고(res)를 맞춘다 - 봇 보고가 아니라 실제 게임 상태가 기준.
+    못 읽으면(봇이 아직 없음, 예전 봇 서비스) 장부를 그대로 둔다. 반환: 읽은 개수"""
+    try:
+        got = api.get("/storage")
+    except Exception:  # noqa: BLE001
+        return None
+    counts = (got or {}).get("counts") if isinstance(got, dict) else None
+    if not isinstance(counts, dict):
+        return None
+    res = st.setdefault("res", {})
+    diff = {k: int(counts.get(k, 0)) - int(res.get(k, 0)) for k in RESOURCES if int(counts.get(k, 0)) != int(res.get(k, 0))}
+    for k in RESOURCES:
+        res[k] = int(counts.get(k, 0))
+    st["storage_at"] = f"{now:%Y-%m-%d %H:%M}"
+    if diff:
+        print(f"[개척지] 창고 대조: 장부와 실제 상자 차이 {diff} -> 실제로 맞춤")
+    return counts
+
+
 def _note(st: dict, why: str) -> None:
     """쉬거나 못 붙는 이유가 바뀔 때만 로그 한 줄 (매번 찍지 않게)"""
     if why != st.get("why", ""):
@@ -1170,7 +1190,12 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
     if post_later:
         post(NAME, f"-# {NAME} · {now:%H:%M}\n{post_later}")
     try:
-        evs = api.get(f"/events?after={st.get('last_event', 0)}").get("events") or []
+        got = api.get(f"/events?after={st.get('last_event', 0)}")
+        evs = got.get("events") or []
+        if not evs and int(got.get("last") or 0) and int(got.get("last") or 0) < int(st.get("last_event", 0)):
+            # 봇 서비스 번호가 우리가 본 번호보다 작다 = 봇 서비스가 처음부터 다시 셈 -> 처음부터 다시 받는다
+            st["last_event"] = 0
+            evs = api.get("/events?after=0").get("events") or []
     except Exception:  # noqa: BLE001
         evs = []
     builders = []
@@ -1186,6 +1211,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
                 builders.append(who)
         except Exception as e:  # noqa: BLE001
             print(f"[개척지] 기록 실패: {e}")
+    sync_storage(st, api, now)                 # 장부 = 공동 창고 상자 안 실제 아이템 (Inventory Manager)
     new_era = advance(st)
     if new_era:
         history(st, now, f"개척지가 '{new_era}' 시대로 올라섰다")
@@ -1285,7 +1311,7 @@ def tick(now: datetime | None = None, api: Api | None = None, llm=None, post=Non
             cost = BLUEPRINTS[t["blueprint"]][1]
             for k, v in cost.items():
                 res[k] = res.get(k, 0) - v
-            args = {"blueprint": t["blueprint"], "slot": slots.get(t["blueprint"], 0)}
+            args = {"blueprint": t["blueprint"], "slot": slots.get(t["blueprint"], 0), "cost": cost}
             slots[t["blueprint"]] = slots.get(t["blueprint"], 0) + 1
             pend[mc] = {"task": "build", "blueprint": t["blueprint"], "cost": cost}
         elif t["task"] == "patrol":
@@ -1343,7 +1369,8 @@ def summary() -> str:
                       for n in dict.fromkeys(list(st.get("jobs") or {}) + list(st.get("skill") or {})) if (r := role(st, n)))
     pl = st.get("plan") if (st.get("plan") or {}).get("focus") in FOCUS else None
     return (f"{NAME}: {ledger(st)} · 쓰러짐 {st.get('deaths', 0)} · "
-            f"지금 접속 {', '.join(st.get('online') or []) or '없음'}"
+            + (f"창고 확인 {st['storage_at'][11:]} (실제 상자) · " if st.get("storage_at") else "창고 아직 확인 안 됨 · ")
+            + f"지금 접속 {', '.join(st.get('online') or []) or '없음'}"
             + (f" · {st['why']}" if st.get("why") else "")
             + "\n지금 문제: " + (" / ".join(problems(st)) or "없음")
             + (f"\n이번 목표: {FOCUS[pl['focus']]} +{pl['target']} (지금 +{focus_metric(st, pl['focus']) - pl['base']})"

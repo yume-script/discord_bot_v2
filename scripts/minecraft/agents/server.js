@@ -147,12 +147,153 @@ let worldReady = false;      // 게임 규칙을 한 번 맞췄는지
 let rations = true;          // 마을 창고에 식량이 있는지 (poring_food가 바퀴마다 알려 준다)
 const farmAt = new Map();    // 밭 자리 -> 마지막으로 돌본 시각 (밭 일을 이어서 할 때 자란 만큼 계산)
 const events = [];           // 최근 500개
-let nextId = 1;
+// 이벤트 번호는 시각(ms)에서 시작 - 봇 서비스를 다시 띄워도 번호가 1로 돌아가지 않게.
+// (예전엔 다시 띄울 때마다 1부터 다시 세서, poring_food가 "이미 본 번호"로 여기고 결과를 전부 버렸다 -
+//  나무/돌을 캐도 장부가 늘지 않아 같은 일만 되풀이한 원인)
+let nextId = Date.now();
 
 function emit(name, kind, data = {}) {
   events.push({ id: nextId++, at: new Date().toISOString(), name, kind, ...data });
   console.log(`[${new Date().toISOString().slice(11, 19)}] ${name} ${kind} ${Object.keys(data).length ? JSON.stringify(data) : ''}`);   // docker logs mc-agents 로 보이게
   if (events.length > 500) events.splice(0, events.length - 500);
+}
+
+// ------------------------------------------------------------------ 공동 창고 (Inventory / Logistics)
+// 마을 중심 옆 상자 STORAGE_CHESTS개가 공동 창고다. 모은 자원은 봇이 창고까지 걸어와 넣고(봇 가방에서 빼서 상자로),
+// 짓기/먹기는 창고에서 꺼내 쓴다. 장부는 상자 안 실제 아이템을 읽어서 만든다 (GET /storage) - "실제 게임 상태로 검증".
+// 상자 읽기/넣기/빼기는 RCON(data get block / item replace)으로 한다 (봇이 상자 UI를 여는 것보다 확실하다).
+const STORAGE_CHESTS = 4;
+let storage = null;           // [{x,y,z}] 상자 위치
+const CATEGORY = {            // 장부 자원 -> 아이템
+  logs: /_log$|_wood$|_stem$/,
+  stone: /^(cobblestone|cobbled_deepslate|stone|andesite|diorite|granite|tuff|deepslate|blackstone)$/,
+  food: /^(wheat|bread)$/,
+  coal: /^(coal|charcoal)$/,
+  iron: /^(raw_iron|iron_ingot)$/,
+};
+function categoryOf(id) { return Object.keys(CATEGORY).find((k) => CATEGORY[k].test(id)) || null; }
+
+async function ensureStorage(bot) {
+  // 상자 자리: 마을 중심 북쪽 (VX+2.., VZ-4). 이미 상자가 있으면 그대로, 없으면 놓는다
+  if (storage) return storage;
+  const out = [];
+  const base = { x: VX + 2, z: VZ - 4 };
+  try { await bot.waitForChunksToLoad(); } catch (e) { /* 계속 */ }
+  for (let i = 0; i < STORAGE_CHESTS; i++) {
+    const x = base.x + i * 2;
+    const z = base.z;
+    let y = null;
+    for (let yy = 120; yy > -40; yy--) {          // 이미 놓인 상자가 있으면 그 자리
+      const b = bot.blockAt(new Vec3(x, yy, z));
+      if (b && b.name === 'chest') { y = yy; break; }
+    }
+    if (y === null) {
+      y = groundY(bot, x, z) + 1;
+      await run(bot, `setblock ${x} ${y} ${z} chest[facing=south]`);
+    }
+    out.push({ x, y, z });
+  }
+  storage = out;
+  console.log(`공동 창고 = ${out.map((c) => `(${c.x},${c.y},${c.z})`).join(' ')}`);
+  return storage;
+}
+
+function parseItems(text) {
+  // "... has the following block data: [{count: 12, Slot: 0b, id: "minecraft:oak_log"}, ...]"
+  const items = [];
+  for (const m of String(text || '').matchAll(/\{([^{}]*)\}/g)) {
+    const id = /id: "minecraft:([a-z0-9_]+)"/.exec(m[1]);
+    const slot = /Slot: (\d+)b/.exec(m[1]);
+    const count = /count: (\d+)/.exec(m[1]);
+    if (id && slot) items.push({ id: id[1], slot: parseInt(slot[1], 10), count: count ? parseInt(count[1], 10) : 1 });
+  }
+  return items;
+}
+
+async function readChest(c) {
+  const t = await rcon(`data get block ${c.x} ${c.y} ${c.z} Items`);
+  if (/No block entity|not a block entity|Found no elements/i.test(t)) return [];
+  return parseItems(t);
+}
+
+async function storageCounts() {
+  const counts = { logs: 0, stone: 0, food: 0, coal: 0, iron: 0 };
+  if (!storage || !RCON_PASS) return null;
+  for (const c of storage) {
+    for (const it of await readChest(c)) {
+      const k = categoryOf(it.id);
+      if (k) counts[k] += it.id === 'bread' ? it.count * 3 : it.count;   // 빵 1 = 밀 3
+    }
+  }
+  return counts;
+}
+
+async function putIntoStorage(id, count) {
+  // 상자 빈 칸(또는 같은 아이템이 덜 찬 칸)에 넣는다. 다 못 넣으면 넣은 만큼 반환
+  let left = count;
+  for (const c of storage || []) {
+    if (left <= 0) break;
+    const items = await readChest(c);
+    for (const it of items.filter((x) => x.id === id && x.count < 64)) {
+      const add = Math.min(left, 64 - it.count);
+      await rcon(`item replace block ${c.x} ${c.y} ${c.z} container.${it.slot} with minecraft:${id} ${it.count + add}`);
+      left -= add;
+      if (left <= 0) break;
+    }
+    const used = new Set(items.map((x) => x.slot));
+    for (let slot = 0; slot < 27 && left > 0; slot++) {
+      if (used.has(slot)) continue;
+      const n = Math.min(64, left);
+      await rcon(`item replace block ${c.x} ${c.y} ${c.z} container.${slot} with minecraft:${id} ${n}`);
+      left -= n;
+    }
+  }
+  return count - left;
+}
+
+async function takeFromStorage(category, count) {
+  // 그 종류를 count만큼 꺼낸다 (모자라면 아무것도 안 꺼내고 false). 식량은 밀부터
+  const all = [];
+  for (const c of storage || []) for (const it of await readChest(c)) if (categoryOf(it.id) === category) all.push({ c, ...it });
+  const unit = (it) => (it.id === 'bread' ? 3 : 1);
+  if (all.reduce((a, it) => a + it.count * unit(it), 0) < count) return false;
+  let left = count;
+  for (const it of all.sort((a, b) => unit(a) - unit(b))) {
+    if (left <= 0) break;
+    const use = Math.min(it.count, Math.ceil(left / unit(it)));
+    const rest = it.count - use;
+    await rcon(`item replace block ${it.c.x} ${it.c.y} ${it.c.z} container.${it.slot} with `
+      + (rest > 0 ? `minecraft:${it.id} ${rest}` : 'air'));
+    left -= use * unit(it);
+  }
+  return true;
+}
+
+async function depositAll(bot, category) {
+  // 봇이 창고로 걸어가 가방의 그 종류 아이템을 상자에 넣는다 (물류). 넣은 개수 반환
+  if (!storage) await ensureStorage(bot);
+  const c = storage[0];
+  await goNear(bot, c.x, c.z, 3);
+  let moved = 0;
+  const byId = {};
+  for (const it of bot.inventory.items()) if (categoryOf(it.name) === category) byId[it.name] = (byId[it.name] || 0) + it.count;
+  for (const [id, n] of Object.entries(byId)) {
+    await run(bot, `clear @s ${id} ${n}`);
+    moved += await putIntoStorage(id, n);
+  }
+  return moved;
+}
+
+// ------------------------------------------------------------------ 장비 (Equipment)
+async function ensureTools(bot) {
+  // 일 시작 전에 곡괭이/도끼/검이 있는지 본다 - 없거나 거의 닳았으면 새로 (공용 도구)
+  const have = {};
+  for (const it of bot.inventory.items()) {
+    const max = it.maxDurability || 0;
+    const used = it.durabilityUsed || 0;
+    if (!max || used < max * 0.9) have[it.name] = true;
+  }
+  for (const tool of ['iron_pickaxe', 'iron_axe', 'iron_sword']) if (!have[tool]) await run(bot, `give @s ${tool}`);
 }
 
 // ------------------------------------------------------------------ 건물 (마을 중심 기준 자리마다)
@@ -315,12 +456,9 @@ async function doGather(entry, count, near) {
     try { await collect(bot, block); got++; } catch (e) { misses++; }
   }
   // 모은 통나무는 마을 창고로 (가방에서 빼서 장부로 - 실제 건물은 /fill)
-  if (got) {
-    await run(bot, `clear @s #minecraft:logs ${got}`);
-    forest = bot.entity.position.floored();          // 다음에 나무 베러 갈 곳
-  }
-  await goNear(bot, VX, VZ, 6);
-  return { logs: got };
+  if (got) forest = bot.entity.position.floored();          // 다음에 나무 베러 갈 곳
+  const stored = await depositAll(bot, 'logs');               // 창고로 운반 (실제로 상자에 들어간 수)
+  return { logs: stored, cut: got };
 }
 
 async function doMine(entry, count, near) {
@@ -344,9 +482,8 @@ async function doMine(entry, count, near) {
     }
     try { await collect(bot, block); got++; } catch (e) { misses++; }
   }
-  if (got) await run(bot, `clear @s #minecraft:stone_tool_materials ${got}`);
-  await goNear(bot, VX, VZ, 6);
-  return { stone: got };
+  const stored = await depositAll(bot, 'stone');
+  return { stone: stored, cut: got };
 }
 
 async function doFarm(entry, plots, grow, growMin) {
@@ -392,8 +529,10 @@ async function doFarm(entry, plots, grow, growMin) {
     await run(bot, `setblock ${probe.x + 3} ${y + 1} ${probe.z + 3} air`);
     await sleep(400);
   }
+  // 거둔 밀은 창고로 (밀 한 포기 = 밀 1)
+  const stored = food ? (await ensureStorage(bot), await putIntoStorage('wheat', food)) : 0;
   await goNear(bot, VX, VZ, 6);
-  return { food, crops, rebuilt };
+  return { food: stored, crops, rebuilt };
 }
 
 async function doOre(entry, count) {
@@ -417,10 +556,9 @@ async function doOre(entry, count) {
     const kind = block.name.includes('iron') ? 'iron' : 'coal';
     try { await collect(bot, block); got[kind]++; } catch (e) { misses++; }
   }
-  if (got.coal) await run(bot, `clear @s coal ${got.coal}`);
-  if (got.iron) await run(bot, `clear @s raw_iron ${got.iron}`);
-  await goNear(bot, VX, VZ, 6);
-  return got;
+  const coal = got.coal ? await depositAll(bot, 'coal') : 0;
+  const iron = got.iron ? await depositAll(bot, 'iron') : 0;
+  return { coal, iron };
 }
 
 async function doAudit(entry, slots) {
@@ -460,10 +598,17 @@ async function doRaid(count, mob) {
   return { count, mob };
 }
 
-async function doBuild(entry, blueprint, slot) {
+async function doBuild(entry, blueprint, slot, cost) {
   const bot = entry.bot;
   const plan = BLUEPRINTS[blueprint];
   if (!plan) throw new Error(`모르는 건물: ${blueprint}`);
+  // 재료는 공동 창고에서 꺼낸다 - 다 있을 때만 (없으면 짓지 않고 실패: 재료 부족)
+  if (cost && RCON_PASS) {
+    await ensureStorage(bot);
+    const have = await storageCounts();
+    for (const [k, n] of Object.entries(cost)) if ((have[k] || 0) < n) throw new Error(`창고에 ${k} 부족 (${have[k] || 0}/${n})`);
+    for (const [k, n] of Object.entries(cost)) await takeFromStorage(k, n);
+  }
   const probe = slotOrigin(blueprint, slot, 0);
   await goNear(bot, probe.x, probe.z, 4);
   const o = slotOrigin(blueprint, slot, groundY(bot, probe.x, probe.z));
@@ -513,6 +658,7 @@ async function runTask(name, kind, args, say) {
   entry.task = kind;
   await Promise.race([entry.ready, sleep(60000)]);
   if (say) entry.bot.chat(String(say).slice(0, 200));
+  try { await ensureTools(entry.bot); await ensureStorage(entry.bot); } catch (e) { /* 다음에 */ }
   // repeat: 모으는 일(gather/mine/ore)은 다음 일을 받을 때까지 이어서 한다 (한 번 끝날 때마다 done) -
   // 일을 10분마다 나눠 주므로 금방 끝나면 남는 시간 동안 놀던 것을 없앤다. 빈손이면 멈춘다 (같은 헛수고 반복 X)
   // 농부(farm repeat)는 밭을 돌고 잠깐 기다렸다가(밀이 자라게) 다시 돈다 - 빈손이어도 계속 (밀은 자라는 중)
@@ -522,7 +668,7 @@ async function runTask(name, kind, args, say) {
       entry.roundAt = Date.now();
       let result = {};
       if (kind === 'gather') result = await doGather(entry, Math.min(32, args.count || 8), !!args.near);
-      else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0);
+      else if (kind === 'build') result = await doBuild(entry, args.blueprint, args.slot || 0, args.cost);
       else if (kind === 'mine') result = await doMine(entry, Math.min(32, args.count || 8), !!args.near);
       else if (kind === 'farm') {
         if (round) { for (let w = 0; w < 36 && !entry.cancel; w++) await sleep(5000); }   // 3분 기다렸다 다시
@@ -551,6 +697,18 @@ async function runTask(name, kind, args, say) {
 setInterval(() => {
   for (const [name, e] of bots) {
     if (!e.task || !e.roundAt || e.cancel) continue;
+    // 모으는 일인데 3분 넘게 제자리면 (길이 막힘/구덩이) 멈춘다
+    if (['gather', 'mine', 'ore'].includes(e.task) && e.bot.entity) {
+      const p = e.bot.entity.position;
+      if (!e.lastPos || p.distanceTo(e.lastPos) > 1.5) { e.lastPos = p.clone(); e.lastMoved = Date.now(); }
+      else if (Date.now() - (e.lastMoved || Date.now()) > 180000) {
+        e.cancel = true;
+        try { e.bot.pathfinder.stop(); } catch (x) { /* 무시 */ }
+        emit(name, 'stuck', { task: e.task, minutes: 3, why: '제자리' });
+        e.lastMoved = Date.now();
+        continue;
+      }
+    }
     const limit = e.task === 'patrol' ? (e.limitMs || 600000) + 120000 : 720000;
     if (Date.now() - e.roundAt > limit) {
       e.cancel = true;
@@ -609,11 +767,17 @@ function join(name) {
   });
   // 배고픔 (봇은 스스로 먹지 않는다) - 배가 고프면 포만감을 채워 굶어서 쓰러지거나 체력이 안 차는 일이 없게
   // 배가 고프면 마을 창고 식량(농부가 거둔 밀)을 먹는다 - 창고가 비었으면(rations false) 굶는다. 2분에 한 번까지
-  entry.feeder = setInterval(() => {
-    if (!bot.entity || typeof bot.food !== 'number' || bot.food >= 14 || !rations) return;
+  entry.feeder = setInterval(async () => {
+    if (!bot.entity || typeof bot.food !== 'number' || bot.food >= 14) return;
     if (Date.now() - (entry.ateAt || 0) < 120000) return;
     entry.ateAt = Date.now();
-    run(bot, 'effect give @s saturation 2 1 true').then(() => emit(name, 'ate')).catch(() => {});
+    try {
+      // 공동 창고에서 밀 3(=빵 1)을 꺼내 먹는다 - 창고가 비면 굶는다 (RCON이 없으면 예전처럼 배급 신호로)
+      const ok = RCON_PASS && storage ? await takeFromStorage('food', 3) : rations;
+      if (!ok) { emit(name, 'hungry'); return; }
+      await run(bot, 'effect give @s saturation 2 1 true');
+      emit(name, 'ate');
+    } catch (e) { /* 다음에 */ }
   }, 30000);
   bot.on('entityDead', (e) => {
     if (isHostile(e) && bot.pvp.target === e) { entry.kills++; emit(name, 'kill', { mob: e.name }); }
@@ -670,6 +834,14 @@ http.createServer(async (req, res) => {
         heapMB: Math.round(process.memoryUsage().heapUsed / 1048576) });
     }
     if (req.method === 'GET' && url.pathname === '/state') return send(res, 200, state());
+    if (req.method === 'GET' && url.pathname === '/storage') {
+      // 공동 창고 실제 재고 (상자 안 아이템) - poring_food 장부의 기준
+      const any = [...bots.values()][0];
+      if (!storage && any && any.bot.entity && VX !== null) await ensureStorage(any.bot);
+      const counts = await storageCounts();
+      if (!counts) return send(res, 503, { error: '창고를 아직 못 읽음 (봇이 없거나 RCON 없음)' });
+      return send(res, 200, { ok: true, counts, chests: storage });
+    }
     if (req.method === 'GET' && url.pathname === '/events') {
       const after = parseInt(url.searchParams.get('after') || '0', 10);
       return send(res, 200, { events: events.filter((e) => e.id > after), last: nextId - 1 });
