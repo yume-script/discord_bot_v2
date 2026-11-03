@@ -354,7 +354,9 @@ python app.py
   명령(/fill /give /clear /effect)은 봇 서비스가 **RCON으로 서버에 직접** 보낸다(OPS에 없는 인물도 짓기·밭·도구가 된다 -
   `MC_RCON_PASSWORD`를 mc-village와 mc-agents가 같이 쓴다). 모으는 일(나무/돌/광석)은 다음 일을 받을 때까지 이어서 하고
   (`repeat`, 빈손이면 멈춤), 나무는 지난번에 벤 숲으로 먼저 간다. 밭은 수확 사이 흐른 시간만큼(4분에 한 단계) 자란 것으로 친다
-  (밭 청크는 사람이 근처에 없으면 시간이 안 흐르므로). 봇 시야 4청크 + Node 힙 1GB(컨테이너 1280MB), keepInventory·
+  (밭 청크는 사람이 근처에 없으면 시간이 안 흐르므로). **나무가 없을 때**: 나무 베기가 멀리까지 걸었는데 한 그루도 못 찾으면
+  3시간 동안 "근처에 나무가 없다"로 보고 밭·오두막·감시탑·대장간은 통나무 수만큼 돌로 짓는다(울타리→조약돌 담, 판자→조약돌).
+  빈손으로 돌아오면 그 자리에서 현장 판단(LLM)이 다음 일을 고르고 그 인물이 채널·게임 채팅에 한마디 한다. 봇 시야 4청크 + Node 힙 1GB(컨테이너 1280MB), keepInventory·
   doInsomnia(팬텀 끔) 게임 규칙, 배고프면 포만감.
   설치(etc): `cd scripts/minecraft && MC_RCON_PASSWORD=... docker compose up -d --build` → `.env` `PORING_MINECRAFT=1`
   (`PORING_MC_API` 기본 `http://127.0.0.1:3010`). 서버 2GB 메모리·CPU 2개 상한, 봇 서비스 768MB·CPU 1개 상한.

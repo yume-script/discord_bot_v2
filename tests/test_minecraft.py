@@ -602,3 +602,54 @@ def test_v6_danger_streak_and_rejoin(monkeypatch, tmp_path):
                    llm=lambda s, u: {}, react=lambda *a, **k: None)
     zones = [b for p, b in api2.calls if p == "/danger"]
     assert zones and len(zones[0]["zones"]) == 2
+
+
+def test_no_trees_builds_with_stone(monkeypatch, tmp_path):
+    # 나무가 없다는 걸 알면 밭/오두막을 돌로 짓고, 모자라면 나무 대신 돌을 모은다
+    from poring_food.clock import now_kst
+    now = now_kst()
+    st = {"res": {"logs": 7, "stone": 0, "food": 50}, "built": {}, "jobs": {"페른": "farm"}}
+    out = minecraft.apply_events(st, [{"id": 1, "name": "Fern", "kind": "done", "task": "gather",
+                                       "result": {"logs": 0, "cut": 0}}], {"Fern": "페른"}, now)
+    assert st["no_trees"] and any("돌로 짓기로" in line for _, line in out)
+    assert any("나무가 없다" in p for p in minecraft.problems(st))
+    assert minecraft.cost_of(st, "farm") == {"stone": 8}
+    assert minecraft.job_task(st, "페른", st, True) == ("mine", "")          # 통나무 1개를 기다리지 않고 돌
+    st["res"]["stone"] = 8
+    assert minecraft.job_task(st, "페른", st, True) == ("build", "farm")
+    api = FakeApi()
+    t = {"name": "페른", "task": "build", "blueprint": "farm", "job": "farm"}
+    minecraft.send_task(st, api, now, t, lambda n, x: None, False)
+    body = next(b for p, b in api.calls if p == "/task")
+    assert body["args"]["cost"] == {"stone": 8} and body["args"]["material"] == "stone"
+    assert st["res"]["stone"] == 0 and st["res"]["logs"] == 7
+    # 나무를 다시 베어 오면 원래대로 (통나무로)
+    minecraft.apply_events(st, [{"id": 2, "name": "Fern", "kind": "done", "task": "gather",
+                                 "result": {"logs": 9, "cut": 9}}], {"Fern": "페른"}, now)
+    assert "no_trees" not in st and minecraft.cost_of(st, "farm") == {"logs": 8}
+    # 마을 둘레만 본 빈손(near)은 "나무가 없다"로 치지 않는다
+    minecraft.apply_events(st, [{"id": 3, "name": "Fern", "kind": "done", "task": "gather",
+                                 "result": {"logs": 0, "cut": 0, "near": True}}], {"Fern": "페른"}, now)
+    assert "no_trees" not in st
+
+
+def test_fast_reacts_to_empty_handed_with_a_word(monkeypatch, tmp_path):
+    _live_state(monkeypatch, tmp_path)
+    api = Live([{"id": 1, "name": "Geld", "kind": "done", "task": "gather", "result": {"logs": 0, "cut": 0}}])
+    posts, seen = [], []
+
+    def llm(s, u):
+        seen.append(u)
+        return {"task": "mine", "why": "나무가 없으니 돌로", "say": "나무가 없네, 돌로 짓자", "lesson": ""}
+    out = minecraft.fast(datetime(2026, 11, 3, 12), api=api, post=lambda n, t: posts.append((n, t)), llm=llm,
+                         agents=[_ag("페른"), _ag("게르도")])
+    assert ("게르도", "mine") in out["reacted"] and "나무가 한 그루도 없었다" in seen[0] and "돌로" in seen[0]
+    assert any("나무가 없네, 돌로 짓자" in t for _, t in posts)
+
+
+def test_no_trees_expires():
+    st = {"no_trees": "2026-11-03 09:00", "res": {}}
+    minecraft.apply_events(st, [], {}, datetime(2026, 11, 3, 11))
+    assert minecraft.no_trees(st)
+    minecraft.apply_events(st, [], {}, datetime(2026, 11, 3, 12, 30))
+    assert not minecraft.no_trees(st) and minecraft.cost_of(st, "farm") == {"logs": 8}
