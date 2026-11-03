@@ -777,6 +777,13 @@ def apply_events(st: dict, events: list[dict], by_mc: dict[str, str], now: datet
                                                              else " (근처에 없음)"))
         elif kind == "done" and task == "build":
             bp = r.get("blueprint") or (pend.get(e.get("name")) or {}).get("blueprint")
+            used = r.get("cost")
+            booked = (pend.get(e.get("name")) or {}).get("cost")
+            if isinstance(used, dict) and booked and used != booked:   # 봇 서비스가 다른 재료로 지었다 - 장부를 그만큼 바꾼다
+                for k, v in booked.items():
+                    res[k] = res.get(k, 0) + int(v)
+                for k, v in used.items():
+                    res[k] = res.get(k, 0) - int(v)
             if bp in BLUEPRINTS:
                 stats["build"]["done"] += 1
                 first = not built.get(bp)
@@ -1348,7 +1355,9 @@ def send_task(st: dict, api, now: datetime, t: dict, post, lite: bool = False) -
         for k, v in cost.items():
             res[k] = res.get(k, 0) - v
         args = {"blueprint": t["blueprint"], "slot": slots.get(t["blueprint"], 0), "cost": cost,
-                "material": material(t["blueprint"], cost)}
+                "material": material(t["blueprint"], cost),
+                # 장부가 실제 상자와 어긋났을 때 봇 서비스가 실제 재고로 고를 다른 방법 (나무 <-> 돌)
+                "alts": [{"cost": c, "material": material(t["blueprint"], c)} for c in costs(t["blueprint"]) if c != cost]}
         slots[t["blueprint"]] = slots.get(t["blueprint"], 0) + 1
         pend[mc] = {"task": "build", "blueprint": t["blueprint"], "cost": cost}
     elif t["task"] == "patrol":
@@ -1785,6 +1794,7 @@ def _fast(now: datetime | None = None, api: Api | None = None, post=None, llm=No
                 continue
             ra[who] = f"{now:%Y-%m-%d %H:%M}"
             if kind == "failed" and e.get("task") == "build" and "부족" in str(e.get("error", "")):
+                sync_storage(st, api, now)         # 장부가 실제 상자와 어긋났다 - 다음 판단 전에 실제로 맞춘다
                 m = re.search(r"창고에 (\w+) 부족 \((\d+)/(\d+)\)", str(e.get("error", "")))
                 if m:
                     r = open_request(st, now, who, m.group(1), int(m.group(3)) - int(m.group(2)), "짓기 재료")
