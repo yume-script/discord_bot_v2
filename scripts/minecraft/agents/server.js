@@ -729,7 +729,9 @@ async function doBuild(entry, blueprint, slot, cost, material, alts) {
     const pick = options.find((o) => Object.entries(o.cost).every(([k, n]) => (have[k] || 0) >= n));
     if (!pick) {
       const [k, n] = Object.entries(cost).find(([k2, n2]) => (have[k2] || 0) < n2);
-      throw new Error(`창고에 ${k} 부족 (${have[k] || 0}/${n})`);
+      const err = new Error(`창고에 ${k} 부족 (${have[k] || 0}/${n})`);
+      err.have = have;                               // 실제 상자 재고 - poring_food 장부를 이걸로 맞춘다
+      throw err;
     }
     cost = pick.cost;
     material = pick.material;
@@ -820,7 +822,7 @@ async function runTask(name, kind, args, say) {
       if (kind === 'farm' ? round >= 7 : (!gained || round >= 5)) break;
     }
   } catch (e) {
-    emit(name, 'failed', { task: kind, error: String(e.message || e).slice(0, 200) });
+    emit(name, 'failed', { task: kind, error: String(e.message || e).slice(0, 200), ...(e.have ? { have: e.have } : {}) });
   } finally {
     entry.task = null;
   }

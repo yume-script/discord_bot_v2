@@ -265,7 +265,7 @@ def test_daily_cap_counts_only_first_decision_convos(fake_llm, monkeypatch, capl
     now = agents.now_kst()
     data = agents._load_state()
     data["_convos"] = {"date": now.strftime("%Y-%m-%d"), "count": agents.MAX_CONVOS_PER_DAY,
-                       "hours": [], "per_hour": {now.strftime("%Y-%m-%d") + " 01": 20}}
+                       "hours": [], "per_hour": {agents._hour_key(now - agents.timedelta(hours=2)): 20}}   # 지난 시간 (지금 시간이면 시간 상한에 걸린다)
     agents._save_state(data)
     agents.tick(characters.load_roster())
     assert len(_talks(caplog)) == agents.MAX_CONVOS_PER_HOUR
