@@ -59,6 +59,7 @@ class PoringFood(commands.Cog):
         self._web_runner = None          # Tautulli 웹훅 수신 (aiohttp)
         self._plex_last_poll = 0.0
         self._book_last_poll = 0.0
+        self._lib3d_last_poll = 0.0
 
     async def cog_load(self) -> None:
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
@@ -78,6 +79,7 @@ class PoringFood(commands.Cog):
             self.waitfree_pilot.start()
             self.app_updater.start()
             self.avatar_maker.start()
+            self.lib3d_delivery.start()
             await self._start_webhook()
             log.info("포링푸드 매시 %02d분 실행 예약 (디스코드: %s, 카톡 방: %s)",
                      settings.PORING_FOOD_RUN_MINUTE,
@@ -96,6 +98,7 @@ class PoringFood(commands.Cog):
         self.waitfree_pilot.cancel()
         self.app_updater.cancel()
         self.avatar_maker.cancel()
+        self.lib3d_delivery.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
 
@@ -298,9 +301,10 @@ class PoringFood(commands.Cog):
     async def _start_webhook(self) -> None:
         """Tautulli 웹훅 수신 (PORING_WEBHOOK_PORT + PORING_WEBHOOK_TOKEN이 있을 때만).
         POST /plex, 헤더 X-Poring-Token - 재생 시작 순간 상영 알림 (poring_food/plex_watch.py)."""
-        from poring_food import avatars, plex_watch
+        from poring_food import avatars, lib3d_link, plex_watch
         hook_on = plex_watch.webhook_enabled()
-        if not hook_on and not (avatars.BASE_URL and plex_watch.WEBHOOK_PORT > 0):
+        call_on = lib3d_link.call_enabled() and plex_watch.WEBHOOK_PORT > 0
+        if not hook_on and not call_on and not (avatars.BASE_URL and plex_watch.WEBHOOK_PORT > 0):
             return
         from aiohttp import web
 
@@ -323,9 +327,32 @@ class PoringFood(commands.Cog):
                 asyncio.create_task(self._plex_from_hook(session))
             return web.Response(text="ok")
 
+        async def lib3d_call(request: web.Request) -> web.Response:
+            """BookOasis 3D 서재에서 오는 전화 (poring_food/lib3d_link.py) - 질문(ask)·보고(report)에 인물이 답한다"""
+            if not lib3d_link.call_token_ok(request.headers.get("Authorization", "")):
+                return web.json_response({"error": "forbidden"}, status=403)
+            try:
+                body = await request.json()
+            except Exception:  # noqa: BLE001
+                return web.json_response({"error": "bad json"}, status=400)
+            if not isinstance(body, dict):
+                return web.json_response({"error": "bad json"}, status=400)
+            try:
+                out, note = await asyncio.wait_for(asyncio.to_thread(lib3d_link.answer_call, body), timeout=lib3d_link.CALL_TIMEOUT)
+            except ValueError as e:
+                return web.json_response({"error": str(e)}, status=400)
+            except Exception as e:  # noqa: BLE001 - 시간 초과·LLM 장애: 3D 서재는 "전화를 안 받음"으로
+                log.warning("3D 서재 전화 실패: %r", e)
+                return web.json_response({"text": ""})
+            if note:
+                asyncio.create_task(self._lib3d_remember(note))
+            return web.json_response(out)
+
         app = web.Application()
         if hook_on:
             app.router.add_post("/plex", plex_hook)
+        if call_on:
+            app.router.add_post("/lib3d/call", lib3d_call)
         app.router.add_get("/avatars/{file}", avatar_file)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -336,7 +363,36 @@ class PoringFood(commands.Cog):
             await runner.cleanup()
             return
         self._web_runner = runner
-        log.info("포링푸드 웹 서버 시작 (포트 %s%s, GET /avatars)", plex_watch.WEBHOOK_PORT, ", POST /plex" if hook_on else "")
+        log.info("포링푸드 웹 서버 시작 (포트 %s%s%s, GET /avatars)", plex_watch.WEBHOOK_PORT, ", POST /plex" if hook_on else "",
+                 ", POST /lib3d/call" if call_on else "")
+
+    async def _lib3d_remember(self, note: str) -> None:
+        from poring_food import lib3d_link
+        async with self._lock:  # 받은편지함 파일을 회차와 겹치지 않게
+            try:
+                await asyncio.to_thread(lib3d_link.remember_call, note)
+            except Exception:  # noqa: BLE001
+                log.exception("3D 서재 전화 기록 실패")
+
+    @tasks.loop(seconds=60)
+    async def lib3d_delivery(self) -> None:
+        """BookOasis 3D 서재 배달 (poring_food/lib3d_link.py): 북오아시스 신간·Plex 새 영상이 들어오면 마을 인물이 서점 건물에 배달"""
+        from poring_food import lib3d_link
+        if not lib3d_link.delivery_enabled() or time.monotonic() - self._lib3d_last_poll < lib3d_link.DELIVERY_SEC:
+            return
+        self._lib3d_last_poll = time.monotonic()
+        async with self._lock:
+            try:
+                msg = await asyncio.to_thread(lib3d_link.check_and_deliver)
+            except Exception as e:  # noqa: BLE001 - 3D 서재가 꺼져 있으면 다음 차례에 다시
+                log.warning("3D 서재 배달 실패: %r", e)
+                return
+        if msg:
+            log.info("3D 서재 배달: %s", msg)
+
+    @lib3d_delivery.before_loop
+    async def _before_lib3d(self) -> None:
+        await self.bot.wait_until_ready()
 
     async def _plex_from_hook(self, session: dict) -> None:
         from poring_food import plex_watch

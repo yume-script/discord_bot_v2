@@ -619,6 +619,21 @@ python app.py
 - **인물 이름**: 애순이를 뺀 포링푸드/에린 로지스틱스 인물 이름을 한국 드라마 인물 이름으로 바꿨다가, 지금은 일본 판타지 애니메이션 인물로 다시 바꿨다(위 인물 목록). 몬스터 몸 묘사(촉수/가시/모래 등)는 사람에 맞게 고쳤다. 서버에 쌓인 기존 기록은 처음 한 번
   `poring_food/rename_migration.py`가 새 이름으로 바꾼다(`storage/poring_food/.names_v2_migrated`).
 
+### BookOasis 3D 서재 연결 (`poring_food/lib3d_link.py`)
+오아시스 거리의 서점 건물(BookOasis 3D 서재, bookoasis_assistant)과 마을을 "전화"와 "배달"로만 잇는다.
+서재에는 서재 쪽 AI 직원(사서 한서윤 등)이 따로 있고, 이 봇의 인물들은 서재 바깥 사람이라 서로의 속은 모른다.
+- **전화 받기** `POST /lib3d/call` (포링푸드 웹 서버 `PORING_WEBHOOK_PORT`, `Authorization: Bearer LIB3D_CALL_TOKEN`):
+  3D 서재 [AI 직원]에서 대표의 '바깥 AI 주소'를 `http://<봇 서버>:<포트>/lib3d/call`로, 토큰을 `LIB3D_CALL_TOKEN` 값으로 넣으면
+  서재에서 `@대표`로 부른 질문(`ask`)과 사서의 보고(`report`)가 여기로 온다. `LIB3D_CALL_AGENT`(기본 애순이)가 지금 자기 상태·기억을 보고
+  자기 말투로 답한다(LLM 1회, 40초 안). 받은 일은 그 인물 받은편지함에 조용히 들어가 다음 판단 때 안다. LLM이 안 되면 빈 답 = "전화를 안 받음".
+- **배달 보내기** `POST <LIB3D_URL>/api/lib3d/events` (`LIB3D_EVENT_TOKEN`): `LIB3D_DELIVERY_SEC`(10분)마다 북오아시스 신간
+  (`LIB3D_DELIVERY_TYPES`, 성인 서재 제외)과 Plex 새 영상(`LIB3D_DELIVERY_VIDEO`, 숨길 라이브러리·성인 등급 제외)을 확인해서,
+  새로 들어온 게 있으면 배달꾼(`LIB3D_COURIERS`, 비우면 마법도서관 사람 중 깨어 있는 사람)이 자기 말투 한마디와 함께 상자를 들고
+  서재 1층 안내 데스크로 간다. 첫 확인은 기준점만 잡고, 3D 서재가 꺼져 있으면 기준점을 옮기지 않아 다음에 다시 보낸다.
+  배달한 사람 받은편지함·기억에도 남는다. 상태: `storage/poring_food/lib3d_delivery.json`.
+- 웹툰 다운로더의 회차 배달은 3D 서재가 직접 하므로, 봇이 북오아시스 신간을 배달하면 웹툰이 두 번 올 수 있다 -
+  한쪽만 쓰려면 3D 서재 [AI 직원] > 배달의 '웹툰 다운로더가 받은 회차도'를 끄거나 `LIB3D_DELIVERY_TYPES`에서 그 서재를 뺀다.
+
 ## Redroid 패키지 감시 알림
 - **감시/자동 삭제는 cron**이 한다: `scripts/redroid_check_packages.sh`가 15분마다 Redroid(192.168.0.50)의
   서드파티 앱 목록을 확인하고 허용 목록(카카오톡, Uptodown)에 없는 앱을 지운다. 봇이 재시작되거나
