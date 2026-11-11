@@ -98,3 +98,25 @@ def test_delivery_not_saved_when_library_down(monkeypatch, fake_llm):
     with pytest.raises(RuntimeError):
         lib3d_link.check_and_deliver()
     assert lib3d_link._load_state()["books"]["general"] == "2026-11-01"   # 다음에 다시 보낸다
+
+
+def test_where_people_and_push(monkeypatch):
+    roster = [{"name": "애순이", "company": "ZEEPS 편집국"}, {"name": "소라", "company": "ZEEPS 영상콘텐츠팀"}, {"name": "문하늘", "company": "ZEEPS 영상콘텐츠팀"},
+              {"name": "새사람", "company": "오아시스 거리"}]
+    states = {"애순이": {"decision": {"location": "ZEEPS 편집국", "activity": "원고 검토", "state": "일하는 중"}},
+              "소라": {"decision": {"location": "카페 오후세시", "activity": "커피 내리기", "state": "일하는 중"}},
+              "문하늘": {"decision": {"location": "영상팀", "activity": "홍보 글", "state": "일하는 중"}}}
+    people = lib3d_link.where_people(roster, states, {"문하늘"})
+    assert people == [{"name": "애순이", "location": "ZEEPS 편집국", "activity": "원고 검토", "state": "일하는 중", "company": "ZEEPS 편집국"},
+                      {"name": "소라", "location": "카페 오후세시", "activity": "커피 내리기", "state": "일하는 중", "company": "ZEEPS 영상콘텐츠팀"},
+                      {"name": "문하늘", "location": "집", "activity": "잠", "state": "자는 중", "company": "ZEEPS 영상콘텐츠팀"}]   # 아직 판단이 없는 사람은 보내지 않는다
+    sent = []
+    monkeypatch.setattr(lib3d_link, "send_event", lambda body: sent.append(body) or {"success": True})
+    monkeypatch.setattr(lib3d_link, "LIB3D_URL", "")
+    assert lib3d_link.push_where(roster, states, set()) == "" and not sent          # 3D 서재 주소가 없으면 보내지 않는다
+    monkeypatch.setattr(lib3d_link, "LIB3D_URL", "http://lib3d.test")
+    monkeypatch.setattr(lib3d_link, "EVENT_TOKEN", "tok")
+    assert lib3d_link.push_where(roster, states, {"문하늘"}) == "위치 3명 전달"
+    assert sent[0]["type"] == "where" and len(sent[0]["people"]) == 3
+    monkeypatch.setattr(lib3d_link, "WHERE_ON", False)
+    assert lib3d_link.push_where(roster, states, set()) == ""
