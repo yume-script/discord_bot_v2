@@ -248,6 +248,34 @@ def send_event(body: dict) -> dict:
     return data
 
 
+WHERE_ON = os.getenv("LIB3D_WHERE", "1") not in ("0", "false", "False", "")   # 인물들의 지금 위치를 3D 서재에 알린다
+
+
+def where_people(agent_list: list[dict], states: dict, asleep: set[str]) -> list[dict]:
+    """3D 서재에 보낼 인물별 지금 모습: 어디서(location) 무엇을(activity) 하는지. 자는 사람은 state='자는 중' (3D 서재가 숨긴다)"""
+    out = []
+    for a in agent_list:
+        name = a.get("name", "")
+        d = (states.get(name) or {}).get("decision") or {}
+        if name in asleep:
+            out.append({"name": name, "location": "집", "activity": "잠", "state": "자는 중", "company": a.get("company", "")})
+        elif d.get("location"):
+            out.append({"name": name, "location": str(d.get("location", ""))[:40], "activity": str(d.get("activity", ""))[:40],
+                        "state": str(d.get("state", ""))[:20], "company": a.get("company", "")})
+    return out
+
+
+def push_where(agent_list: list[dict], states: dict, asleep: set[str]) -> str:
+    """[스레드] 인물들의 위치를 3D 서재로 (POST /api/lib3d/events type=where). 대화와 3D 서재의 자리를 맞추기 위한 것. 반환: 로그 한 줄"""
+    if not (WHERE_ON and delivery_enabled()):
+        return ""
+    people = where_people(agent_list, states, asleep)
+    if not people:
+        return ""
+    send_event({"type": "where", "people": people})
+    return f"위치 {len(people)}명 전달"
+
+
 def check_and_deliver() -> str:
     """[스레드, 포링푸드 잠금 안에서] 새로 들어온 게 있으면 배달. 반환: 로그 한 줄"""
     try:

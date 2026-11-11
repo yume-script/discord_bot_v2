@@ -2134,6 +2134,13 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
         fresh.append(name)
         print(f"[에이전트] {name}: {d['location']}에서 {d['activity']} ({d['state']}) - {d['thought']}")
     _save_state(data)
+    try:   # BookOasis 3D 서재에도 같은 자리에 있도록 지금 위치를 알린다 (꺼져 있거나 못 보내도 그대로 진행)
+        from . import lib3d_link
+        line = lib3d_link.push_where(agents, data, {a["name"] for a in agents if a not in awake})
+        if line:
+            print(f"[3D 서재] {line}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[3D 서재] 위치 전달 실패: {e}")
 
     # 2) 연락 -> 대화 (시간당 1번, 하루 최대 MAX_CONVOS_PER_DAY번)
     data = _load_state()
