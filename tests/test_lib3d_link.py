@@ -5,8 +5,8 @@ from poring_food import agents, lib3d_link
 
 
 def _roster(monkeypatch):
-    roster = [{"name": "애순이", "company": "오아시스 마법도서관 (관장)", "speech": "반말", "profile": "관장"},
-              {"name": "위벨", "company": "오아시스 마법도서관 (사서)", "speech": "존댓말", "profile": "사서"}]
+    roster = [{"name": "애순이", "company": "ZEEPS 편집국 (대표)", "speech": "반말", "profile": "대표"},
+              {"name": "윤채아", "company": "ZEEPS 편집국 (사서)", "speech": "존댓말", "profile": "사서"}]
     monkeypatch.setattr(agents, "load_agents", lambda: roster)
     monkeypatch.setattr(agents, "active", lambda name: None)
     monkeypatch.setattr(agents, "is_asleep_now", lambda name: False)
@@ -80,9 +80,9 @@ def test_check_and_deliver(monkeypatch, fake_llm):
     monkeypatch.setattr(lib3d_link, "send_event", lambda body: sent.append(body) or {"success": True})
     monkeypatch.setattr(lib3d_link.memory, "remember", lambda *a, **k: None)
     assert lib3d_link.check_and_deliver() == "첫 확인 - 기준점만 저장"
-    assert lib3d_link.check_and_deliver() == "위벨 - 1건 배달"   # 배달꾼: 애순이(전화 받는 사람) 말고 도서관 사람
-    assert sent == [{"type": "delivery", "from": "위벨", "items": [{"title": "새 책", "kind": "book"}], "note": "상자 여기 둘게요!"}]
-    assert agents._load_state()["위벨"]["inbox"][-1]["kind"] == "일"
+    assert lib3d_link.check_and_deliver() == "윤채아 - 1건 배달"   # 배달꾼: 애순이(전화 받는 사람) 말고 편집국 사람
+    assert sent == [{"type": "delivery", "from": "윤채아", "items": [{"title": "새 책", "kind": "book"}], "note": "상자 여기 둘게요!"}]
+    assert agents._load_state()["윤채아"]["inbox"][-1]["kind"] == "일"
 
 
 def test_delivery_not_saved_when_library_down(monkeypatch, fake_llm):

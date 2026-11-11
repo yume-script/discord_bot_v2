@@ -1,4 +1,4 @@
-"""결계 조절: 단계(0~4) - 시청 경로는 절대 안 건드리고, 희생 가능한 것부터 쉬게 했다가 역순으로 되돌린다."""
+"""서버 조절: 단계(0~4) - 시청 경로는 절대 안 건드리고, 희생 가능한 것부터 쉬게 했다가 역순으로 되돌린다."""
 from datetime import datetime, timedelta
 
 from poring_food import loadshed
@@ -138,16 +138,16 @@ def test_old_version_throttles_on_watching_path_are_undone_right_away():
 def test_announce_story_and_facilities_ignore_quiet():
     from poring_food import facilities, memory
     posts, sent = [], []
-    loadshed.announce([{"host": "etc", "do": "stop", "name": "docker-warproxy", "why": "결계 경보 1단계"},
-                       {"host": "plex01", "do": "stage", "name": "결계 경보", "from": 3, "to": 4, "why": "5분 평균 95%",
+    loadshed.announce([{"host": "etc", "do": "stop", "name": "docker-warproxy", "why": "서버 경보 1단계"},
+                       {"host": "plex01", "do": "stage", "name": "서버 경보", "from": 3, "to": 4, "why": "5분 평균 95%",
                         "alert": True}], T0,
                       post=posts.append, react=lambda d, title, key: sent.append((title, key)) or [])
-    assert "성문 전령 초소" in posts[0] and "슈나" in posts[0]
-    assert "4단계" in posts[1] and "⚠️" in posts[1] and "환영극과 책 열람은 그대로" in posts[1]
-    assert sent[0][0] == "성문 전령 초소 잠시 소등 (결계 조절)" and sent[1][0].startswith("결계 경보 4단계")
-    assert sent[1][1][:3] == ["슈나", "베니마루", "애순이"]
-    assert any("불을 잠시 껐다" in m["text"] for m in memory.store.memories("슈나"))
-    # 결계 조절로 끈 docker-warproxy는 facilities가 "불 꺼짐" 사고로 알리지 않는다
+    assert "택배 영업소" in posts[0] and "권지아" in posts[0]
+    assert "4단계" in posts[1] and "⚠️" in posts[1] and "영상과 책 열람은 그대로" in posts[1]
+    assert sent[0][0] == "택배 영업소 잠시 소등 (서버 조절)" and sent[1][0].startswith("서버 경보 4단계")
+    assert sent[1][1][:3] == ["권지아", "권태준", "애순이"]
+    assert any("불을 잠시 껐다" in m["text"] for m in memory.store.memories("권지아"))
+    # 서버 조절로 끈 docker-warproxy는 facilities가 "불 꺼짐" 사고로 알리지 않는다
     _run([85] * 3)
     etc = list(facilities.HOSTS)[0]
     got = []
@@ -156,7 +156,7 @@ def test_announce_story_and_facilities_ignore_quiet():
     facilities.check(T0 + timedelta(minutes=7), lambda: {etc: [{"name": "docker-warproxy", "up": False, "started": "a"},
                                                               {"name": "litellm-proxy", "up": False, "started": "a"}]},
                      inject=lambda t, d, title: got.append(title) or [])
-    assert got == ["수비대 마나 중계탑 불 꺼짐"]
+    assert got == ["시설관리팀 리소스 중계탑 불 꺼짐"]
 
 
 def test_throttle_story():
@@ -164,8 +164,8 @@ def test_throttle_story():
     loadshed.announce([{"host": "plex01", "do": "throttle", "name": "bookoasis_assistant.service", "kind": "unit", "why": "x"},
                        {"host": "plex01", "do": "unthrottle", "name": "upload", "kind": "rclone", "why": "y"}],
                       T0, post=posts.append, react=lambda *a: [])
-    assert "도서관 두루마리 운반 정령으로 가는 마나 흐름을 좁혔다" in posts[0] and "🐢" in posts[0]
-    assert "왕도로 가는 두루마리 짐마차로" in posts[1] and "되돌렸다" in posts[1]
+    assert "편집국 원고 운반 자동화 봇으로 가는 리소스 흐름을 좁혔다" in posts[0] and "🐢" in posts[0]
+    assert "클라우드로 가는 원고 업로드로" in posts[1] and "되돌렸다" in posts[1]
     assert "1~5단계" in loadshed.summary(T0)
 
 
@@ -175,10 +175,10 @@ def test_react_now_reaches_everyone_quietly_and_key_people_react_now(fake_llm):
 
     def llm(system, user):
         calls.append(system[:20])
-        return {"consider": "어쩌지", "matters": 7, "react": "가만히", "thought": "결계가 걱정된다"}
+        return {"consider": "어쩌지", "matters": 7, "react": "가만히", "thought": "서버가 걱정된다"}
     fake_llm(llm)
     key = loadshed.key_people(["flaskfarm"])
-    got = agents.react_now("슈나가 이야기 배급소로 가는 마나 흐름을 좁혔다.", "이야기 배급소 마나 흐름 제한 (결계 조절)", key)
+    got = agents.react_now("권지아가 이야기 배급소로 가는 리소스 흐름을 좁혔다.", "이야기 배급소 리소스 흐름 제한 (서버 조절)", key)
     awake_key = [n for n in key if not agents.is_asleep_now(n)]
     assert set(got) == set(awake_key)
     st = agents._load_state()
@@ -193,14 +193,14 @@ def test_facilities_quick_catches_manual_stop_and_start():
     server = list(facilities.HOSTS)[1]
     facilities.check(T0, lambda: {server: [{"name": "flaskfarm", "up": True, "started": "a"},
                                            {"name": "tautulli", "up": True, "started": "a"}]}, inject=lambda *a: [])
-    assert facilities.quick({server: ["tautulli"]}, T0 + timedelta(minutes=1))[0]["title"] == "환영극장 이야기 배급소 불 꺼짐"
+    assert facilities.quick({server: ["tautulli"]}, T0 + timedelta(minutes=1))[0]["title"] == "영상팀 이야기 배급소 불 꺼짐"
     assert facilities.quick({server: ["tautulli"]}, T0 + timedelta(minutes=2)) == []        # 같은 일은 한 번만
     posts, reacted = [], []
     ev = facilities.quick({server: ["tautulli", "flaskfarm"]}, T0 + timedelta(minutes=3))
     assert ev[0]["kind"] == "up"
     facilities.notify(ev, T0, post=posts.append)
     facilities.react(ev, react_now=lambda d, title, key, targets=None: reacted.append((title, targets)) or [])
-    assert "`flaskfarm` ▶ 켜짐" in posts[0] and reacted == [("환영극장 이야기 배급소 다시 불 켜짐", ["별빛 환영극장"])]
+    assert "`flaskfarm` ▶ 켜짐" in posts[0] and reacted == [("영상팀 이야기 배급소 다시 불 켜짐", ["ZEEPS 영상콘텐츠팀"])]
     # 매시 조회가 같은 상태를 보면 또 알리지 않는다
     sent = []
     facilities.check(T0 + timedelta(hours=1), lambda: {server: [{"name": "flaskfarm", "up": True, "started": "a"},
@@ -237,8 +237,8 @@ def test_clamav_on_host_follows_stage_through_village_ctl():
     assert loadshed.parse_ctl("quota clamav-risk-scan.service 25%\nquota clamav-deep-scan.service 25%\n"
                               "stopped clamav-deep-scan.service\n", 2) == [
         {"host": "zeeps", "do": "stop", "name": "clamav-deep-scan.service",
-         "why": "결계 경보 2단계 - 정기 스캔은 다음 타이머 때 다시 (실시간 감시는 유지)"},
-        {"host": "zeeps", "do": "throttle", "name": "clamav", "kind": "quota", "why": "결계 경보 2단계 - 방역관 CPU 25%로"}]
+         "why": "서버 경보 2단계 - 정기 스캔은 다음 타이머 때 다시 (실시간 감시는 유지)"},
+        {"host": "zeeps", "do": "throttle", "name": "clamav", "kind": "quota", "why": "서버 경보 2단계 - 바이러스 검사 CPU 25%로"}]
     assert loadshed.parse_ctl("quota clamav-risk-scan.service 60%\n", 0)[0]["do"] == "unthrottle"
     assert loadshed.parse_ctl("", 1) == []                                   # 바뀐 게 없으면 조용히
     sent, posts = [], []
@@ -255,7 +255,7 @@ def test_clamav_on_host_follows_stage_through_village_ctl():
     assert sent == [0, 0, 1]                                                 # 매분 지금 단계를 보낸다 (게이트가 신선도를 본다)
     assert [d["name"] for d in done if d["host"] == "zeeps"] == ["clamav"]
     loadshed.notify([d for d in done if d["host"] == "zeeps"], T0, post=posts.append)
-    assert "방역관의 정화 의식(ClamAV)" in posts[0] and "🐢" in posts[0]
+    assert "보안 점검(ClamAV 바이러스 검사)" in posts[0] and "🐢" in posts[0]
 
 
 def test_carrier_keeps_working_at_88_when_nobody_watches_but_yields_while_watching():

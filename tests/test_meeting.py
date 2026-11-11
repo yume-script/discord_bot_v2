@@ -8,7 +8,7 @@ def _handler(votes):
     def h(system, user):
         if "모임 기록 담당이다. 실제로" in system:
             return {"decided": False, "conclusion": "후보만 나옴", "detail": "의견 갈림", "next": "다시 모이자",
-                    "candidates": ["쉼표 마을", "포근동"]}
+                    "candidates": ["쉼표 거리", "포근동"]}
         if "실제로 해 나갈 계획" in system:
             return {"is_project": False}
         me = re.search(r"'([^']+)'", system).group(1)
@@ -35,19 +35,19 @@ def _awake(monkeypatch):
 def test_undecided_meeting_schedules_next_round(fake_llm, monkeypatch):
     _awake(monkeypatch)
     fake_llm(_handler(lambda me: "포근동"))
-    res = agents.run_meeting("마을 이름 짓기", None, "", 4)
+    res = agents.run_meeting("거리 이름 짓기", None, "", 4)
     assert res["round"] == 1 and not res["decided"] and res["next_at"]
-    assert chronicle.meeting_state("마을 이름 짓기")["round"] == 1
+    assert chronicle.meeting_state("거리 이름 짓기")["round"] == 1
 
 
 def test_fifth_round_ends_with_vote_and_permanent_memory(fake_llm, monkeypatch):
     _awake(monkeypatch)
-    chronicle.schedule_meeting("마을 이름 짓기", 4, "", [], 4, "2000-01-01T20:00", "4차 결론 없음")
-    fake_llm(_handler(lambda me: "포근동" if len(me) % 2 else "쉼표 마을"))
-    res = agents.run_meeting("마을 이름 짓기", None, "", 4)
+    chronicle.schedule_meeting("거리 이름 짓기", 4, "", [], 4, "2000-01-01T20:00", "4차 결론 없음")
+    fake_llm(_handler(lambda me: "포근동" if len(me) % 2 else "쉼표 거리"))
+    res = agents.run_meeting("거리 이름 짓기", None, "", 4)
     assert res["round"] == 5 and res["decided"] and res["vote"]
     winner = res["vote"]["winner"]
-    assert any(t["title"] == "마을 이름 짓기" and t.get("permanent") for t in chronicle.facts())
+    assert any(t["title"] == "거리 이름 짓기" and t.get("permanent") for t in chronicle.facts())
     some = agents.load_agents()[0]["name"]
     assert any(m.get("permanent") and winner in m["text"] for m in memory._load(some))
-    assert chronicle.meeting_state("마을 이름 짓기") is None  # 더 이상 모이지 않는다
+    assert chronicle.meeting_state("거리 이름 짓기") is None  # 더 이상 모이지 않는다

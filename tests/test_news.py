@@ -42,15 +42,15 @@ def test_refresh_slots_and_agent_picks():
     t = datetime(2026, 10, 13, 7, 3)
     assert news.refresh(t, fetcher) and not news.refresh(t + timedelta(hours=2), fetcher)   # 7시 몫은 한 번
     assert news.refresh(t.replace(hour=12), fetcher) and len(calls) == 2                     # 12시에 다시
-    erinn = {"name": "일레이나", "company": "별빛 환영극장"}
-    town = {"name": "카즈마", "company": "오아시스 마을"}
+    erinn = {"name": "이나연", "company": "ZEEPS 영상콘텐츠팀"}
+    town = {"name": "민재현", "company": "오아시스 거리"}
     pe, pt = news.for_agent(erinn, t), news.for_agent(town, t)
     assert {i["category"] for i in pe} <= {"연예", "콘텐츠업계", "영화업계", "IT", "경제", "검색어"}
     assert any(i["category"] == "검색어" for i in pe)
     assert any(i["title"] == "광주 비엔날레 개막" for i in pt)
     assert news.for_agent(erinn, t) == pe                                  # 같은 갱신 안에선 같은 소식
     block = news.prompt_block(erinn, t)
-    assert "떠돌이 상인" in block and "지어내지" in block
+    assert "뉴스" in block and "지어내지" in block
     assert "실제 뉴스" in news.world_block(t)
     assert "한국시리즈" in news.topic_line(t)
     # 며칠 지나면 빠진다
@@ -75,12 +75,12 @@ def test_world_adds_events_when_new_news_arrives(fake_llm, monkeypatch):
     calls = []
 
     def handler(system, user):
-        if "왕국 소문" in system:
+        if "업계 소문" in system:
             calls.append(user)
             return {"events": [{"hour": 13, "kind": "돈/경제", "title": "배달 수수료 얘기로 상인회 술렁",
-                                "detail": "수수료 뉴스에 마을 가게들이 모였다.", "targets": ["마을"], "visibility": "direct"}]}
+                                "detail": "수수료 뉴스에 거리 가게들이 모였다.", "targets": ["거리"], "visibility": "direct"}]}
         if "세계 엔진" in system:
-            return {"events": [{"hour": 15, "title": "원래 사건", "detail": "x", "targets": ["마을"], "visibility": "direct"}]}
+            return {"events": [{"hour": 15, "title": "원래 사건", "detail": "x", "targets": ["거리"], "visibility": "direct"}]}
         return {}
 
     fake_llm(handler)

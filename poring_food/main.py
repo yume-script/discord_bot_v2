@@ -79,7 +79,7 @@ def _post_town_view(states: dict) -> None:
     try:
         agents.post_town_view(states)
     except Exception as e:  # noqa: BLE001
-        print(f"[경고] 마을 풍경 실패: {e}")
+        print(f"[경고] 거리 풍경 실패: {e}")
 
 
 def _run_world_tick(aesun_status: dict) -> None:
@@ -127,7 +127,7 @@ def _send_scene_to_agents(scene: dict, start, rnd: random.Random) -> None:
     for i, ln in enumerate(lines):
         if i:
             t = t + outbox.gap(lines[i - 1].get("line", "") + ln.get("line", ""), rnd)
-        who = ln.get("speaker") or "마을 사람"
+        who = ln.get("speaker") or "거리 사람"
         inner = ln.get("inner")
         head = f"-# 🎬 {place} · {t.strftime('%H:%M')} · {who}" + (f" · 📖 {arc}" if arc and i == 0 else "")
         text = f"{head}\n\"{ln.get('line', '')}\"" + (f" *(속마음: {inner})*" if inner else "")
@@ -136,7 +136,7 @@ def _send_scene_to_agents(scene: dict, start, rnd: random.Random) -> None:
                         avatar=a.get("avatar_url", ""))
     if raw.get("narration"):
         t = t + outbox.gap(raw["narration"], rnd)
-        outbox.schedule(t if outbox.paced() else None, "agent", account="", name="마을 소식",
+        outbox.schedule(t if outbox.paced() else None, "agent", account="", name="거리 소식",
                         text=f"-# 🎬 {place} · {t.strftime('%H:%M')}\n— {raw['narration']}", avatar="")
 
 
@@ -350,8 +350,8 @@ def main():
             "location": location,
             "activity": activity,
             "narrative": f"지금은 애순이가 {location}에서 {activity} 시간입니다. 건드리지 마세요.",
-            "ragnarok_status": "캐릭터는 마을에서 자동 낚시 중이거나 휴식 중",
-            "cynical_thought": "잠은 죽어서 자는 거라지만, 내일 도서관 문 열려면 지금 자야 한다.",
+            "ragnarok_status": "캐릭터는 거리에서 자동 낚시 중이거나 휴식 중",
+            "cynical_thought": "잠은 죽어서 자는 거라지만, 내일 편집국 문 열려면 지금 자야 한다.",
             "full_report": f"[{time_tag}] 애순이는 현재 자는 중입니다... Zzz",
             "state": state
         }
@@ -391,11 +391,11 @@ def main():
     narrator_name = "애순이" if is_aesun_spotlight else spotlight["name"]
     print(f"[스포트라이트] 이번 시간 주인공: {narrator_name}")
 
-    # [신규] 애순이 담당 - 오아시스 마법도서관 서가(북오아시스) 점검. 애순이가 주인공일 때만 점검해서, 신간 소식이
+    # [신규] 애순이 담당 - ZEEPS 편집국 서가(북오아시스) 점검. 애순이가 주인공일 때만 점검해서, 신간 소식이
     # 다른 인물 방송 시간에 소리 없이 "이미 본 것"으로 처리돼 버리지 않게 한다.
     bookoasis_block = ""
     if is_aesun_spotlight:
-        print("[1.5/4] 도서관 서가(북오아시스) 점검 중...")
+        print("[1.5/4] 편집국 서가(북오아시스) 점검 중...")
         bookoasis_block = bookoasis.build_prompt_block(bookoasis.check_bookoasis())
 
     # [신규] 연재 드라마의 진행 중인 줄거리를 일지에도 반영한다 (이번 시간 주인공 기준)
@@ -404,7 +404,7 @@ def main():
         story_block = agents.diary_block(narrator_name)
     else:
         story_block = story.story_block_for(narrator_name)
-    # [신규] 주인공의 지금 상태(감정/체력/돈/목표)와 관련 기억 - 일지에만 넣는다(마을 공통 이슈에는 X)
+    # [신규] 주인공의 지금 상태(감정/체력/돈/목표)와 관련 기억 - 일지에만 넣는다(거리 공통 이슈에는 X)
     if is_aesun_spotlight:
         n_loc, n_act = location, activity
     else:

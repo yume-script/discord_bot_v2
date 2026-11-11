@@ -34,30 +34,30 @@ def test_remember_recall_and_archived_recall():
 def test_prune_archives_but_keeps_permanent(monkeypatch):
     monkeypatch.setattr(memory, "PRUNE_AT_LINES", 1)
     monkeypatch.setattr(memory, "MAX_PER_PERSON", 1)
-    memory.remember("김정봉", "마을 이름은 포근동으로 정했다", 9, permanent=True)
+    memory.remember("김정봉", "거리 이름은 포근동으로 정했다", 9, permanent=True)
     memory.remember("김정봉", "로또 번호 연구", 2)
     memory.remember("김정봉", "우표 정리", 2)
     memory.prune()
     kept = [m["text"] for m in memory._load("김정봉")]
-    assert "마을 이름은 포근동으로 정했다" in kept and "우표 정리" in kept and "로또 번호 연구" not in kept
+    assert "거리 이름은 포근동으로 정했다" in kept and "우표 정리" in kept and "로또 번호 연구" not in kept
     # 정리된 기억도 지워지지 않고, 화제가 겹치면 다시 떠오른다
     assert "로또 번호 연구" in [m["text"] for m in memory.recall("김정봉", ["로또"], k=5)]
 
 
 def test_events_and_actions_recorded():
-    chronicle.record_event("모임", "마을 이름 짓기 (1차)", "결론 없음", ["리그루드"], decided=False)
-    chronicle.record_action("리그루드", {"location": "촌장 회관", "activity": "민원 정리", "state": "일하는 중"})
+    chronicle.record_event("모임", "거리 이름 짓기 (1차)", "결론 없음", ["구영철"], decided=False)
+    chronicle.record_action("구영철", {"location": "번영회 사무실", "activity": "민원 정리", "state": "일하는 중"})
     from poring_food.clock import now_kst
     today = now_kst().strftime("%Y-%m-%d")
     ev = store.events_on(today)
-    assert ev[0]["title"] == "마을 이름 짓기 (1차)" and ev[0]["decided"] is False
-    assert store.actions_on(today)[0]["name"] == "리그루드"
+    assert ev[0]["title"] == "거리 이름 짓기 (1차)" and ev[0]["decided"] is False
+    assert store.actions_on(today)[0]["name"] == "구영철"
 
 
 def test_lookup_shows_events_and_projects():
     from poring_food import projects
     from poring_food.clock import now_kst
     chronicle.record_event("이사", "새 이웃 마현이", "이태원 클라쓰 사람들이 이사 옴", ["마현이"])
-    projects.create("골목 화단 만들기", "꽃길", ["a", "b"], "리그루드", [], "마을", [], "모임")
+    projects.create("골목 화단 만들기", "꽃길", ["a", "b"], "구영철", [], "거리", [], "모임")
     text = chronicle.lookup(now_kst().strftime("%Y-%m-%d"))
     assert "새 이웃 마현이" in text and "골목 화단 만들기" in text

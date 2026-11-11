@@ -37,7 +37,7 @@ def test_step_updates_when_safe(monkeypatch, tmp_path):
 
     def decide(facts):
         asked.append(facts)
-        return {"update": True, "reason": "수정과 성능 개선뿐", "story": "서가 감시탑에 새 마법진(북오아시스 1.1)을 새겼다."}
+        return {"update": True, "reason": "수정과 성능 개선뿐", "story": "서가 모니터링에 새 마법진(북오아시스 1.1)을 새겼다."}
     ev = updater.step(T0, checker=infos.get, decide=decide, runner=lambda k, i: (runs.append(k), (True, "ok"))[1])
     assert sorted(runs) == ["bookoasis", "bookoasis_assistant"] and len(asked) == 2
     assert "(fix) 빠르게" in asked[0] or "(fix) 빠르게" in asked[1]

@@ -3,13 +3,13 @@
 대여권은 '마지막으로 쓴 시각 + 주기'마다 충전되고 충전되면 바로 받으러 가므로, 충전 시각이 곧 다운로드 시각이다.
 bookoasis_assistant의 `python3 -m wtm.shift_waitfree --spread 시작 끝 [--apply]`가 실제로 대여권을 쓰는 1·2·3일 기다무를
 그 시간대에 고르게 다시 놓는다(앞당기지는 않음 - 카카오가 거절). 이 모듈은
-  1) 결계 조절(loadshed)이 매분 남기는 시간대별 기록(부하 지수·재생 여부, 최근 14일)으로 가장 한가한 연속 시간대를 고르고
+  1) 서버 조절(loadshed)이 매분 남기는 시간대별 기록(부하 지수·재생 여부, 최근 14일)으로 가장 한가한 연속 시간대를 고르고
      (영상 재생이 있었던 시간은 크게 감점 - 재생이 1순위, 새벽 FF rclone 새로 고침처럼 늘 바쁜 시간도 지수로 드러난다),
   2) 원격으로 미리 보기를 돌려 분포를 보여 주고,
-  3) 적용은 안전할 때만: 지금 재생 없음 · plex01 결계 2단계 이하 · 지난 적용 뒤 20시간 이상 · 시간대 4~16시간.
+  3) 적용은 안전할 때만: 지금 재생 없음 · plex01 서버 2단계 이하 · 지난 적용 뒤 20시간 이상 · 시간대 4~16시간.
      작업 프로세스가 작품 기록을 덮어쓰지 않게 서비스를 멈췄다가 적용하고 반드시 다시 켠다(받던 회차는 다음에 이어 받음).
 LLM 도구: get_download_plan(조회) / preview_waitfree_window(조회) / set_waitfree_window(관리자 + 확인 뒤 실행).
-출력에서 작품 제목 예시 줄은 지운다(금서고 제목이 섞일 수 있음) - 시간대별 개수와 다운로드 통계(숫자)만.
+출력에서 작품 제목 예시 줄은 지운다(성인 서고 제목이 섞일 수 있음) - 시간대별 개수와 다운로드 통계(숫자)만.
 """
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ def guard(now: datetime | None = None, playing: int | None = -1) -> str | None:
         return f"지금 영상 {playing}개 재생 중 - 짐꾼을 잠깐 멈춰야 해서 재생이 없을 때만 해요"
     st = (loadshed._load().get("hosts") or {}).get(HOST) or {}
     if int(st.get("stage", 0)) > MAX_STAGE:
-        return f"plex01 결계 {st.get('stage')}단계 - {MAX_STAGE}단계 이하일 때만 해요"
+        return f"plex01 서버 {st.get('stage')}단계 - {MAX_STAGE}단계 이하일 때만 해요"
     return None
 
 
@@ -205,7 +205,7 @@ AUTO = os.getenv("PORING_WAITFREE_AUTO", "1") not in ("0", "false", "False", "")
 CHECK_GAP_H = 20          # 하루 한 번쯤 살펴본다 (적용 간격 APPLY_GAP_H와 같은 이유)
 RETRY_MIN = 30            # 재생 중/단계 높음으로 못 했으면 이만큼 뒤에 다시 (그날 안에)
 
-DECIDE_SYSTEM = """너는 오아시스 마을 도서관의 짐꾼(웹툰/웹소설 다운로더 bookoasis_assistant) 담당자다.
+DECIDE_SYSTEM = """너는 오아시스 거리 편집국의 짐꾼(웹툰/웹소설 다운로더 bookoasis_assistant) 담당자다.
 목표 순서: 1) 영상 재생·책 읽기에 전혀 불편이 없게 2) 서버 부하 지수 95% 이하 3) 그 안에서 최대한 많이 받기.
 기다무 대여권은 충전되는 순간 받으러 가므로 '충전 시간대'가 곧 다운로드 시간대다. 시간대를 옮기면 작품마다 대여권
 한 장이 최대 하루 늦어지므로, 지금 시간대보다 확실히 나을 때만 바꾼다(재생이 많은 시간이나 늘 바쁜 시간과 겹칠 때,
@@ -254,7 +254,7 @@ def autopilot(now: datetime | None = None, decide=None, post=None, playing: int 
     who = _decider()
     facts = (plan_text(now) + "\n\n■ 추천 시간대 미리 보기\n" + preview(s, e)
              + "\n\n지금 맞춰 둔 시간대: " + (f"{cur[0]:02d}~{cur[1]:02d}시 ({applied[0]['at'][:16]})" if cur else "없음 (아직 맞춘 적 없음)"))
-    if decide is None:   # 짐꾼 담당이 제안하고 시청(Plex)·배급소(FF 새벽 새로 고침)·서가(북오아시스 등록)·결계 담당이 따진 뒤 조정자가 정한다
+    if decide is None:   # 짐꾼 담당이 제안하고 시청(Plex)·배급소(FF 새벽 새로 고침)·서가(북오아시스 등록)·서버 담당이 따진 뒤 조정자가 정한다
         from . import stewards
         decide = lambda: stewards.council(  # noqa: E731
             "기다무 충전 시간대 (웹툰 받는 시간)", facts, ["assistant", "plex", "ff", "bookoasis", "loadshed"],

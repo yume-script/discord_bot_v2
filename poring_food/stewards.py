@@ -1,22 +1,22 @@
 """시스템 담당자 - 인물 한 명이 실제 프로그램 하나를 책임지고, 자기 시스템이 기능을 잃지 않게 다른 담당자와 아웅다웅 협상한다.
 
-| 시스템 (실제)                              | 마을의 시설                     | 담당 (기본)  | 지키려는 것                                   |
+| 시스템 (실제)                              | 거리의 시설                     | 담당 (기본)  | 지키려는 것                                   |
 |-------------------------------------------|--------------------------------|-------------|----------------------------------------------|
-| 전체 조정                                   | 오아시스 마법도서관 관장실        | 애순이       | 목표 순서: 시청·독서 > 서버 95% > 자료 등록       |
-| Plex 시청 (Plex Media Server)              | 별빛 환영극장 상영관              | 소라         | 지금 보는 손님이 버퍼링 없이                     |
-| flaskfarm (plex_mate rclone 새로 고침, GDS) | 환영극장 이야기 배급소            | 일레이나     | 새 영상이 Plex에 빨리 등록                       |
-| 북오아시스 (웹 서가 + MariaDB + 스캐너)      | 도서관 서가 감시탑               | 페른         | 책 열람이 빠르고, 새 책이 서가에 제때 등록         |
-| bookoasis_assistant (웹툰/웹소설 다운로드)   | 도서관 두루마리 운반 정령          | 슈타르크     | 기다무 대여권을 놓치지 않고 최대한 받기             |
-| YM_PLAYER (Plex/텔레그램/IPTV 재생)         | 환영극장 영사 수정구              | 프랑         | 텔레그램/IPTV 시청이 끊기지 않게                  |
-| Tautulli (시청 집계)                        | 환영극장 관객 세는 수정구          | 크리스       | 관객 집계가 멈추지 않게                           |
-| 결계 조절 (부하 단계)                        | 결계석                          | 슈나         | 부하 지수 95% 아래                                |
-| LiteLLM                                    | 수비대 마나 중계탑               | 고브타       | 마을 사람들의 주문(LLM)이 막히지 않게               |
-| vaultwarden                                | 마을 열쇠지기 탑                 | 소우에이     | 열쇠 금고가 늘 열려 있게                          |
-| docker-warproxy                            | 성문 전령 초소                   | 가비루       | 바깥 전령이 오갈 수 있게                          |
-| ClamAV (호스트 zeeps)                       | 방역관의 정화 의식               | 팔린         | 정화(바이러스 검사)를 거르지 않게                  |
-| rclone zeeps_member 업로드 (스테이징)         | 왕도로 가는 두루마리 짐마차        | 카즈마       | 로컬에 쌓인 짐을 제때 왕도로                       |
+| 전체 조정                                   | ZEEPS 편집국 대표실        | 애순이       | 목표 순서: 시청·독서 > 서버 95% > 자료 등록       |
+| Plex 시청 (Plex Media Server)              | ZEEPS 영상콘텐츠팀 상영관              | 소라         | 지금 보는 손님이 버퍼링 없이                     |
+| flaskfarm (plex_mate rclone 새로 고침, GDS) | 영상팀 이야기 배급소            | 이나연     | 새 영상이 Plex에 빨리 등록                       |
+| 북오아시스 (웹 서가 + MariaDB + 스캐너)      | 편집국 서가 모니터링               | 정하린         | 책 열람이 빠르고, 새 책이 서가에 제때 등록         |
+| bookoasis_assistant (웹툰/웹소설 다운로드)   | 편집국 원고 운반 자동화 봇          | 강태오     | 기다무 대여권을 놓치지 않고 최대한 받기             |
+| YM_PLAYER (Plex/텔레그램/IPTV 재생)         | 영상팀 송출 모니터              | 이나연     | 텔레그램/IPTV 시청이 끊기지 않게                  |
+| Tautulli (시청 집계)                        | 영상팀 시청 집계 모니터          | 배수진         | 관객 집계가 멈추지 않게                           |
+| 서버 조절 (부하 단계)                        | 메인 서버                          | 권지아         | 부하 지수 95% 아래                                |
+| LiteLLM                                    | 시설관리팀 리소스 중계탑               | 고민수       | 거리 사람들의 주문(LLM)이 막히지 않게               |
+| vaultwarden                                | 거리 열쇠지기 탑                 | 서경호     | 열쇠 금고가 늘 열려 있게                          |
+| docker-warproxy                            | 택배 영업소                   | 탁기범       | 바깥 택배가 오갈 수 있게                          |
+| ClamAV (호스트 zeeps)                       | 보안 점검(바이러스 검사)               | 류하은         | 바이러스 검사를 거르지 않게                  |
+| rclone zeeps_member 업로드 (스테이징)         | 클라우드로 가는 원고 업로드        | 민재현       | 로컬에 쌓인 짐을 제때 서울로                       |
 
-- 담당은 .env PORING_STEWARDS="ff=일레이나,bookoasis=페른,..."로 바꾼다. 담당자가 교대(rotation)로 쉬는 중이면 같은 소속의
+- 담당은 .env PORING_STEWARDS="ff=이나연,bookoasis=정하린,..."로 바꾼다. 담당자가 교대(rotation)로 쉬는 중이면 같은 소속의
   다른 인물이 대신 맡는다(없으면 조정자).
 - prompt_block(이름): 매시 판단 프롬프트에 "내가 맡은 시스템"과 실제 상태가 들어간다 - 그래서 담당자는 자기 시스템을
   걱정하고, 다른 담당자에게 따지거나 부탁한다.
@@ -34,33 +34,33 @@ from .clock import now_kst
 CHAIR = "애순이"
 
 SYSTEMS = {
-    "chair": {"label": "전체 조정", "facility": "도서관 관장실", "steward": CHAIR,
+    "chair": {"label": "전체 조정", "facility": "편집국 대표실", "steward": CHAIR,
               "wants": "모든 시설이 최대한 살아 있게 조율하되 목표 순서(시청·독서 > 서버 95% > 자료 등록)를 지킨다"},
-    "plex": {"label": "Plex 시청", "facility": "환영극장 상영관", "steward": "소라",
+    "plex": {"label": "Plex 시청", "facility": "영상팀 상영관", "steward": "소라",
              "wants": "지금 영상을 보는 손님이 버퍼링 없이 끝까지 보게 한다 - 시청 중엔 다른 일이 양보해야 한다"},
-    "ff": {"label": "flaskfarm (plex_mate rclone 새로 고침·GDS 감시)", "facility": "환영극장 이야기 배급소", "steward": "일레이나",
+    "ff": {"label": "flaskfarm (plex_mate rclone 새로 고침·GDS 감시)", "facility": "영상팀 이야기 배급소", "steward": "이나연",
            "wants": "새 영상이 올라오면 rclone 새로 고침으로 Plex에 빨리 등록되게 한다 (새벽 정기 새로 고침 포함)"},
-    "bookoasis": {"label": "북오아시스 (웹 서가·MariaDB·스캐너)", "facility": "도서관 서가 감시탑", "steward": "페른",
+    "bookoasis": {"label": "북오아시스 (웹 서가·MariaDB·스캐너)", "facility": "편집국 서가 모니터링", "steward": "정하린",
                   "wants": "책 열람이 빠르고, 새로 들어온 책이 스캐너로 제때 서가(DB)에 등록되게 한다"},
-    "assistant": {"label": "bookoasis_assistant (웹툰/웹소설 다운로드)", "facility": "도서관 두루마리 운반 정령",
-                  "steward": "슈타르크",
+    "assistant": {"label": "bookoasis_assistant (웹툰/웹소설 다운로드)", "facility": "편집국 원고 운반 자동화 봇",
+                  "steward": "강태오",
                   "wants": "기다무 대여권을 놓치지 않고 웹툰/웹소설을 최대한 많이 받아 북오아시스에 등록 요청한다"},
-    "ym_player": {"label": "YM_PLAYER (Plex/텔레그램/IPTV 재생)", "facility": "환영극장 영사 수정구", "steward": "프랑",
+    "ym_player": {"label": "YM_PLAYER (Plex/텔레그램/IPTV 재생)", "facility": "영상팀 송출 모니터", "steward": "이나연",
                   "wants": "텔레그램·IPTV·라디오 중계와 Plex 재생이 끊기지 않게 한다"},
-    "tautulli": {"label": "Tautulli (시청 집계)", "facility": "환영극장 관객 세는 수정구", "steward": "크리스",
+    "tautulli": {"label": "Tautulli (시청 집계)", "facility": "영상팀 시청 집계 모니터", "steward": "배수진",
                  "wants": "관객 집계와 재생 알림이 멈추지 않게 한다"},
-    "loadshed": {"label": "결계 조절 (부하 단계)", "facility": "결계석", "steward": "슈나",
+    "loadshed": {"label": "서버 조절 (부하 단계)", "facility": "메인 서버", "steward": "권지아",
                  "wants": "부하 지수를 95% 아래로 지키고, 꼭 필요한 만큼만 늦추고 바로 되돌린다"},
-    "litellm": {"label": "LiteLLM", "facility": "수비대 마나 중계탑", "steward": "고브타",
-                "wants": "마을 사람들의 주문(LLM 요청)이 막히지 않게 한다"},
-    "vaultwarden": {"label": "vaultwarden", "facility": "마을 열쇠지기 탑", "steward": "소우에이",
+    "litellm": {"label": "LiteLLM", "facility": "시설관리팀 리소스 중계탑", "steward": "고민수",
+                "wants": "거리 사람들의 주문(LLM 요청)이 막히지 않게 한다"},
+    "vaultwarden": {"label": "vaultwarden", "facility": "거리 열쇠지기 탑", "steward": "서경호",
                     "wants": "열쇠 금고가 늘 열려 있게 한다 (절대 끄지 않음)"},
-    "warproxy": {"label": "docker-warproxy", "facility": "성문 전령 초소", "steward": "가비루",
-                 "wants": "바깥으로 나가는 전령이 필요할 때 오갈 수 있게 한다 (놀 때는 쉬어도 됨)"},
-    "clamav": {"label": "ClamAV (호스트 바이러스 검사)", "facility": "방역관의 정화 의식", "steward": "팔린",
-               "wants": "정화 의식(정기 검사)을 너무 오래 거르지 않게 한다"},
-    "upload": {"label": "rclone zeeps_member 업로드 (로컬 스테이징)", "facility": "왕도로 가는 두루마리 짐마차",
-               "steward": "카즈마", "wants": "로컬에 쌓인 짐을 제때 왕도(드라이브)로 올려 창고가 넘치지 않게 한다"},
+    "warproxy": {"label": "docker-warproxy", "facility": "택배 영업소", "steward": "탁기범",
+                 "wants": "바깥으로 나가는 택배가 필요할 때 오갈 수 있게 한다 (놀 때는 쉬어도 됨)"},
+    "clamav": {"label": "ClamAV (호스트 바이러스 검사)", "facility": "보안 점검(바이러스 검사)", "steward": "류하은",
+               "wants": "정기 바이러스 검사를 너무 오래 거르지 않게 한다"},
+    "upload": {"label": "rclone zeeps_member 업로드 (로컬 스테이징)", "facility": "클라우드로 가는 원고 업로드",
+               "steward": "민재현", "wants": "로컬에 쌓인 짐을 제때 서울(드라이브)로 올려 창고가 넘치지 않게 한다"},
 }
 
 # loadshed/facilities가 쓰는 실제 이름 -> 시스템
@@ -68,7 +68,7 @@ NAME_TO_SYSTEM = {"bookoasis_assistant.service": "assistant", "upload": "upload"
                   "clamav": "clamav", "clamav-risk-scan.service": "clamav", "clamav-deep-scan.service": "clamav",
                   "bookoasis": "bookoasis", "bookoasis_mariadb": "bookoasis", "bookoasis_redis": "bookoasis",
                   "tautulli": "tautulli", "flaskfarm": "ff", "litellm-proxy": "litellm", "litellm-db": "litellm",
-                  "vaultwarden": "vaultwarden", "결계 경보": "loadshed"}
+                  "vaultwarden": "vaultwarden", "서버 경보": "loadshed"}
 
 
 def _overrides() -> dict[str, str]:
@@ -127,7 +127,7 @@ def status_line(key: str, data: dict | None = None) -> str:
         name = {"assistant": "bookoasis_assistant.service", "upload": "upload", "warproxy": "docker-warproxy"}[key]
         slowed = [t for st in hosts.values() for t in (st.get("throttled") or {}).values() if t.get("name") == name]
         shed = [h for h, st in hosts.items() if name in (st.get("shed") or {})]
-        bits = (["지금 결계 조절이 늦춰 둠"] if slowed else []) + (["지금 결계 조절이 쉬게 함"] if shed else [])
+        bits = (["지금 서버 조절이 늦춰 둠"] if slowed else []) + (["지금 서버 조절이 쉬게 함"] if shed else [])
         if key == "assistant":
             try:
                 from . import waitfree
@@ -157,9 +157,9 @@ def prompt_block(name: str, agents: list[dict] | None = None) -> str:
     data = loadshed._load()
     lines = [f"- {SYSTEMS[k]['facility']} (실제: {SYSTEMS[k]['label']}) - 내가 지킬 것: {SYSTEMS[k]['wants']}"
              + (f" / 지금: {s}" if (s := status_line(k, data)) else "") for k in keys]
-    return ("[내가 맡은 마을 시설 - 실제 서버 프로그램]\n" + "\n".join(lines) + "\n"
+    return ("[내가 맡은 거리 시설 - 실제 서버 프로그램]\n" + "\n".join(lines) + "\n"
             "내 시설이 기능을 잃지 않게 챙기고, 다른 시설 때문에 내 시설이 밀리면 그 담당자에게 따지거나 부탁하고, "
-            "내 시설이 남에게 짐이 되면 양보할 줄도 안다. 다만 마을의 순서(시청·독서 > 서버 안정 > 자료 등록)는 넘지 않는다.")
+            "내 시설이 남에게 짐이 되면 양보할 줄도 안다. 다만 거리의 순서(시청·독서 > 서버 안정 > 자료 등록)는 넘지 않는다.")
 
 
 # ===================================================================== 조율 회의
@@ -193,7 +193,7 @@ def council(topic: str, facts: str, parties: list[str], decision_spec: str, *, c
                 f"(실제: {SYSTEMS[key]['label']}) - {SYSTEMS[key]['wants']}\n[지금까지 오간 말]\n{talk}\n\n"
                 + ("나는 지금 자는 중이라 미리 남겨 둔 메모로 의견을 낸다. " if asleep else "")
                 + "내 시설 입장에서 할 말을 1~2문장으로 해라. 내 시설에 손해면 따지거나 조건을 걸고, 남의 말에 반박해도 된다. "
-                "숫자 근거를 하나는 넣고, 마을 순서(시청·독서 > 서버 안정 > 자료 등록)는 인정한다. 작품 제목·계정은 말하지 않는다.\n"
+                "숫자 근거를 하나는 넣고, 거리 순서(시청·독서 > 서버 안정 > 자료 등록)는 인정한다. 작품 제목·계정은 말하지 않는다.\n"
                 + ag._voice(a) + '\nJSON으로만: {"say": "할 말"}')
         if speak is not None:
             return speak(key, name, user)
@@ -219,7 +219,7 @@ def council(topic: str, facts: str, parties: list[str], decision_spec: str, *, c
     else:
         from .llm import llm_json
         ca = by_name.get(chair)
-        decision = llm_json(ag._system(ca) if ca else "너는 마을 시설 조정자다.", chair_user, temperature=0.3,
+        decision = llm_json(ag._system(ca) if ca else "너는 거리 시설 조정자다.", chair_user, temperature=0.3,
                             timeout=60, tag="시설 조율 결론", agent=chair, smart=True) or {}
     say = str(decision.get("say") or "").strip()[:300]
     if say:
