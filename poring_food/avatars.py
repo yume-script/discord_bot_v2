@@ -1,7 +1,7 @@
-"""인물 아바타 - 기본 DiceBear 낙서 그림 대신, 인물 설정에 맞춘 사실적인 판타지 초상화를 만들어 쓴다.
+"""인물 아바타 - 기본 DiceBear 낙서 그림 대신, 인물 설정에 맞춘 사실적인 현대 인물 초상화를 만들어 쓴다.
 
 - 만들기: 봇의 이미지 생성(ai.image_engine - AI Horde)으로 인물마다 한 장. 프롬프트는 LLM이 인물 프로필을 영어 외모
-  묘사(나이대, 종족, 머리/눈, 옷, 분위기)로 바꾼 것 + 공통 스타일(사실적인 판타지 초상, 가슴 위, 글자 없음).
+  묘사(나이대, 머리/눈, 옷, 분위기)로 바꾼 것 + 공통 스타일(사실적인 현대 인물 초상, 가슴 위, 글자 없음).
   봇이 PERIOD_MIN분마다 아직 없는 사람 한 명씩 만든다(Horde 줄을 오래 막지 않게). 다시 만들려면
   `python -m poring_food.avatars --force 이름` 또는 저장 폴더의 그 파일을 지운다.
 - 저장: storage/poring_food/avatars/<키>.png (256x256) + avatars.json {이름: {"file", "desc", "at"}}.
@@ -28,8 +28,8 @@ INDEX = os.path.join(DIR, "avatars.json")
 SIZE = 256
 PERIOD_MIN = 15
 MODEL = os.getenv("PORING_AVATAR_MODEL", "Realistic Vision")   # AI Horde 모델 이름 (사실적인 인물)
-STYLE = ("realistic fantasy portrait, head and shoulders, looking at viewer, detailed face, natural skin texture, "
-         "soft cinematic light, painterly background of a medieval fantasy village, high detail, no text, no watermark")
+STYLE = ("realistic portrait, head and shoulders, looking at viewer, detailed face, natural skin texture, "
+         "soft cinematic light, blurred background of a cozy modern Seoul street with a small publishing office, high detail, no text, no watermark")
 NEGATIVE = "text, watermark, logo, signature, cartoon, chibi, deformed, extra limbs, blurry, nsfw, nude"
 _SAFE = re.compile(r"^[a-f0-9]{12}\.png$")
 
@@ -100,7 +100,7 @@ def describe(agent: dict, llm=None) -> str:
               'Answer JSON only: {"desc": "..."}',
               f"Character profile (Korean): {agent.get('profile', '')}\nSpeech/manner: {agent.get('speech', '')}") or {}
     desc = str(out.get("desc") or "").strip()
-    return desc[:300] or "a villager of a fantasy frontier town"
+    return desc[:300] or "a resident of a quiet modern Seoul street"
 
 
 def _square(data: bytes) -> bytes:

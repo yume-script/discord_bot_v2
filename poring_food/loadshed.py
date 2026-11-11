@@ -1,5 +1,5 @@
 """
-결계 조절(부하 줄이기) - 「집스마을 서버 관리 가이드 v1.0」의 단계 방식 (0~5단계, 재생 여부에 따라 기준 두 벌).
+서버 조절(부하 줄이기) - 「집스거리 서버 관리 가이드 v1.0」의 단계 방식 (0~5단계, 재생 여부에 따라 기준 두 벌).
 
 목표 위계 (절대 바뀌지 않는다):
  1) 영상 재생(Plex/YM_PLAYER/SHYNI)과 책·웹툰 열람(북오아시스)이 끊기거나 느려지지 않는다 - 절대 목표.
@@ -31,12 +31,12 @@
   재생 중이고 그 재생이 버벅일 때만 (Plex 버퍼링 또는 변환 속도 < 1.0, 10분 유지) - 아무도 안 보거나 잘 나오면 짐꾼은 그대로.
           rclone 업로드만 대역폭 제한(PORING_LOADSHED_RCLONE_RC가 있을 때, rate=5M:off - 읽기/재생은 안 막는다).
 - 5단계 또는 지수 95% 초과: 채널에 ⚠️ 경고.
-- 방역관(ClamAV, 호스트 zeeps): PORING_LOADSHED_ZEEPS_SSH가 있으면 매분 호스트의 scripts/zeeps/village-ctl.sh에 "stage N"을 보낸다
+- 바이러스 검사(ClamAV, 호스트 zeeps): PORING_LOADSHED_ZEEPS_SSH가 있으면 매분 호스트의 scripts/zeeps/village-ctl.sh에 "stage N"을 보낸다
   (봇 키는 authorized_keys command=로 이 스크립트에 묶여 probe/stage/status 말고는 못 한다). 호스트는
   /run/village/stage를 쓰고(가이드 6.3 게이트 - 방역/정비 타이머가 ExecCondition으로 읽고 스스로 건너뜀),
-  1단계~ 방역관 CPUQuota 25%, 2단계~ 돌고 있는 정기 스캔(risk/deep) 중단, 0단계면 60%로. 실시간 감시(malware-watch)는 유지.
+  1단계~ 바이러스 검사 CPUQuota 25%, 2단계~ 돌고 있는 정기 스캔(risk/deep) 중단, 0단계면 60%로. 실시간 감시(malware-watch)는 유지.
 
-이야기: 결계 무녀 슈나(ACTOR)가 결계 경보 단계를 올리고 내리며, 짐 나르는 정령의 마나 흐름을 좁히고 성문 초소 불을 잠시 끈다.
+이야기: 서버 관리자 슈나(ACTOR)가 서버 경보 단계를 올리고 내리며, 짐 나르는 자동화 봇의 리소스 흐름을 좁히고 출입구 초소 불을 잠시 끈다.
 facilities.py는 이 기능이 끈 컨테이너를 "불 꺼짐" 사고로 치지 않는다 (quiet_names). raids 위험도는 max_cpu()(가장 높은 지수).
 봇(cogs/poring_food.py load_guard)이 CHECK_SEC(60초)마다 step()을 부르고, 한 일이 있으면 바로 notify, 잠금 안에서 reflect.
 저장: storage/poring_food/loadshed.json {"hosts": {서버: {"samples": [[시각, 지수, psi]], "stage", "stage_at", "shed": {이름: 시각},
@@ -80,7 +80,7 @@ COOLDOWN_MIN = 30
 KEEP_SAMPLES = 40
 TIMEOUT = 25
 ACTOR = "슈나"
-NAME = "💠 결계 조절"
+NAME = "💠 서버 조절"
 LOADSHED_PATH = os.path.join(STATE_DIR, "loadshed.json")
 UNIT_WEIGHT = {4: 30, 5: 15}                # 짐꾼 CPUWeight (기본 100) - 끄지 않고 늦춘다
 RCLONE_RATE = os.getenv("PORING_LOADSHED_RCLONE_RATE", "5M:off")   # 업로드:다운로드 - 다운로드(재생)는 off(제한 없음)
@@ -109,7 +109,7 @@ def _names(env: str, default: str) -> list[str]:
         if not _SAFE.match(n):
             continue
         if protected(n):
-            print(f"[결계 조절] {env}의 {n}은(는) 시청 경로/보호 대상이라 조치 목록에서 뺐다")
+            print(f"[서버 조절] {env}의 {n}은(는) 시청 경로/보호 대상이라 조치 목록에서 뺐다")
             continue
         out.append(n)
     return out
@@ -180,10 +180,10 @@ def _run(host: str, args: list[str]) -> str | None:
     try:
         p = subprocess.run(_cmd(host, args), capture_output=True, text=True, timeout=TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as e:
-        print(f"[결계 조절] {host} 명령 실패: {' '.join(args)[:60]} - {e!r}"[:200])
+        print(f"[서버 조절] {host} 명령 실패: {' '.join(args)[:60]} - {e!r}"[:200])
         return None
     if p.returncode != 0:
-        print(f"[결계 조절] {host} 명령 실패({p.returncode}): {' '.join(args)[:60]} - {p.stderr.strip()[:120]}")
+        print(f"[서버 조절] {host} 명령 실패({p.returncode}): {' '.join(args)[:60]} - {p.stderr.strip()[:120]}")
         return None
     return p.stdout
 
@@ -369,7 +369,7 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
         lines.append(f"• YM_PLAYER: 텔레그램 {w['ym']['telegram']} · IPTV/라디오 중계 {w['ym']['live']}"
                      + (f" · ⚠️ 최근 5분 끊김 {w['ym'].get('stalls', 0)} / 재연결 {w['ym'].get('retries', 0)}" if bad else ""))
     st, load = stage(now), max_cpu(now)
-    lines.append(f"-# 결계 경보 {st}단계" + (f" (지금 부하 지수 {load:g}%)" if load is not None else "")
+    lines.append(f"-# 서버 경보 {st}단계" + (f" (지금 부하 지수 {load:g}%)" if load is not None else "")
                  + f" · 단계 기준값({'재생 중' if w['total'] else '재생 없음'}): 1~5단계 = "
                  + "/".join(f"{t:g}" for t in levels(bool(w["total"]))) + "% 이상 · 원본 주소로 바로 트는 IPTV는 안 보임")
     return "\n".join(lines)
@@ -488,7 +488,7 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, p
         if stale or stage < STOP_STAGE or t <= stop_old:
             undo.append((t, {"host": host, "do": "start", "name": n,
                              "why": "이제 조치 대상이 아님" if stale else
-                             f"결계 경보 {stage}단계로 내려감" if stage < STOP_STAGE else f"{STOP_TTL_H:g}시간 지남(ttl)"}))
+                             f"서버 경보 {stage}단계로 내려감" if stage < STOP_STAGE else f"{STOP_TTL_H:g}시간 지남(ttl)"}))
     for key, t in slow.items():
         stale = t["kind"] not in ("unit", "rclone") or protected(t["name"]) or \
             (t["kind"] == "unit" and t["name"] not in cfg["units"])
@@ -498,12 +498,12 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, p
                                             "why": "시청 경로/이제 조치 대상이 아님" if stale else
                                             "재생이 없어 자료 등록 우선" if not playing and stage >= SLOW_STAGE else
                                             "재생이 잘 나와서(버퍼링 없음) 자료 등록 우선" if not need and stage >= SLOW_STAGE else
-                                            f"결계 경보 {stage}단계로 내려감" if stage < SLOW_STAGE else f"{SLOW_TTL_H:g}시간 지남(ttl)"}))
+                                            f"서버 경보 {stage}단계로 내려감" if stage < SLOW_STAGE else f"{SLOW_TTL_H:g}시간 지남(ttl)"}))
     acts = [a for _, a in sorted(undo, key=lambda x: x[0], reverse=True)]
     undone = {a["name"] for a in acts}
     if running is None:
         return acts
-    why = f"결계 경보 {stage}단계"
+    why = f"서버 경보 {stage}단계"
     if stage >= STOP_STAGE:
         for name in cfg["stop"]:
             if protected(name) or name in shed or name not in running or restored.get(name, "") >= cool:
@@ -530,7 +530,7 @@ def _docker(host: str, do: str, name: str) -> bool:
     if protected(name):
         return False
     if DRY_RUN:
-        print(f"[결계 조절] (시험) {host} docker {do} {name}")
+        print(f"[서버 조절] (시험) {host} docker {do} {name}")
         return True
     return _run(host, ["docker", do, name]) is not None
 
@@ -541,12 +541,12 @@ def _rclone(host: str, rate: str) -> bool:
     if not url:
         return False
     if DRY_RUN:
-        print(f"[결계 조절] (시험) rclone bwlimit {rate}")
+        print(f"[서버 조절] (시험) rclone bwlimit {rate}")
         return True
     try:
         return requests.post(f"{url}/core/bwlimit", json={"rate": rate}, timeout=8).status_code == 200
     except requests.RequestException as e:
-        print(f"[결계 조절] rclone bwlimit 실패: {e!r}"[:200])
+        print(f"[서버 조절] rclone bwlimit 실패: {e!r}"[:200])
         return False
 
 
@@ -556,7 +556,7 @@ def _throttle(host: str, a: dict) -> dict | None:
     if a["do"] == "throttle" and (kind not in ("unit", "rclone") or protected(name)):
         return None
     if DRY_RUN:
-        print(f"[결계 조절] (시험) {host} {a['do']} {kind} {name} {a.get('weight', '')}")
+        print(f"[서버 조절] (시험) {host} {a['do']} {kind} {name} {a.get('weight', '')}")
         return {"orig": None}
     q = shlex.quote(name)
     if kind == "rclone":
@@ -581,7 +581,7 @@ def _throttle(host: str, a: dict) -> dict | None:
     return {} if _sh(host, f"systemctl set-property --runtime {q} CPUWeight={w}") is not None else None
 
 
-CLAM_LABEL = "방역관의 정화 의식(ClamAV)"
+CLAM_LABEL = "보안 점검(ClamAV 바이러스 검사)"
 
 
 def parse_ctl(out: str, stage: int) -> list[dict]:
@@ -591,29 +591,29 @@ def parse_ctl(out: str, stage: int) -> list[dict]:
         parts = line.split()
         if len(parts) >= 2 and parts[0] == "stopped":
             done.append({"host": "zeeps", "do": "stop", "name": parts[1],
-                         "why": f"결계 경보 {stage}단계 - 정기 스캔은 다음 타이머 때 다시 (실시간 감시는 유지)"})
+                         "why": f"서버 경보 {stage}단계 - 정기 스캔은 다음 타이머 때 다시 (실시간 감시는 유지)"})
         elif len(parts) >= 3 and parts[0] == "quota":
             quota = parts[2]
     if quota:
         slow = quota != "60%"
         done.append({"host": "zeeps", "do": "throttle" if slow else "unthrottle", "name": "clamav", "kind": "quota",
-                     "why": f"결계 경보 {stage}단계 - 방역관 CPU {quota}로"})
+                     "why": f"서버 경보 {stage}단계 - 바이러스 검사 CPU {quota}로"})
     return done
 
 
 def _write_stage(stage: int) -> list[dict]:
-    """[매분] 가이드 6.3 게이트 + 방역관 조절: 호스트 village-ctl.sh에 "stage N" (호스트 타이머가 ExecCondition으로 읽는다).
-    반환: 호스트에서 실제로 바뀐 것 (방역관 CPU 제한/정기 스캔 중단)."""
+    """[매분] 가이드 6.3 게이트 + 바이러스 검사 조절: 호스트 village-ctl.sh에 "stage N" (호스트 타이머가 ExecCondition으로 읽는다).
+    반환: 호스트에서 실제로 바뀐 것 (바이러스 검사 CPU 제한/정기 스캔 중단)."""
     if not STAGE_SSH or DRY_RUN:
         return []
     try:
         p = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", STAGE_SSH, f"stage {int(stage)}"],
                            capture_output=True, text=True, timeout=TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as e:
-        print(f"[결계 조절] 호스트 단계 전달 실패: {e!r}"[:200])
+        print(f"[서버 조절] 호스트 단계 전달 실패: {e!r}"[:200])
         return []
     if p.returncode != 0:
-        print(f"[결계 조절] 호스트 단계 전달 실패({p.returncode}): {p.stderr.strip()[:120]}")
+        print(f"[서버 조절] 호스트 단계 전달 실패({p.returncode}): {p.stderr.strip()[:120]}")
         return []
     return parse_ctl(p.stdout, stage)
 
@@ -660,9 +660,9 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         new, why = next_stage(st.get("samples") or [], cur, st.get("stage_at", ""), bool(playing), now)
         if new != cur:
             st["stage"], st["stage_at"] = new, stamp
-            done.append({"host": host, "do": "stage", "name": "결계 경보", "from": cur, "to": new, "why": why,
+            done.append({"host": host, "do": "stage", "name": "서버 경보", "from": cur, "to": new, "why": why,
                          "cpu": st["last_cpu"], "alert": new >= TOP or st["last_cpu"] > ALERT})
-            print(f"[결계 조절] {host} 결계 경보 {cur} -> {new}단계 - {why}")
+            print(f"[서버 조절] {host} 서버 경보 {cur} -> {new}단계 - {why}")
         st["struggling"] = struggling
         for a in plan(host, new, st, r.get("running"), now, bool(playing), struggling):
             if a["do"] in ("stop", "start"):
@@ -693,7 +693,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             a["cpu"] = st.get("last_cpu")
             done.append(a)
             word = {"stop": "내림", "start": "다시 올림", "throttle": "늦춤", "unthrottle": "되돌림"}[a["do"]]
-            print(f"[결계 조절] {host} {a['name']} {word} - {a['why']}")
+            print(f"[서버 조절] {host} {a['name']} {word} - {a['why']}")
     idx_now = [st["last_cpu"] for h, st in hosts.items() if h in HOSTS and st.get("at") == stamp and st.get("last_cpu") is not None]
     if idx_now:
         record_hour(data, now, max(idx_now), playing)
@@ -701,7 +701,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     for a in (stage_writer or _write_stage)(top):
         a["cpu"] = (zeeps or {}).get("index")
         done.append(a)
-        print(f"[결계 조절] zeeps {a['name']} {'늦춤' if a['do'] == 'throttle' else '되돌림' if a['do'] == 'unthrottle' else '중단'} - {a['why']}")
+        print(f"[서버 조절] zeeps {a['name']} {'늦춤' if a['do'] == 'throttle' else '되돌림' if a['do'] == 'unthrottle' else '중단'} - {a['why']}")
     if done:
         data["log"] = (data.get("log") or [])[-99:] + [{**a, "at": now.isoformat(timespec="minutes")} for a in done]
     _save(data)
@@ -709,8 +709,8 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
 
 
 # ===================================================================== 이야기 / 다른 모듈
-LABELS = {"bookoasis_assistant.service": "도서관 두루마리 운반 정령", "upload": "왕도로 가는 두루마리 짐마차",
-          "clamav": CLAM_LABEL, "clamav-risk-scan.service": "방역관의 매시 정화 의식", "clamav-deep-scan.service": "방역관의 새벽 대정화 의식"}
+LABELS = {"bookoasis_assistant.service": "편집국 원고 운반 자동화 봇", "upload": "클라우드로 가는 원고 업로드",
+          "clamav": CLAM_LABEL, "clamav-risk-scan.service": "매시 바이러스 검사", "clamav-deep-scan.service": "새벽 정밀 바이러스 검사"}
 STAGE_NAMES = {0: "평시", 1: "경계", 2: "방역 정지", 3: "방어", 4: "짐꾼 늦춤", 5: "짐꾼 최소"}
 
 
@@ -726,21 +726,21 @@ def _story(a: dict) -> tuple[str, str, str]:
         up = a["to"] > a["from"]
         name = STAGE_NAMES.get(a["to"], "")
         if up:
-            text = (f"{j(ACTOR, '이')} 결계 경보를 {a['to']}단계({name})로 올렸다 ({a['why']}). "
-                    "환영극과 책 열람은 그대로 지키고, 짐 나르는 일과 정비부터 쉬게 한다.")
+            text = (f"{j(ACTOR, '이')} 서버 경보를 {a['to']}단계({name})로 올렸다 ({a['why']}). "
+                    "영상과 책 열람은 그대로 지키고, 짐 나르는 일과 정비부터 쉬게 한다.")
         else:
-            text = f"{j(ACTOR, '이')} 결계 경보를 {a['to']}단계({name})로 내렸다 ({a['why']}). 쉬던 일이 차례로 돌아온다."
-        return text, f"결계 경보 {a['to']}단계 ({name})", ("⚠️ " if a.get("alert") else "") + ("⬆" if up else "⬇") + f" {a['to']}단계"
+            text = f"{j(ACTOR, '이')} 서버 경보를 {a['to']}단계({name})로 내렸다 ({a['why']}). 쉬던 일이 차례로 돌아온다."
+        return text, f"서버 경보 {a['to']}단계 ({name})", ("⚠️ " if a.get("alert") else "") + ("⬆" if up else "⬇") + f" {a['to']}단계"
     label = _label(a["name"])
     ro = label + ("으로" if has_batchim(label) and (ord(label[-1]) - 0xAC00) % 28 != 8 else "로")   # ㄹ 받침은 "로"
     return {
-        "stop": (f"{j(ACTOR, '이')} 결계 부하를 줄이려고 {label}의 불을 잠시 껐다 ({a['why']}).",
-                 f"{label} 잠시 소등 (결계 조절)", "⏸ 내림"),
-        "start": (f"{j(ACTOR, '이')} {label}에 다시 불을 켰다 ({a['why']}).", f"{label} 다시 점등 (결계 조절)", "▶ 다시 올림"),
-        "throttle": (f"{j(ACTOR, '이')} 결계 부하를 줄이려고 {ro} 가는 마나 흐름을 좁혔다 ({a['why']}).",
-                     f"{label} 마나 흐름 제한 (결계 조절)", "🐢 늦춤"),
-        "unthrottle": (f"{j(ACTOR, '이')} {ro} 가는 마나 흐름을 원래대로 되돌렸다 ({a['why']}).",
-                       f"{label} 마나 흐름 복구 (결계 조절)", "↩ 되돌림"),
+        "stop": (f"{j(ACTOR, '이')} 서버 부하를 줄이려고 {label}의 불을 잠시 껐다 ({a['why']}).",
+                 f"{label} 잠시 소등 (서버 조절)", "⏸ 내림"),
+        "start": (f"{j(ACTOR, '이')} {label}에 다시 불을 켰다 ({a['why']}).", f"{label} 다시 점등 (서버 조절)", "▶ 다시 올림"),
+        "throttle": (f"{j(ACTOR, '이')} 서버 부하를 줄이려고 {ro} 가는 리소스 흐름을 좁혔다 ({a['why']}).",
+                     f"{label} 리소스 흐름 제한 (서버 조절)", "🐢 늦춤"),
+        "unthrottle": (f"{j(ACTOR, '이')} {ro} 가는 리소스 흐름을 원래대로 되돌렸다 ({a['why']}).",
+                       f"{label} 리소스 흐름 복구 (서버 조절)", "↩ 되돌림"),
     }[a["do"]]
 
 
@@ -760,13 +760,13 @@ OWNERS = {"bookoasis_assistant.service": "BOOK", "upload": "BOOK"}
 
 
 def key_people(names: list[str], agents: list[dict] | None = None, per_company: int = 2) -> list[str]:
-    """바로 반응할 사람: 슈나(결계 담당) + 수비대장 베니마루 + 조치를 당한 시설의 담당자(stewards) + 시청 담당 소라
+    """바로 반응할 사람: 슈나(서버 담당) + 시설관리팀장 베니마루 + 조치를 당한 시설의 담당자(stewards) + 시청 담당 소라
     (그 시설이 밀린 게 시청 때문이니 서로 아웅다웅) - 담당이 없는 시설이면 그 기관 사람 몇 명."""
     from . import stewards, worldcfg
     from .agents import load_agents
     from .facilities import FACILITIES
     agents = agents if agents is not None else load_agents()
-    out = [ACTOR, "베니마루"] + ([stewards.steward("chair", agents)] if "결계 경보" in names else [])   # 단계는 총괄도 바로 안다
+    out = [ACTOR, "베니마루"] + ([stewards.steward("chair", agents)] if "서버 경보" in names else [])   # 단계는 총괄도 바로 안다
     for name in names:
         key = stewards.for_name(name)
         if key and key != "loadshed":
@@ -779,7 +779,7 @@ def key_people(names: list[str], agents: list[dict] | None = None, per_company: 
 
 
 def reflect(done: list[dict], react=None) -> list[str]:
-    """[잠금 안에서, notify 바로 뒤] 인물 세계에 바로 반영: 마을 사건 + 관련 인물이 지금 반응 + 슈나 기억."""
+    """[잠금 안에서, notify 바로 뒤] 인물 세계에 바로 반영: 거리 사건 + 관련 인물이 지금 반응 + 슈나 기억."""
     from . import agents as ag, memory
     react = react or ag.react_now
     reacted = []
@@ -788,8 +788,8 @@ def reflect(done: list[dict], react=None) -> list[str]:
         try:
             reacted += react(text, title, key_people([a["name"]]))
         except Exception as e:  # noqa: BLE001
-            print(f"[결계 조절] 세계 반영 실패: {e}")
-        memory.remember(ACTOR, text, 5, [], "결계")
+            print(f"[서버 조절] 세계 반영 실패: {e}")
+        memory.remember(ACTOR, text, 5, [], "서버")
     return reacted
 
 
@@ -828,7 +828,7 @@ def record_hour(data: dict, now: datetime, index: float, playing: int | None) ->
 
 
 def max_cpu(now: datetime | None = None, fresh_min: int = 15) -> float | None:
-    """두 서버 중 높은 쪽의 최근 CPU % (raids 결계 부하용). 오래됐으면 None."""
+    """두 서버 중 높은 쪽의 최근 CPU % (raids 서버 부하용). 오래됐으면 None."""
     now = now or now_kst()
     since = (now - timedelta(minutes=fresh_min)).isoformat()
     vals = [st["last_cpu"] for st in (_load().get("hosts") or {}).values()
@@ -837,7 +837,7 @@ def max_cpu(now: datetime | None = None, fresh_min: int = 15) -> float | None:
 
 
 def stage(now: datetime | None = None, fresh_min: int = 15) -> int:
-    """지금 가장 높은 결계 경보 단계 (오래됐으면 0)."""
+    """지금 가장 높은 서버 경보 단계 (오래됐으면 0)."""
     now = now or now_kst()
     since = (now - timedelta(minutes=fresh_min)).isoformat()
     return max([int(st.get("stage", 0)) for st in (_load().get("hosts") or {}).values() if st.get("at", "") >= since] or [0])
@@ -846,7 +846,7 @@ def stage(now: datetime | None = None, fresh_min: int = 15) -> int:
 def summary(now: datetime | None = None) -> str:
     now = now or now_kst()
     data = _load()
-    lines = [f"💠 **결계 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 재생 없음 {'/'.join(f'{t:g}' for t in STAGES)}% · "
+    lines = [f"💠 **서버 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 재생 없음 {'/'.join(f'{t:g}' for t in STAGES)}% · "
              f"재생 중 {'/'.join(f'{t:g}' for t in STAGES_PLAY)}% = 1~{TOP}단계) - 시청 경로(북오아시스·Plex·Tautulli·YM_PLAYER·SHYNI·flaskfarm)는 절대 안 건드림"
              + (" (시험 모드)" if DRY_RUN else "")]
     word = {"stop": "내림", "start": "올림", "throttle": "늦춤", "unthrottle": "되돌림", "stage": "단계"}

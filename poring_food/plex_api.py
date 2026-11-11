@@ -1,10 +1,10 @@
 """
-Plex 직접 조회 - Tautulli가 꺼져 있을 때(결계 조절로 내렸거나 죽었을 때) 대신 Plex 서버에 바로 묻는다.
+Plex 직접 조회 - Tautulli가 꺼져 있을 때(서버 조절로 내렸거나 죽었을 때) 대신 Plex 서버에 바로 묻는다.
 
 plex MCP(config/mcp_servers.yaml "plex")와 같은 서버/토큰(PLEX_URL, PLEX_TOKEN)을 쓰지만, MCP는 부를 때마다 node 프로세스를
 띄워서 1분마다 묻기엔 무겁다 - 그래서 Plex HTTP API를 바로 부른다 (읽기만).
 - sessions(): /status/sessions -> Tautulli get_activity 세션과 같은 모양 (plex_watch.describe가 그대로 쓴다).
-  + 변환 속도(transcode_speed)와 struggling(): 버퍼링 중이거나 변환이 실시간을 못 따라가는 재생 (결계 조절이 본다).
+  + 변환 속도(transcode_speed)와 struggling(): 버퍼링 중이거나 변환이 실시간을 못 따라가는 재생 (서버 조절이 본다).
   시청자 계정(User)은 가져오지 않는다.
 - plays_by_date(days): /status/sessions/history/all -> {날짜: 재생 수} (metrics 판매 실적 대체용).
   Plex 기록은 "다 본 것" 위주라 Tautulli 재생 수보다 조금 적게 나온다.

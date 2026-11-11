@@ -1,4 +1,4 @@
-"""에이전트 한 회차: 판단 -> 대화(시간당 상한, 한 사람 한 대화) -> 마을 풍경. 가짜 LLM으로."""
+"""에이전트 한 회차: 판단 -> 대화(시간당 상한, 한 사람 한 대화) -> 거리 풍경. 가짜 LLM으로."""
 import logging
 import random
 import re
@@ -13,7 +13,7 @@ def _handler(system, user):
     me = m.group(1) if m else ""
     if "이번 한 시간 동안" in user:
         contact = {"to": PAIRS[me], "how": "직접", "opening": f"{me}의 첫마디"} if me in PAIRS else None
-        return {"location": "찻집 오후세시", "activity": "일", "state": "일하는 중", "thought": "흠", "plan": "",
+        return {"location": "카페 오후세시", "activity": "일", "state": "일하는 중", "thought": "흠", "plan": "",
                 "contact": contact}
     if "다음 한마디" in user:
         return {"say": "응", "end": True}
@@ -91,7 +91,7 @@ def test_town_view_lists_everyone(fake_llm, monkeypatch, caplog):
     # 배경 인물도 보인다 (특정 인물 이름으로 확인하면 그 사람이 자는 시간대에 실패해서, 깨어 있는 배경 인물 아무나)
     agent_names = {a["name"] for a in agents.load_agents()}
     awake_bg = [st["name"] for st in states.values() if st["name"] not in agent_names and st.get("state") != "자는 중"]
-    assert "지금 마을은" in out
+    assert "지금 거리는" in out
     assert not awake_bg or any(n in out for n in awake_bg)
 
 
@@ -138,7 +138,7 @@ def test_persona_and_voice_reach_every_speaking_prompt(fake_llm, monkeypatch):
 
 
 def test_ripple_round_chains_reactions_within_the_hour(fake_llm, monkeypatch, caplog):
-    """카즈마-아쿠아 대화 -> (반응) 아쿠아가 팔린에게 하소연 -> (다음 바퀴) 팔린이 마을 통신방에 한마디. 같은 시간 안에."""
+    """카즈마-아쿠아 대화 -> (반응) 아쿠아가 팔린에게 하소연 -> (다음 바퀴) 팔린이 사내 단톡방에 한마디. 같은 시간 안에."""
     caplog.set_level(logging.INFO, logger="poring_food")
     _quiet(monkeypatch)
     monkeypatch.setattr(agents, "RIPPLE_CONVOS_PER_HOUR", 2)
@@ -148,16 +148,16 @@ def test_ripple_round_chains_reactions_within_the_hour(fake_llm, monkeypatch, ca
         me = re.search(r"'([^']+)'", system).group(1)
         if "이번 한 시간 동안" in user:
             c = {"to": first[me], "how": "직접", "opening": "혜진 쌤!"} if me in first else None
-            return {"location": "찻집 오후세시", "activity": "일", "state": "일하는 중", "thought": "흠", "contact": c}
+            return {"location": "카페 오후세시", "activity": "일", "state": "일하는 중", "thought": "흠", "contact": c}
         if "다음 한마디" in user:
             return {"say": "응", "end": True}
         if "방금 이번 시간에 일어난 일" in user:
             if me == "아쿠아":
                 return {"react": "연락", "thought": "미선이한테 얘기해야지", "matters": 7, "consider": "속상해서 못 참겠다",
-                        "contact": {"to": "팔린", "how": "통신석", "opening": "미선아 있잖아"}}
+                        "contact": {"to": "팔린", "how": "메신저", "opening": "미선아 있잖아"}}
             if me == "팔린":
-                return {"react": "통신방", "thought": "다들 알아야 해",
-                        "group_post": {"group": "마을 통신방", "text": "리그루드 촌장님 이것 좀 보세요"}}
+                return {"react": "단톡방", "thought": "다들 알아야 해",
+                        "group_post": {"group": "사내 단톡방", "text": "리그루드 번영회장님 이것 좀 보세요"}}
             return {"react": "가만히", "thought": "그렇구나"}
         return {}
     fake_llm(handler)
@@ -169,7 +169,7 @@ def test_ripple_round_chains_reactions_within_the_hour(fake_llm, monkeypatch, ca
     assert re.search(r"대화 \d+마디: 카즈마[와과] 아쿠아", log)
     assert "파급 1바퀴" in log and "아쿠아" in log
     assert re.search(r"대화 \d+마디: 아쿠아와 팔린", log)          # 반응이 새 대화로
-    assert "마을 통신방 팔린: 리그루드 촌장님 이것 좀 보세요" in log    # 그 대화가 또 다음 바퀴 반응으로
+    assert "사내 단톡방 팔린: 리그루드 번영회장님 이것 좀 보세요" in log    # 그 대화가 또 다음 바퀴 반응으로
     assert "파급 3바퀴" in log or "파급 2바퀴" in log
     m = re.search(r"파급 라운드: 반응 고민 (\d+)번, 행동 (\d+)번", log)
     assert m and int(m.group(1)) <= agents.RIPPLE_MAX_REACTIONS and int(m.group(2)) >= 2
@@ -193,7 +193,7 @@ def test_ripple_respects_caps(fake_llm, monkeypatch, caplog):
         if "다음 한마디" in user:
             return {"say": "응", "end": True}
         if "방금 이번 시간에 일어난 일" in user:
-            return {"react": "연락", "thought": "또 연락", "contact": {"to": "리그루드", "how": "통신석", "opening": "촌장님"}}
+            return {"react": "연락", "thought": "또 연락", "contact": {"to": "리그루드", "how": "메신저", "opening": "번영회장님"}}
         return {}
     fake_llm(handler)
     agents.tick(characters.load_roster())
@@ -204,7 +204,7 @@ def test_ripple_respects_caps(fake_llm, monkeypatch, caplog):
 
 
 def test_ripple_agent_decides_whether_to_react(fake_llm, monkeypatch, caplog):
-    """스스로 매긴 중요도가 낮으면 '연락'이라고 해도 가만히 / 통신방 글은 이름 불린 사람 말고 본 사람도 고민해 본다."""
+    """스스로 매긴 중요도가 낮으면 '연락'이라고 해도 가만히 / 단톡방 글은 이름 불린 사람 말고 본 사람도 고민해 본다."""
     caplog.set_level(logging.INFO, logger="poring_food")
     _quiet(monkeypatch)
     monkeypatch.setattr(agents, "_group_channel", lambda g: 1)
@@ -213,14 +213,14 @@ def test_ripple_agent_decides_whether_to_react(fake_llm, monkeypatch, caplog):
     def handler(system, user):
         me = re.search(r"'([^']+)'", system).group(1)
         if "이번 한 시간 동안" in user:
-            gp = {"group": "마을 통신방", "text": "오늘 골목 시끄럽네요"} if me == "알다프" else None
+            gp = {"group": "사내 단톡방", "text": "오늘 골목 시끄럽네요"} if me == "알다프" else None
             c = {"to": "아쿠아", "how": "직접", "opening": "쌤"} if me == "카즈마" else None
             return {"location": "골목", "activity": "일", "state": "일하는 중", "thought": "흠", "contact": c, "group_post": gp}
         if "다음 한마디" in user:
             return {"say": "응", "end": True}
         if "방금 이번 시간에 일어난 일" in user:
             return {"consider": "별로 상관없는 일", "matters": 2, "react": "연락",
-                    "contact": {"to": "리그루드", "how": "통신석", "opening": "촌장님"}, "thought": "그냥 넘기자"}
+                    "contact": {"to": "리그루드", "how": "메신저", "opening": "번영회장님"}, "thought": "그냥 넘기자"}
         return {}
     fake_llm(handler)
     agents.tick(characters.load_roster())
@@ -229,11 +229,11 @@ def test_ripple_agent_decides_whether_to_react(fake_llm, monkeypatch, caplog):
     m = re.search(r"파급 라운드: 반응 고민 (\d+)번, 행동 (\d+)번, 새 대화 (\d+)개", log)
     assert m and m.group(2) == "0" and m.group(3) == "0"
     first = re.search(r"파급 1바퀴 \([^)]*\): (.+)", log).group(1).split(", ")
-    assert len(set(first) - {"카즈마", "아쿠아"}) >= 1  # 통신방 글을 본 사람도 반응할지 고민해 본다
+    assert len(set(first) - {"카즈마", "아쿠아"}) >= 1  # 단톡방 글을 본 사람도 반응할지 고민해 본다
 
 
 def test_town_map_png(fake_llm, monkeypatch, tmp_path):
-    """매시 마을 지도 그림: 장소별 사람 + 이번 시간 대화 선. 글꼴을 못 구하는 환경이면 건너뛴다."""
+    """매시 거리 지도 그림: 장소별 사람 + 이번 시간 대화 선. 글꼴을 못 구하는 환경이면 건너뛴다."""
     import pytest
     from poring_food import outbox, townmap
     if not townmap._font_file():
@@ -254,7 +254,7 @@ def test_town_map_png(fake_llm, monkeypatch, tmp_path):
     from PIL import Image
     im = Image.open(files[0]["path"])
     assert im.size[0] == townmap.W and im.size[1] > 400
-    assert not [it for it in items if it["kind"] == "agent" and it["name"] == "마을 소식" and "지금 마을은" in it["text"]]
+    assert not [it for it in items if it["kind"] == "agent" and it["name"] == "거리 소식" and "지금 거리는" in it["text"]]
 
 
 def test_daily_cap_counts_only_first_decision_convos(fake_llm, monkeypatch, caplog):
@@ -338,18 +338,18 @@ def test_live_no_duplicate_or_overlapping_pair_conversations(fake_llm, monkeypat
             me = re.search(r"'([^']+)'", system).group(1)
             other = PAIRS.get(me) or next((k for k, v in PAIRS.items() if v == me), "")
             return {"consider": "또 할 말", "matters": 8, "react": "연락",
-                    "contact": {"to": other, "how": "통신석", "opening": "또 나야"}, "thought": "흠"}
+                    "contact": {"to": other, "how": "메신저", "opening": "또 나야"}, "thought": "흠"}
         return _handler(system, user)
 
     fake_llm(handler)
     t = datetime(2026, 10, 13, 20, 10)
     monkeypatch.setattr(agents, "now_kst", lambda: t)
-    assert live.enqueue_convo(t, "카즈마", "아쿠아", opening="쌤", how="통신석", place="골목", depth=0, hk="x")
-    assert not live.enqueue_convo(t, "아쿠아", "카즈마", opening="두식씨", how="통신석", place="골목", depth=0, hk="x")
+    assert live.enqueue_convo(t, "카즈마", "아쿠아", opening="쌤", how="메신저", place="골목", depth=0, hk="x")
+    assert not live.enqueue_convo(t, "아쿠아", "카즈마", opening="두식씨", how="메신저", place="골목", depth=0, hk="x")
     assert live.run_one(t)
     assert not live.pending_pair("카즈마", "아쿠아")                # 반응으로 같은 두 사람 대화가 또 잡히지 않음
     # 카즈마가 아직 대화 중(마디가 올라가는 중)이면 다른 사람과의 대화는 그 뒤로
-    live.enqueue_convo(t, "카이진", "카즈마", opening="두식아", how="직접", place="길드 주점", depth=0, hk="x")
+    live.enqueue_convo(t, "카이진", "카즈마", opening="두식아", how="직접", place="센시네 주점", depth=0, hk="x")
     jobs_before = live.pending()
     live.run_one(t)
     ends = agents._load_state()["_talking"]["카즈마"]

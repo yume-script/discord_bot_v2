@@ -1,17 +1,17 @@
 """
-도서관 손님 알림 - 실제 북오아시스에서 누가 책을 읽기 시작하면 마을(마을 통신방)에 알린다.
+편집국 손님 알림 - 실제 북오아시스에서 누가 책을 읽기 시작하면 거리(사내 단톡방)에 알린다.
 
-이야기 속 설정: 북오아시스에서 책을 읽음 = 오아시스 마법도서관에 방문객이 와서 그 책(마법서/그림 두루마리)을 펼친 것.
+이야기 속 설정: 북오아시스에서 책을 읽음 = ZEEPS 편집국에 독자가 와서 그 책(책/웹툰)을 펼친 것.
 - 봇(cogs/poring_food.py)이 POLL_SEC(기본 10분)마다 북오아시스 MCP run_readonly_query로 서재별 user_progress
   (책별 마지막으로 읽은 시각/읽은 쪽수)의 최근 기록을 본다. 북오아시스엔 웹훅이 없어서 가끔 묻는 방식.
   (MCP가 매번 SSH + docker exec라 1분마다는 무겁다)
 - 새로 읽은 기록(마지막으로 읽은 시각이나 쪽수가 지난번과 다른 책)이 있으면 ANNOUNCER(기본 애순이)가 자기 말투로
-  마을 통신방에 한마디 (LLM 1회, 실패하면 정해진 문장). 처음 조회는 기준만 기록한다.
+  사내 단톡방에 한마디 (LLM 1회, 실패하면 정해진 문장). 처음 조회는 기준만 기록한다.
 - 실제 읽은 사람 계정은 이야기에 넣지 않는다 ("손님"). 성인 서재(BOOKOASIS_ADULT_DB_TYPES)는 제목 없이
-  "금서고에 손님"으로만 - 금서고 담당 위벨이 마을이 아니라 도서관 통신방에 알린다.
+  "성인 서고에 손님"으로만 - 성인 서고 담당 위벨이 거리가 아니라 편집국 단톡방에 알린다.
 - 같은 작품(시리즈 단위)은 SAME_TITLE_HOURS 안에 다시 알리지 않는다 (한 권 읽는 동안 쪽수가 계속 바뀌어도 한 번).
   한 시간에 MAX_PER_HOUR개까지, 알리는 사람이 자는 시간엔 기록만.
-- 인물들은 판단 때 [요즘 오아시스 마법도서관 손님이 읽은 책]을 본다 (얘깃거리로, 추가 LLM 없음).
+- 인물들은 판단 때 [요즘 ZEEPS 편집국 손님이 읽은 책]을 본다 (얘깃거리로, 추가 LLM 없음).
 저장: storage/poring_food/book_watch.json {"seen": {서재|책: 기록}, "announced": [...]}
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ ENABLED = BOOKOASIS_ENABLED and os.getenv("PORING_BOOK_WATCH", "1") not in ("0",
 POLL_SEC = int(os.getenv("PORING_BOOK_WATCH_SEC", "600"))
 ANNOUNCER = os.getenv("PORING_BOOK_WATCH_ANNOUNCER", "애순이")
 ADULT_ANNOUNCER = os.getenv("PORING_BOOK_WATCH_ADULT_ANNOUNCER", "위벨")
-PLACE = "오아시스 마법도서관"
+PLACE = "ZEEPS 편집국"
 MAX_PER_HOUR = int(os.getenv("PORING_BOOK_WATCH_MAX_PER_HOUR", "3"))
 SAME_TITLE_HOURS = 3
 SHOW_HOURS = 3
@@ -89,10 +89,10 @@ def describe(row: dict) -> dict:
     title = str(row.get("title") or "").strip()
     series = str(row.get("series_name") or "").strip()
     work = series or title
-    kind = "그림 두루마리" if "웹툰" in lib else ("그림책" if "만화" in lib else "책")
+    kind = "웹툰" if "웹툰" in lib else ("그림책" if "만화" in lib else "책")
     return {"key": f"{db}|{row.get('book_id')}", "stamp": f"{row.get('last_read_at')}|{row.get('pages_read')}",
             "work": f"{db}|{work}", "title": "" if adult else (title if not series or series in title else f"{series} - {title}"),
-            "kind": "금서고 책" if adult else kind, "adult": adult,
+            "kind": "성인 서고 책" if adult else kind, "adult": adult,
             "done": bool(row.get("is_completed"))}
 
 
@@ -108,19 +108,19 @@ def has_new(rows: list[dict]) -> bool:
 def _line(agent: dict, item: dict) -> str:
     from .llm import llm_json
     if item["adult"]:
-        what = "금서고(성인 서가)의 책 한 권 - 제목/내용은 절대 말하지 않는다, '금서고에 손님'까지만"
+        what = "성인 서고(성인 서가)의 책 한 권 - 제목/내용은 절대 말하지 않는다, '성인 서고에 손님'까지만"
     else:
         what = f"'{item['title']}' ({item['kind']})" + (" - 끝까지 다 읽었다" if item["done"] else "")
     out = llm_json(
         f"너는 '{agent['name']}'이다. {agent.get('profile', '')}\n[말투] {agent.get('speech', '')}\n{worldcfg.WORLD_RULE}",
-        f"지금 {PLACE}에 손님이 와서 {what}을(를) 읽고 있다. 통신방에 이걸 알리는 한마디를 내 말투로 1~2문장 써라. "
+        f"지금 {PLACE}에 손님이 와서 {what}을(를) 읽고 있다. 단톡방에 이걸 알리는 한마디를 내 말투로 1~2문장 써라. "
         "책 내용/줄거리를 지어내지 마라 (제목은 그대로 말한다). 손님 이름은 모른다. 반드시 JSON으로만 응답: {\"text\": \"한마디\"}",
-        temperature=0.9, timeout=30, tag=f"도서관 손님 {agent['name']}", agent=agent["name"])
+        temperature=0.9, timeout=30, tag=f"편집국 손님 {agent['name']}", agent=agent["name"])
     text = str((out or {}).get("text") or "").strip()
     if text:
         return text[:200]
     if item["adult"]:
-        return "금서고에 손님 한 분 오셨네요. 조용히들 해 주세요."
+        return "성인 서고에 손님 한 분 오셨네요. 조용히들 해 주세요."
     return f"지금 {PLACE}에 손님이 '{item['title']}' 읽고 계세요~"
 
 
@@ -139,7 +139,7 @@ def process(rows: list[dict], now: datetime | None = None) -> list[dict]:
     data["seen"] = dict(list(seen.items())[-500:])
     done = []
     if first:
-        print(f"[도서관 손님] 처음 조회 - 기준만 기록 ({len(items)}건)")
+        print(f"[편집국 손님] 처음 조회 - 기준만 기록 ({len(items)}건)")
     if fresh:
         by_name = {a["name"]: a for a in ag.load_agents()}
         hour_ago = (now - timedelta(hours=1)).isoformat()
@@ -148,7 +148,7 @@ def process(rows: list[dict], now: datetime | None = None) -> list[dict]:
             if any(a.get("work") == item["work"] and a["at"] >= recent for a in announced) or \
                     any(d["work"] == item["work"] for d in done):
                 continue  # 같은 작품을 방금 알렸다 (읽는 동안 쪽수가 계속 바뀐다)
-            # 일반 서가는 애순이가 마을 통신방에, 금서고는 위벨이 도서관 통신방에 (마을에 떠들 일은 아니라서)
+            # 일반 서가는 애순이가 사내 단톡방에, 성인 서고는 위벨이 편집국 단톡방에 (거리에 떠들 일은 아니라서)
             agent = by_name.get(ADULT_ANNOUNCER if item["adult"] else ANNOUNCER) or by_name.get(ANNOUNCER)
             group = ag._shop_group(agent.get("company", "")) if agent and item["adult"] else ag.TOWN_GROUP
             rec = {"at": now.isoformat(timespec="minutes"), "work": item["work"], "title": item["title"],
@@ -158,10 +158,10 @@ def process(rows: list[dict], now: datetime | None = None) -> list[dict]:
                 ag._post_group(agent, group, f"📚 {_line(agent, item)}", {}, list(by_name.values()), at=now)
                 rec["posted"] = True
                 done.append({"work": item["work"], "title": item["title"]})
-                print(f"[도서관 손님] {item['title'] or '(제목 숨김)'} - {agent['name']}이 {group}에 알림")
+                print(f"[편집국 손님] {item['title'] or '(제목 숨김)'} - {agent['name']}이 {group}에 알림")
             else:
                 done.append({"work": item["work"], "title": item["title"], "posted": False})
-                print(f"[도서관 손님] {item['title'] or '(제목 숨김)'} - 기록만 (알릴 사람이 없거나 자는 중/상한)")
+                print(f"[편집국 손님] {item['title'] or '(제목 숨김)'} - 기록만 (알릴 사람이 없거나 자는 중/상한)")
             announced.append(rec)
     data["announced"] = announced
     _save(data)
@@ -169,7 +169,7 @@ def process(rows: list[dict], now: datetime | None = None) -> list[dict]:
 
 
 def prompt_block(company: str = "", now: datetime | None = None) -> str:
-    """판단용: 최근 SHOW_HOURS시간 안에 도서관 손님이 읽은 책. 금서고 손님은 도서관 사람만 안다 (그것도 제목 없이)."""
+    """판단용: 최근 SHOW_HOURS시간 안에 편집국 손님이 읽은 책. 성인 서고 손님은 편집국 사람만 안다 (그것도 제목 없이)."""
     from .worldcfg import BOOK
     now = now or now_kst()
     since = (now - timedelta(hours=SHOW_HOURS)).isoformat()

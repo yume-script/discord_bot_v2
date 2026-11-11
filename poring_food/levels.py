@@ -1,12 +1,12 @@
 """
-전투 레벨 - 밤마다 몬스터 침입(raids.py)에서 싸우거나 돕거나 다친 사람을 돌본 인물이 경험치를 얻고 레벨이 오른다.
+경력 레벨 - 밤마다 장애 비상(raids.py)에서 복구하거나 돕거나 몸살 난 사람을 돌본 인물이 경험치를 얻고 레벨이 오른다.
 
-- 경험치: 침입 한 번에 결과별 기본(XP_BY_OUTCOME) + 몬스터 등급 보너스, 그날 가장 힘을 많이 낸 사람(MVP)은 +MVP_XP.
-  싸움꾼이 아닌 사람(화살 나르기/횃불 들기/부상자 옮기기)은 절반. 치유사(raids.HEALER)는 다친 사람 1명당 HEAL_XP.
-  방어 시설을 세우거나 고친 사람(decor)도 DECOR_XP.
+- 경험치: 장애 비상 한 번에 결과별 기본(XP_BY_OUTCOME) + 사고 규모 보너스, 그날 가장 힘을 많이 낸 사람(MVP)은 +MVP_XP.
+  복구 담당이 아닌 사람(문의 응대/공지 올리기/커피 나르기)은 절반. 약사(raids.HEALER)는 몸살 난 사람 1명당 HEAL_XP.
+  설비를 세우거나 고친 사람(decor)도 DECOR_XP.
 - 레벨: 다음 레벨까지 필요한 경험치 = XP_STEP x 지금 레벨 (Lv.1->2 80, 2->3 160 ...), 최대 MAX_LEVEL.
-- 효과: 침입 때 낸 힘이 레벨당 POWER_PER_LEVEL씩 커진다 (raids.defenders). 몬스터도 마을 평균 레벨만큼 조금 세진다.
-- 칭호: TITLES (Lv.5 숙련, Lv.10 정예, Lv.20 영웅, Lv.30 전설) - 판단/명단에 보인다, 오르면 기억/연대기에 남는다.
+- 효과: 장애 비상 때 낸 힘이 레벨당 POWER_PER_LEVEL씩 커진다 (raids.defenders). 사고 규모도 거리 평균 레벨만큼 조금 커진다.
+- 칭호: TITLES (Lv.5 주임, Lv.10 선임, Lv.20 수석, Lv.30 전설의 해결사) - 판단/명단에 보인다, 오르면 기억/연대기에 남는다.
 저장: storage/poring_food/levels.json {이름: {"level", "xp", "battles", "mvp", "best"}}
 """
 from __future__ import annotations
@@ -21,12 +21,12 @@ LEVELS_PATH = os.path.join(STATE_DIR, "levels.json")
 XP_STEP = 80
 MAX_LEVEL = 50
 POWER_PER_LEVEL = 0.08          # Lv.10이면 1.72배
-XP_BY_OUTCOME = {"대승": 30, "격퇴": 25, "고전": 20, "성벽 돌파": 12}
+XP_BY_OUTCOME = {"완벽 방어": 30, "복구 성공": 25, "진땀 복구": 20, "서비스 중단": 12}
 MVP_XP = 15
-SUPPORT_RATIO = 0.5             # 싸움꾼이 아닌 사람 (돕기)
+SUPPORT_RATIO = 0.5             # 복구 담당이 아닌 사람 (돕기)
 HEAL_XP = 10
 DECOR_XP = 8
-TITLES = [(30, "전설"), (20, "영웅"), (10, "정예"), (5, "숙련")]
+TITLES = [(30, "전설의 해결사"), (20, "수석"), (10, "선임"), (5, "주임")]
 
 
 def _load() -> dict:
@@ -74,7 +74,7 @@ def average(names: list[str]) -> float:
 
 
 def gain(gains: dict[str, int], battle: bool = False, mvp: str = "", best: str = "") -> list[dict]:
-    """경험치를 더하고 레벨을 올린다. gains = {이름: 경험치}. battle=True면 싸움 횟수도 센다.
+    """경험치를 더하고 레벨을 올린다. gains = {이름: 경험치}. battle=True면 비상 대응 횟수도 센다.
     반환: 레벨이 오른 사람 [{"name", "from", "to", "title"(새로 받은 칭호, 없으면 "")}]."""
     data = _load()
     ups = []
@@ -103,19 +103,19 @@ def gain(gains: dict[str, int], battle: bool = False, mvp: str = "", best: str =
 
 
 def tag(name: str) -> str:
-    """'Lv.7 숙련' 같은 짧은 표시 (기록이 없으면 'Lv.1')."""
+    """'Lv.7 주임' 같은 짧은 표시 (기록이 없으면 'Lv.1')."""
     st = get(name)
     t = title(st["level"])
     return f"Lv.{st['level']}" + (f" {t}" if t else "")
 
 
 def prompt_block(name: str) -> str:
-    """판단용: 내 전투 레벨."""
+    """판단용: 내 경력 레벨."""
     st = get(name)
     if not st["battles"] and st["level"] == 1 and not st["xp"]:
         return ""
-    return (f"[내 전투 레벨] {tag(name)} (경험치 {st['xp']}/{need(st['level'])}, 침입 {st['battles']}번 싸움"
-            + (f", MVP {st['mvp']}번" if st["mvp"] else "") + ") - 밤마다 성벽에서 싸우면 오른다")
+    return (f"[내 경력 레벨] {tag(name)} (경험치 {st['xp']}/{need(st['level'])}, 장애 비상 {st['battles']}번 대응"
+            + (f", MVP {st['mvp']}번" if st["mvp"] else "") + ") - 장애 비상 때 복구하면 오른다")
 
 
 def ranking(limit: int = 10) -> list[tuple[str, dict]]:

@@ -47,18 +47,18 @@ RENT = {"사원": 550_000, "주임": 600_000, "대리": 650_000, "과장": 750_0
 
 # 개인 활동 비용 (활동/장소 텍스트에 키워드가 있으면 그 시간에 한 번 지출)
 ACTIVITY_COST = [
-    ("쇼핑", 70_000), ("장터", 50_000), ("환영극", 15_000), ("맛집", 30_000), ("술", 40_000), ("길드 주점", 35_000),
-    ("화주", 35_000), ("데이트", 50_000), ("소개팅", 50_000), ("찻집", 6_000), ("약초차", 5_000),
-    ("배달", 25_000), ("물약", 20_000),
+    ("쇼핑", 70_000), ("장터", 50_000), ("영상", 15_000), ("맛집", 30_000), ("술", 40_000), ("센시네 주점", 35_000),
+    ("화주", 35_000), ("데이트", 50_000), ("소개팅", 50_000), ("카페", 6_000), ("허브차", 5_000),
+    ("배달", 25_000), ("피로회복제", 20_000),
 ]
 
 GOAL_POOL = [
-    "올해 안에 승급하기", "돈 모아서 왕도 구경 가기", "건강 챙기기(수련 꾸준히)", "좋은 사람 만나기",
+    "올해 안에 승급하기", "돈 모아서 서울 구경 가기", "건강 챙기기(운동 꾸준히)", "좋은 사람 만나기",
     "취미 하나 제대로 해보기", "일하는 곳에서 인정받기", "몰래 다른 길드로 옮길 준비하기", "가족과 시간 더 보내기",
-    "빚 없이 금고 채우기", "믿을 만한 동료 만들기", "몬스터 침입 때 한몫하기",
+    "빚 없이 금고 채우기", "믿을 만한 동료 만들기", "장애 비상 때 한몫하기",
 ]
 SPECIAL_GOALS = {
-    "애순이": ["길드 '포링사랑' 대토벌 우승", "연말 보너스까지 버티기 (도서관 문 닫는 건 일단 보류)", "눈의 피로 낫게 하기"],
+    "애순이": ["길드 '포링사랑' 대규모 레이드 우승", "연말 보너스까지 버티기 (편집국 문 닫는 건 일단 보류)", "눈의 피로 낫게 하기"],
 }
 
 
@@ -95,7 +95,7 @@ def _new_state(name: str, rank: str) -> dict:
         "romance": rnd.uniform(0.1, 0.4), "confidence": rnd.uniform(0.35, 0.7),
         "energy": rnd.uniform(0.6, 0.85), "job_satisfaction": rnd.uniform(0.35, 0.65),
     }
-    if name == "애순이":  # 만성 피로의 도서관 관장
+    if name == "애순이":  # 만성 피로의 편집국 대표
         base.update(stress=0.55, energy=0.45, job_satisfaction=0.4)
     base = {k: round(v, 3) for k, v in base.items()}
     salary = SALARY.get(rank, 3_200_000)
@@ -222,7 +222,7 @@ def _signal_effects(st: dict, info: dict, signals: dict, now: datetime) -> dict:
     elif "비" in weather or "눈" in weather:
         d["happiness"] = d.get("happiness", 0) - 0.01
     # 아래는 건물 안 사정(전력/창고/통신 회선, 입고/상영) - 누가 아는지는 signals.KNOWN_BY가 정한다
-    # (건물 설비는 두 가게+성벽 수비대, 입고/상영 현황은 두 가게만. 건물 밖 가족/친구는 상관없다)
+    # (건물 설비는 두 가게+시설관리팀, 입고/상영 현황은 두 가게만. 건물 밖 가족/친구는 상관없다)
     from . import signals as _signals  # signals가 processor -> life를 가져오므로 순환을 피해 여기서
     company = info.get("company", "")
     facility = "".join(signals.get(k, "") for k in ("facility", "factory") if _signals.knows(company, k))
@@ -275,7 +275,7 @@ def tick(roster: list[dict], states: dict, signals: dict | None = None) -> None:
             d["loneliness"] += 0.02 if alone else -0.04
             if any(w in activity for w in ("데이트", "소개팅")):
                 d["romance"] += 0.05
-            if any(w in activity for w in ("술", "길드 주점", "화주", "소주")):
+            if any(w in activity for w in ("술", "센시네 주점", "화주", "소주")):
                 d["stress"] -= 0.04
                 d["energy"] -= 0.02
 
@@ -310,15 +310,15 @@ def tick(roster: list[dict], states: dict, signals: dict | None = None) -> None:
 # ===================================================================== 상태 -> 행동
 _BIAS_RULES = [
     # (조건, 키워드들, 배율)
-    (lambda s: s.get("stress", 0) >= 0.65, ("술", "길드 주점", "화주", "곡주"), 2.5),
-    (lambda s: s.get("stress", 0) >= 0.65, ("운동", "수련", "훈련장", "산책"), 1.3),
+    (lambda s: s.get("stress", 0) >= 0.65, ("술", "센시네 주점", "화주", "곡주"), 2.5),
+    (lambda s: s.get("stress", 0) >= 0.65, ("운동", "운동", "헬스장", "산책"), 1.3),
     (lambda s: s.get("energy", 1) <= 0.3, ("휴식", "집", "침대", "낮잠", "잠"), 2.5),
     (lambda s: s.get("energy", 1) <= 0.3, ("운동", "쇼핑", "모임", "나들이"), 0.5),
-    (lambda s: s.get("loneliness", 0) >= 0.6, ("친구", "모임", "찻집", "동료", "수다"), 2.0),
+    (lambda s: s.get("loneliness", 0) >= 0.6, ("친구", "모임", "카페", "동료", "수다"), 2.0),
     (lambda s: s.get("romance", 0) >= 0.6, ("소개팅", "데이트"), 2.5),
-    (lambda s: s.get("money", 10**9) < LOW_MONEY, ("쇼핑", "장터", "맛집", "환영극", "데이트"), 0.3),
-    (lambda s: s.get("happiness", 0) >= 0.7, ("나들이", "환영극", "맛집", "장터"), 1.4),
-    (lambda s: s.get("anger", 0) >= 0.5, ("운동", "수련", "내기"), 1.8),
+    (lambda s: s.get("money", 10**9) < LOW_MONEY, ("쇼핑", "장터", "맛집", "영상", "데이트"), 0.3),
+    (lambda s: s.get("happiness", 0) >= 0.7, ("나들이", "영상", "맛집", "장터"), 1.4),
+    (lambda s: s.get("anger", 0) >= 0.5, ("운동", "운동", "내기"), 1.8),
 ]
 
 

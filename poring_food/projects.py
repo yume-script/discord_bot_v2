@@ -1,15 +1,15 @@
 """
-마을 프로젝트 - 모임/투표로 정해진 일을 에이전트들이 실제로 해 나간다.
+거리 프로젝트 - 모임/투표로 정해진 일을 에이전트들이 실제로 해 나간다.
 
 예) 모임 결론 "골목 화단을 만들자" -> 프로젝트 "골목 화단 만들기"
     단계: 장소 정하기 -> 흙과 모종 구하기 -> 심기 -> 이름표 달기 (담당 리그루드, 도움 카즈마/쿠로베)
 
 - 만들기(create): 모임이 결정을 내리면 agents.run_meeting이 실천할 일이 있는지 LLM에게 물어서 만든다
-  (단계 3~5개, 담당자/도움, 범위 마을/회사). 동시에 진행하는 프로젝트는 MAX_ACTIVE개.
+  (단계 3~5개, 담당자/도움, 범위 거리/회사). 동시에 진행하는 프로젝트는 MAX_ACTIVE개.
 - 참여(contribute): 에이전트가 판단할 때 project_work {"project", "did"}를 쓰면 그 시간에 그 일을 한 것.
   담당자 > 도움 > 그 밖의 사람 순으로 진행도가 오르고, 하루에 오를 수 있는 진행도에 상한이 있어서 며칠에 걸쳐 된다.
   단계를 넘을 때마다 채널에 진행 소식, 끝나면 완료 소식.
-- 완료: "우리 마을이 바뀐 것"으로 영구히 모두의 지각에 남고(연대기), 범위 사람 전원의 영구 기억이 된다.
+- 완료: "우리 거리가 바뀐 것"으로 영구히 모두의 지각에 남고(연대기), 범위 사람 전원의 영구 기억이 된다.
 - 멈춤: 이틀 넘게 아무도 손대지 않으면 담당자를 깨워 챙기게 한다.
 
 저장: storage/poring_food/projects.json (지우지 않는다 - 완료된 프로젝트도 그대로 남는다)
@@ -49,11 +49,11 @@ def _save(items: list[dict]) -> None:
     os.replace(tmp, PROJECTS_PATH)
 
 
-TOWN_SCOPE = "마을"
+TOWN_SCOPE = "거리"
 
 
 def open_to(p: dict, name: str) -> bool:
-    """이 사람이 이 프로젝트에 손을 보탤 수 있나. 마을 범위는 지금 마을에 있는 누구나(교체로 새로 나선 사람 포함),
+    """이 사람이 이 프로젝트에 손을 보탤 수 있나. 거리 범위는 지금 거리에 있는 누구나(교체로 새로 나선 사람 포함),
     회사 범위는 만들 때의 회사 사람들."""
     return p.get("scope") == TOWN_SCOPE or not p.get("members") or name in p["members"]
 
@@ -165,7 +165,7 @@ def current_step(p: dict) -> str:
 
 
 def prompt_block(name: str) -> str:
-    """에이전트 지각용: 진행 중인 마을 프로젝트(내가 맡은 일 표시) + 이미 바뀐 것."""
+    """에이전트 지각용: 진행 중인 거리 프로젝트(내가 맡은 일 표시) + 이미 바뀐 것."""
     lines = []
     for p in active():
         if not open_to(p, name):
@@ -175,10 +175,10 @@ def prompt_block(name: str) -> str:
                      + (f" / 도움 {', '.join(p['helpers'][:4])}" if p["helpers"] else "") + (f" ← {role}" if role else ""))
     out = []
     if lines:
-        out.append("[진행 중인 마을 프로젝트 - 손을 보태면 project_work에 그 시간에 실제로 한 일을 써라]\n" + "\n".join(lines))
+        out.append("[진행 중인 거리 프로젝트 - 손을 보태면 project_work에 그 시간에 실제로 한 일을 써라]\n" + "\n".join(lines))
     fin = [p for p in done() if open_to(p, name)][-10:]
     if fin:
-        out.append("[우리 마을이 바뀐 것 - 다 같이 해낸 일]\n" + "\n".join(
+        out.append("[우리 거리가 바뀐 것 - 다 같이 해낸 일]\n" + "\n".join(
             f"- {p['title']}: {p['goal']} ({p.get('done_at', '')[:10]} 완료)" for p in fin))
     return "\n\n".join(out)
 
@@ -189,7 +189,7 @@ def public_block() -> str:
     fin = done()[-10:]
     out = []
     if act:
-        out.append("[마을 프로젝트 진행 중]\n" + "\n".join(f"- {p['title']} {p['progress']}% (담당 {p['owner']})" for p in act))
+        out.append("[거리 프로젝트 진행 중]\n" + "\n".join(f"- {p['title']} {p['progress']}% (담당 {p['owner']})" for p in act))
     if fin:
-        out.append("[마을이 바뀐 것]\n" + "\n".join(f"- {p['title']}: {p['goal']}" for p in fin))
+        out.append("[거리가 바뀐 것]\n" + "\n".join(f"- {p['title']}: {p['goal']}" for p in fin))
     return "\n\n".join(out)

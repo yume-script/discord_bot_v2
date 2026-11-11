@@ -1,5 +1,5 @@
 """
-포링푸드(오아시스 마을 - 애순이와 마을 사람들) 조회 도구 - 아메하나/애순이(ai/rag_engine.py)가 대화 중에 쓴다.
+포링푸드(오아시스 거리 - 애순이와 거리 사람들) 조회 도구 - 아메하나/애순이(ai/rag_engine.py)가 대화 중에 쓴다.
 
 [변경] 원래는 별도 프로젝트였던 포링푸드가 이 파일을 MCP 서버(stdio)로 띄우고, 봇이
 config/mcp_servers.yaml의 poring_food 항목으로 하위 프로세스를 실행해서 붙었다. 봇으로
@@ -10,8 +10,8 @@ config/mcp_servers.yaml의 poring_food 항목으로 하위 프로세스를 실�
   storage/poring_food의 상태 파일만 읽는다.
 - get_character_story: 방송 순서가 안 돌아온 인물의 이야기를 즉석 생성(LLM 호출) - 같은
   시간대 안에서는 캐시를 재사용한다.
-- get_bookoasis_report: 애순이의 오아시스 마법도서관 서가(북오아시스) 마지막 점검 결과.
-- get_watching_now: 지금 재생 중인 수(Plex 종류별 + YM_PLAYER 텔레그램/IPTV, 숫자만)와 결계 경보 단계 (/시청현황과 같은 내용).
+- get_bookoasis_report: 애순이의 ZEEPS 편집국 서가(북오아시스) 마지막 점검 결과.
+- get_watching_now: 지금 재생 중인 수(Plex 종류별 + YM_PLAYER 텔레그램/IPTV, 숫자만)와 서버 경보 단계 (/시청현황과 같은 내용).
 
 함수들은 동기(파일 읽기, requests 기반 LLM 호출)라서 LangChain 도구로 감쌀 때 스레드에서
 실행되게 한다(봇 이벤트 루프를 막지 않게).
@@ -99,7 +99,7 @@ def get_current_status(character: str = "애순이") -> str:
         return f"'{character}'라는 인물을 못 찾았어요. get_character_list로 누가 있는지 확인해보세요."
 
     if len(matches) > 1:
-        lines = [f"'{character}'라는 이름이 여러 곳(가게/마을)에 있어요:"]
+        lines = [f"'{character}'라는 이름이 여러 곳(가게/거리)에 있어요:"]
         for cid, info in matches:
             lines.append(f"- {info.get('company')}: {info.get('location')}에서 {info.get('activity')} 중")
         return "\n".join(lines)
@@ -120,7 +120,7 @@ def get_current_status(character: str = "애순이") -> str:
 
 
 def get_character_list() -> str:
-    """오아시스 마을(마법 판타지 변경 마을 - 오아시스 마법도서관/별빛 환영극장/성벽 수비대)과 애순이·소라의 주변 사람들까지, 등장하는 인물 전체 목록(이름/소속/부서/직급)을 알려준다."""
+    """오아시스 거리(서울 변두리 출판사 거리 - ZEEPS 편집국/ZEEPS 영상콘텐츠팀/시설관리팀)과 애순이·소라의 주변 사람들까지, 등장하는 인물 전체 목록(이름/소속/부서/직급)을 알려준다."""
     entries = []
     for path in sorted(glob.glob(ORGANIZATION_GLOB)):
         try:
@@ -210,9 +210,9 @@ def get_recent_history(character: str = "애순이", days: int = 1) -> str:
 
 def get_all_characters_status() -> str:
     """
-    오아시스 마을 사람들 전원(애순이 포함 - 오아시스 마법도서관, 별빛 환영극장, 골목 가게/성벽 수비대, 주변 사람들)이
-    지금 각자 어디서 뭘 하고 있는지 한 번에 보여준다. "도서관/극장 사람들 지금 뭐하고 있지?", "다들 뭐해?"
-    같은 전체 근황 질문에 쓴다. 소속(도서관/극장/마을)별로 묶어서 보여준다.
+    오아시스 거리 사람들 전원(애순이 포함 - ZEEPS 편집국, ZEEPS 영상콘텐츠팀, 골목 가게/시설관리팀, 주변 사람들)이
+    지금 각자 어디서 뭘 하고 있는지 한 번에 보여준다. "편집국/영상팀 사람들 지금 뭐하고 있지?", "다들 뭐해?"
+    같은 전체 근황 질문에 쓴다. 소속(편집국/영상팀/거리)별로 묶어서 보여준다.
     """
     states = _load_characters_state()
     if not states:
@@ -260,7 +260,7 @@ def get_character_story(character: str) -> str:
         _story_cache[cache_key] = result
         return result
     if len(matches) > 1:
-        return f"'{character}'라는 이름이 여러 곳(가게/마을)에 있어요 - 어디 사람인지 알려주시면 좁혀드릴게요."
+        return f"'{character}'라는 이름이 여러 곳(가게/거리)에 있어요 - 어디 사람인지 알려주시면 좁혀드릴게요."
 
     _, info = matches[0]
     if info.get("state") == "자는 중":
@@ -296,13 +296,13 @@ def get_character_story(character: str) -> str:
 
 def get_bookoasis_report() -> str:
     """
-    애순이가 사장으로 운영하는 '오아시스 마법도서관'의 서가 '북오아시스'(일반 도서/오디오북 서가)의 최근 점검
-    결과를 알려준다 - 마지막 점검 시각, 서가 전산 연결 상태, 최근 새로 입고된 책 목록. "애순아 도서관 서가
-    요즘 어때?", "최근에 들어온 책 있어?"처럼 애순이 도서관의 입고 소식을 물을 때 쓴다.
+    애순이가 사장으로 운영하는 'ZEEPS 편집국'의 서가 '북오아시스'(일반 도서/오디오북 서가)의 최근 점검
+    결과를 알려준다 - 마지막 점검 시각, 서가 전산 연결 상태, 최근 새로 입고된 책 목록. "애순아 편집국 서가
+    요즘 어때?", "최근에 들어온 책 있어?"처럼 애순이 편집국의 입고 소식을 물을 때 쓴다.
     (애순이가 방송 주인공인 시간에 점검하므로, 점검 시각이 몇 시간 전일 수 있다)
     """
     if not os.path.exists(BOOKOASIS_STATE_PATH):
-        return "아직 도서관 서가 점검 기록이 없어요 (애순이가 아직 점검하지 않았거나 기능이 꺼져 있음)."
+        return "아직 편집국 서가 점검 기록이 없어요 (애순이가 아직 점검하지 않았거나 기능이 꺼져 있음)."
     try:
         with open(BOOKOASIS_STATE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -329,9 +329,9 @@ def get_bookoasis_report() -> str:
 
 def get_poring_story(character: str = "") -> str:
     """
-    오아시스 마을(오아시스 마법도서관/별빛 환영극장/골목) 연재 드라마의 줄거리를 알려준다 - 지난 이야기 요약, 진행 중인
-    사건들(등장인물/지금까지/다음 전개), 최근 하루 요약, 최근 대화 장면. "도서관 요즘 무슨 일 있어?", "위벨이랑
-    애순이 무슨 사이야?", "어제 극장이랑 도서관에서 무슨 일 있었어?" 같은 질문에 쓴다. character를 주면 그 인물이
+    오아시스 거리(ZEEPS 편집국/ZEEPS 영상콘텐츠팀/골목) 연재 드라마의 줄거리를 알려준다 - 지난 이야기 요약, 진행 중인
+    사건들(등장인물/지금까지/다음 전개), 최근 하루 요약, 최근 대화 장면. "편집국 요즘 무슨 일 있어?", "위벨이랑
+    애순이 무슨 사이야?", "어제 영상팀이랑 편집국에서 무슨 일 있었어?" 같은 질문에 쓴다. character를 주면 그 인물이
     나온 장면 위주로 보여준다.
     """
     return story.story_so_far(character)
@@ -339,7 +339,7 @@ def get_poring_story(character: str = "") -> str:
 
 def get_watching_now() -> str:
     """
-    지금 실제로 영상/방송을 몇 개 보고 있는지(재생 중인 스트림 수)와 서버 결계 경보 단계를 알려준다.
+    지금 실제로 영상/방송을 몇 개 보고 있는지(재생 중인 스트림 수)와 서버 서버 경보 단계를 알려준다.
     "지금 몇 명 보고 있어?", "플렉스 누가 보고 있어?", "텔레그램으로 보는 사람 있어?", "지금 서버 바빠?" 같은 질문에 쓴다.
     Plex(영화/드라마·시리즈/음악 종류별)와 YM_PLAYER(텔레그램, IPTV/라디오 중계)의 숫자만 나온다 -
     제목과 시청자 계정은 알 수 없고 말하지 않는다. 사람 수가 아니라 재생 수다 (한 사람이 둘을 틀면 2).
@@ -352,7 +352,7 @@ def get_watching_now() -> str:
 
 def get_download_plan() -> str:
     """
-    짐꾼(도서관 두루마리 운반 정령 = bookoasis_assistant)이 웹툰/웹소설 기다무 대여권을 언제 받는지 정하는 '충전 시간대'를
+    짐꾼(편집국 원고 운반 자동화 봇 = bookoasis_assistant)이 웹툰/웹소설 기다무 대여권을 언제 받는지 정하는 '충전 시간대'를
     고를 근거를 보여준다: 최근 14일 시간대별 서버 부하 지수·영상 재생 비율, 가장 한가한 연속 10시간 추천, 마지막 적용,
     지금 적용해도 되는지, 최근 7일 날짜별 다운로드 회차 수·용량. "웹툰 더 많이 받을 수 있어?", "다운로드 언제 하는 게
     좋아?", "기다무 시간대 어때?" 같은 질문에 쓴다. 바꾸려면 preview_waitfree_window로 미리 본 뒤 set_waitfree_window.
@@ -375,7 +375,7 @@ def set_waitfree_window(start_hour: int, end_hour: int) -> str:
     """
     기다무(1·2·3일) 대여권 충전 시각을 start_hour:00 ~ end_hour 전까지(끝 미포함)에 고르게 실제로 옮긴다 - 서버가 한가할 때
     웹툰/웹소설을 받게 해서 영상·책 보기를 방해하지 않고 더 많이 받기 위한 것. 짐꾼을 1~2분 멈췄다가 다시 켜므로
-    지금 재생이 없고 결계 2단계 이하이고 지난 적용 뒤 20시간이 지났을 때만 실제로 한다(아니면 이유만 돌려줌).
+    지금 재생이 없고 서버 2단계 이하이고 지난 적용 뒤 20시간이 지났을 때만 실제로 한다(아니면 이유만 돌려줌).
     옮길 때 작품마다 대여권 한 장이 최대 하루 늦어지므로 자주 바꾸지 않는다 - 먼저 preview_waitfree_window로 확인한다.
     """
     from . import waitfree
@@ -395,7 +395,7 @@ def get_app_versions() -> str:
 def update_app(app: str) -> str:
     """
     plex01의 앱 하나를 지금 GitHub 최신 버전으로 업데이트하고 다시 켠다. app은 bookoasis(북오아시스) / ym_player /
-    bookoasis_assistant(짐꾼). 재생 중이거나 결계 3단계 이상이거나 로컬 수정이 있으면 하지 않고 이유만 돌려준다.
+    bookoasis_assistant(짐꾼). 재생 중이거나 서버 3단계 이상이거나 로컬 수정이 있으면 하지 않고 이유만 돌려준다.
     결과는 시설 정비 채널에도 알린다.
     """
     from . import updater
@@ -407,13 +407,13 @@ def update_app(app: str) -> str:
 
 def get_town_stewards() -> str:
     """
-    오아시스 마을의 시설(실제 서버 프로그램)마다 누가 맡고 있는지와 지금 상태를 알려준다 - Plex 시청은 소라, flaskfarm은
+    오아시스 거리의 시설(실제 서버 프로그램)마다 누가 맡고 있는지와 지금 상태를 알려준다 - Plex 시청은 소라, flaskfarm은
     일레이나, 북오아시스는 페른, 웹툰 다운로더(bookoasis_assistant)는 슈타르크, YM_PLAYER는 프랑처럼. "북오아시스 누가 관리해?",
     "시설 담당자 알려줘", "웹툰 다운로드 담당이 누구야?" 같은 질문에 쓴다. 숫자만, 작품 제목·계정은 없다.
     """
     from . import loadshed, stewards
     data = loadshed._load()
-    lines = ["■ 마을 시설 담당 (실제 프로그램)"]
+    lines = ["■ 거리 시설 담당 (실제 프로그램)"]
     for key, sysd in stewards.SYSTEMS.items():
         st = stewards.status_line(key, data)
         lines.append(f"• {sysd['facility']} ({sysd['label']}) - {stewards.steward(key)}" + (f" · {st}" if st else ""))

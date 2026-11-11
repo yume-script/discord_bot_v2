@@ -1,8 +1,8 @@
 """
-[연결] BookOasis 3D 서재 (bookoasis_assistant) - 오아시스 거리의 서점 건물과 마을 인물을 잇는다.
+[연결] BookOasis 3D 서재 (bookoasis_assistant) - 오아시스 거리의 서점 건물과 거리 인물을 잇는다.
 
 3D 서재에는 서재 쪽 AI 직원(사서 등)이 따로 있고, 이 봇의 인물들은 서재 바깥 사람이다. 둘은 서로의
-속을 모르고 "전화(통신석)"와 "배달"로만 주고받는다.
+속을 모르고 "전화"와 "배달"로만 주고받는다.
 
 1) 전화 받기 - POST /lib3d/call (포링푸드 웹 서버, PORING_WEBHOOK_PORT · Authorization: Bearer LIB3D_CALL_TOKEN)
    3D 서재 [AI 직원]에서 대표(등)의 '바깥 AI 주소'를 http://<봇 서버>:<포트>/lib3d/call 로 넣으면
@@ -88,18 +88,18 @@ def answer_call(body: dict) -> tuple[dict, str]:
         text = " ".join(str(body.get("question") or "").split())[:400]
         if not text:
             raise ValueError("question이 비었습니다.")
-        situation = (f"오아시스 거리의 서점 건물 'BookOasis 3D 서재'에서 통신석이 울렸다. 서재에 온 "
+        situation = (f"오아시스 거리의 서점 건물 'BookOasis 3D 서재'에서 전화가 왔다. 서재에 온 "
                      f"{'손님 ' + asker if body.get('guest') else asker + '님'}이 서재 쪽 사람들이 '{my_post}'로 부르는 나를 찾아 말을 건다.\n"
                      f"[들은 말] {text}")
         rule = ("서재에 온 사람에게 하는 말이라 짧게(2~3문장, 200자 안). 서재 안 책 찾기는 서재 사서가 더 잘 아니 "
-                "모르는 책 제목을 지어내지 마라. 마을 안의 비밀(다른 기관 다툼, 장부 숫자, 누군가의 사생활)은 말하지 않는다.")
+                "모르는 책 제목을 지어내지 마라. 거리 안의 비밀(다른 기관 다툼, 장부 숫자, 누군가의 사생활)은 말하지 않는다.")
         query = text
     else:
         sender = _who(body.get("from"))
         text = " ".join(str(body.get("text") or "").split())[:600]
         if not text:
             raise ValueError("text가 비었습니다.")
-        situation = (f"오아시스 거리의 서점 건물 'BookOasis 3D 서재'에서 일하는 부하 직원 {sender}이(가) 통신석으로 보고를 올렸다. "
+        situation = (f"오아시스 거리의 서점 건물 'BookOasis 3D 서재'에서 일하는 부하 직원 {sender}이(가) 메신저로 보고를 올렸다. "
                      f"나는 그 서재의 '{my_post}'이다.\n[보고] {text}")
         rule = "상사로서 한두 문장(150자 안)으로 답한다 - 칭찬, 걱정, 다음에 챙길 것 중 내 성격대로."
         query = text
@@ -218,7 +218,7 @@ def new_items(data: dict, state: dict) -> tuple[list[dict], dict]:
 def pick_courier() -> dict | None:
     roster = agents.load_agents()
     pool = [a for a in roster if a["name"] in COURIERS] if COURIERS else \
-        [a for a in roster if a.get("company", "").startswith("오아시스 마법도서관") and a["name"] != CALL_AGENT]
+        [a for a in roster if a.get("company", "").startswith("ZEEPS 편집국") and a["name"] != CALL_AGENT]
     awake = [a for a in pool if not agents.is_asleep_now(a["name"])]
     return random.choice(awake or pool) if (awake or pool) else None
 
@@ -228,7 +228,7 @@ def _courier_line(courier: dict | None, items: list[dict]) -> str:
     fallback = f"{titles} 배달 왔어요! 데스크에 둘게요."
     if not courier:
         return fallback
-    user = ("마을 일로 오아시스 거리의 서점 건물 'BookOasis 3D 서재'에 새로 들어온 것을 상자에 담아 배달하러 왔다. "
+    user = ("거리 일로 오아시스 거리의 서점 건물 'BookOasis 3D 서재'에 새로 들어온 것을 상자에 담아 배달하러 왔다. "
             f"[상자 안] {titles}\n안내 데스크에 상자를 내려놓으며 하는 한마디(60자 안). " + agents._voice(courier) + "\n"
             '반드시 JSON으로만: {"text": "한마디"}')
     out = llm_json(agents._system(courier), user, temperature=0.9, timeout=30, tag=f"3D 서재 배달 {courier['name']}", agent=courier["name"])
@@ -276,7 +276,7 @@ def check_and_deliver() -> str:
 
 
 def say_in_library(agent_id: str, text: str, place: str = "") -> None:
-    """마을 쪽에서 3D 서재의 그 직원(예: boss)에게 말을 시킨다 (지금은 관리자 명령 등에서 쓸 수 있게 열어 둠)"""
+    """거리 쪽에서 3D 서재의 그 직원(예: boss)에게 말을 시킨다 (지금은 관리자 명령 등에서 쓸 수 있게 열어 둠)"""
     send_event({"type": "say", "agent": agent_id, "text": text[:160], "place": place})
 
 

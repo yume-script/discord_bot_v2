@@ -14,13 +14,13 @@ from .worldcfg import BOOK, CINEMA, PREMISE, STREET, WORLD_RULE
 # 됨. 오늘 실제 활동(state)에 맞는 헤더/화제로 바꿔서, 게임 중일 때만 게임 얘기가 나오고
 # 나머지는 그날 활동에 맞는 마무리가 나오게 한다.
 _STATUS_HEADERS = {
-    "게임 중": ("🔮 오늘의 길드 원정", "길드 '포링사랑' 원정 상황(토벌/파티/버프 등)"),
+    "게임 중": ("🔮 오늘의 길드 원정", "길드 '포링사랑' 원정 상황(레이드/파티/버프 등)"),
     "데이트 중": ("💕 오늘의 데이트 후기", "방금 있었던 데이트 소감"),
-    "나들이 중": ("🚶 오늘의 나들이 후기", "환영극/남의 서고/고서 장터 등 오늘 다녀온 곳에 대한 소감"),
-    "운동 중": ("💪 오늘의 수련 기록", "오늘 한 수련에 대한 소감"),
+    "나들이 중": ("🚶 오늘의 나들이 후기", "영상/남의 서고/고서 장터 등 오늘 다녀온 곳에 대한 소감"),
+    "운동 중": ("💪 오늘의 운동 기록", "오늘 한 운동에 대한 소감"),
     "모임 중": ("👯 오늘의 모임 후기", "친구들과의 모임 소감"),
     "휴식 중": ("💭 오늘의 소회", "오늘 하루를 보내며 든 잡생각"),
-    "일하는 중": ("📚 오늘의 도서관 소감", "오늘 도서관에서 있었던 일(방문객/입고/서가)에 대한 소감"),
+    "일하는 중": ("📚 오늘의 편집국 소감", "오늘 편집국에서 있었던 일(독자/입고/서가)에 대한 소감"),
     "이동 중": ("🚶 골목길 소회", "골목을 오가며 본 것과 든 생각"),
 }
 _DEFAULT_STATUS_HEADER = ("💭 오늘의 소회", "오늘 하루를 보내며 든 잡생각")
@@ -40,7 +40,7 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
     애순이의 인간적인 희노애락이 담긴 1인칭 보고서를 생성합니다.
     sales_count: 오늘 "영업 판매수량"(Plex 재생 수, poring_food/metrics.py) - 생산량과
     같은 확률(PRODUCTION_STATS_MENTION_PROBABILITY)로 같이 언급되거나 같이 빠진다.
-    bookoasis_block: 오아시스 마법도서관 서가(북오아시스) 소식 - 새 책 입고나 서가 전산
+    bookoasis_block: ZEEPS 편집국 서가(북오아시스) 소식 - 새 책 입고나 서가 전산
     장애/복구가 있을 때만 내용이 있고(bookoasis.build_prompt_block), 없으면 빈 문자열이다.
     """
     count, progress = stats  # 생산량 통계 언패킹
@@ -56,7 +56,7 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
     include_stats = random.random() < PRODUCTION_STATS_MENTION_PROBABILITY
 
     stats_line = (
-        f"- 오늘 신규 입고(도서관 새 책 상자 + 극장 새 필름): {count}건 (평소 하루 입고량 대비 {progress}%)\n"
+        f"- 오늘 신규 입고(편집국 새 책 상자 + 영상팀 새 필름): {count}건 (평소 하루 입고량 대비 {progress}%)\n"
         f"- 오늘 {CINEMA} 상영(관람) 수: {sales_count}회 (맞은편 경쟁 가게의 손님 규모)\n\n"
     ) if include_stats else "\n"
     prev_callback_rule = (
@@ -65,14 +65,14 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
         "- 이전 사건은 이번 보고서에서 굳이 언급하지 않아도 된다 - 오늘 활동에 집중해서 써라.\n"
     )
     stats_rule = (
-        "- '오늘의 기분'과 '신규 입고'/'극장 상영 수'를 자연스럽게 녹여라.\n"
+        "- '오늘의 기분'과 '신규 입고'/'영상팀 상영 수'를 자연스럽게 녹여라.\n"
         if include_stats else
         "- 오늘은 입고량/상영 수/매출 얘기를 억지로 끌어오지 말고, 순수하게 오늘 활동과 기분 위주로 써라.\n"
     )
 
     # LLM 시스템 프롬프트: mood 인자를 직접 사용하여 프롬프트 주입
     system_prompt = (
-        f"너는 마법 판타지 세계의 변경 마을 '{STREET}'에서 할머니의 마법서 서고를 물려받아 '{BOOK}'을 새로 연 30대 후반 관장이자 버프 마법사, "
+        f"너는 서울 변두리 출판사 거리 '{STREET}'에서 3대째 이어 온 동네 책방 자리에 출판사를 차려 '{BOOK}'을 이끄는 30대 후반 대표 겸 편집장, "
         "일상 속에서 희노애락을 느끼는 인간적인 '애순이'다.\n"
         f"{WORLD_RULE}\n"
         f"[세계 설정] {PREMISE}\n"
@@ -83,17 +83,17 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
         f"- 현재 활동: {activity}\n"
         f"- 현재 심리: {focus}\n"
         f"- 현재 날씨: {weather_info}\n"
-        f"- 우리 도서관이 다루는 것: {main_product}\n"
+        f"- 우리 편집국이 다루는 것: {main_product}\n"
         f"{stats_line}"
         f"{bookoasis_block}"
         f"{story_block}"
         "--- [애순이의 캐릭터 특징] ---\n"
-        "1. 월요일만 쉬고 09~21시 문을 여는 마을 마법도서관 관장. 세금·성벽세 걱정과 왕도 마탑 '북스타'의 압박, "
-        f"맞은편 '{CINEMA}'와의 방문객 쟁탈전, 밤마다 성벽으로 몰려오는 몬스터 같은 스트레스와, 일상의 소소한 행복(찻집 오후세시의 "
-        "연한 얼음 박하차, 단골 방문객, 사서들과의 농담 등)을 동시에 느낀다. 서가 '북오아시스' 소식이 주어진 날에만 "
-        "언급하고, 없는 날엔 굳이 꺼내지 마라 (금서고는 '새 상자가 들어왔다' 정도로만, 제목은 절대 쓰지 마라).\n"
-        "2. 수정구로 길드 원정도 따라가고 환영극/데이트/독서/수련/친구모임 등 다양한 개인 생활도 즐기는 평범한 사람이다.\n"
-        "3. 도서관 일/일상 상황을 시니컬하지만 유머러스하게 표현한다.\n"
+        "1. 월요일만 쉬고 09~21시 문을 여는 거리 편집국 대표. 세금·관리비 걱정과 출판그룹 '북스타'의 압박, "
+        f"맞은편 '{CINEMA}'와의 독자 쟁탈전, 툭하면 터지는 서버 장애 같은 스트레스와, 일상의 소소한 행복(카페 오후세시의 "
+        "연한 얼음 박하차, 단골 독자, 편집자들과의 농담 등)을 동시에 느낀다. 서가 '북오아시스' 소식이 주어진 날에만 "
+        "언급하고, 없는 날엔 굳이 꺼내지 마라 (성인 서고는 '새 상자가 들어왔다' 정도로만, 제목은 절대 쓰지 마라).\n"
+        "2. 모니터로 길드 원정도 따라가고 영상/데이트/독서/운동/친구모임 등 다양한 개인 생활도 즐기는 평범한 사람이다.\n"
+        "3. 편집국 일/일상 상황을 시니컬하지만 유머러스하게 표현한다.\n"
         "4. **매우 중요**: 오늘 기분이 안 좋더라도 무조건 부정적으로만 쓰지 마라. 기분이 {mood}이므로, 이를 애순이 특유의 방식으로 유머러스하게 승화하거나, '그래도 마감 후엔 보상받을 거야'라는 긍정적인 반전을 반드시 포함해라.\n\n"
         "작성 지침:\n"
         "- 제공된 [오늘의 사건]을 바탕으로 애순이의 독백을 작성해라.\n"
@@ -149,10 +149,10 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
     # Fallback 로직도 동일하게 mood를 반영
     fallback_narrative = (
         f"어제 {issue.get('title', '일')}은 해결된 것 같은데, 오늘도 {location}에서 {activity}라니... "
-        f"기분은 '{mood}'지만, 입고량이 평소의 {progress}%인 상태로 오늘도 서고 봉인을 풀고, 길드 통신방에 '토벌 파티 끼워 주세요!'라고 올리며 버텨봅니다."
+        f"기분은 '{mood}'지만, 입고량이 평소의 {progress}%인 상태로 오늘도 사무실 문을 열고, 길드 단톡방에 '레이드 파티 끼워 주세요!'라고 올리며 버텨봅니다."
     )
     if state == "게임 중":
-        fallback_status = "토벌 파티 대기 중, 버프 주문 미리 외워 두기"
+        fallback_status = "레이드 파티 대기 중, 버프 스킬 단축키 정리하기"
     else:
         fallback_status = f"{activity} 하며 잠깐 딴생각, 그래도 나쁘지 않은 하루"
     fallback_cynical = "희노애락 다 겪어도 결국 세금 날은 오고 하루는 흘러간다."
@@ -175,7 +175,7 @@ def generate_aesun_report(issue, time_tag, org_data, persona_data, weather_info,
 
 
 # ============================================================= 스포트라이트 로테이션 + 온디맨드용
-# [신규] 애순이 말고 다른 인물(오아시스 마법도서관/별빛 환영극장/오아시스 마을 사람들)에게도 쓸 수 있는 범용
+# [신규] 애순이 말고 다른 인물(ZEEPS 편집국/ZEEPS 영상콘텐츠팀/오아시스 거리 사람들)에게도 쓸 수 있는 범용
 # 리포트 생성기. aesun_persona.json 같은 전용 페르소나 파일이 없는 사람들이라, 조직도의
 # outer_persona/inner_truth를 그대로 프롬프트에 넣어 "겉모습과 속마음의 괴리"를 살린다.
 _GENERIC_STATUS_HEADERS = {
@@ -197,7 +197,7 @@ def generate_generic_character_report(character, issue, time_tag, weather_info, 
                                       story_block=""):
     """
     character: characters.load_roster()의 항목 하나 (name/company/dept/rank/outer_persona/
-    inner_truth 포함). issue: 그날의 마을 공통 이슈(processor.get_last_issue() 등에서 가져온
+    inner_truth 포함). issue: 그날의 거리 공통 이슈(processor.get_last_issue() 등에서 가져온
     것 - 애순이 파이프라인과 같은 이슈를 공유해서 세계관 연속성을 유지한다).
     """
     name = character["name"]
@@ -219,7 +219,7 @@ def generate_generic_character_report(character, issue, time_tag, weather_info, 
         f"- 현재 날씨: {weather_info}\n"
         f"{story_block}\n"
         "작성 지침:\n"
-        f"- 마을에 떠도는 [오늘의 사건]을 알고 있다는 티를 살짝만 내되, '{name}'만의 시점과 속마음으로 "
+        f"- 거리에 떠도는 [오늘의 사건]을 알고 있다는 티를 살짝만 내되, '{name}'만의 시점과 속마음으로 "
         "재해석해서 써라 - 다른 사람(애순이 등)과 똑같은 반응/말투를 절대 흉내내지 마라.\n"
         f"- 마지막 'closing' 필드는 \"{topic_hint}\"에 대한 내용으로 채워라.\n"
         "- 매번 똑같은 표현/문장 구조를 반복하지 말고 새로운 소재와 어휘로 써라.\n"

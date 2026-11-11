@@ -8,7 +8,7 @@
 - 봇이 꺼져 있던 시간의 회차는 건너뛴다(밀린 회차를 몰아서 돌리지 않음).
 - 에이전트 대화는 준실시간(poring_food/live.py): 회차는 누가 언제 누구와 얘기할지만 정하고, 대화는 그 시각에 20초마다
   돌아가는 live_runner가 만들어 바로 올린다 (그 순간의 시각/상태로 - 한 시간 전 기준이라 문맥/시각이 어긋나던 문제).
-- 통신방/연재 장면은 회차가 만들어 둔 시각대로 예약함(poring_food/outbox.py)에서 몇 초마다 꺼내 차례대로 올린다
+- 단톡방/연재 장면은 회차가 만들어 둔 시각대로 예약함(poring_food/outbox.py)에서 몇 초마다 꺼내 차례대로 올린다
   (한 시간치 대화가 몇 분 사이에 몰려 올라오지 않게, 다른 곳 대화가 중간에 섞이게).
 - 관리자는 /포링푸드실행 으로 지금 바로 한 회차를 돌려볼 수 있다(이전 회차가 도는 중이면 거절).
 - 관리자 개입 (세계 밖에서 조종):
@@ -17,10 +17,10 @@
   · /포링푸드모임 주제 [참가자] [장소] [발언수] - 여러 에이전트가 한자리에 모여 돌아가며 말하고 결론을 낸다
   · /포링푸드연대기 [날짜] - 그날 세계에서 있었던 일(하루 요약/원본 사건)과 진행 중인 일을 본다
   · /포링푸드명단 [소속] - 지금 스스로 사는 인물들의 소속/자리/맡은 일/고정 여부/지금 하는 일, 최근 교체
-  · /포링푸드침입 [지금] - 몬스터 침입 예보(위험도)와 최근 밤들, 지금=True면 바로 침입 (시험용)
+  · /포링푸드비상 [지금] - 장애 비상 예보(위험도)와 최근 밤들, 지금=True면 바로 장애 비상 (시험용)
   · /시청현황 - 지금 재생 중인 수 (Plex 종류별 + YM_PLAYER 텔레그램/IPTV, 숫자만 - 제목·계정 없음)
-  · /포링푸드골목 - 마을 방어 배치 판 그림 + 방어 기금/놓인 것과 상태/손봐야 할 것/최근 기록
-  · /포링푸드이웃 [작품] - 애니메이션 인물들을 지금 바로 마을로 이사 오게 한다 (원래는 주 1회 자동)
+  · /포링푸드골목 - 사옥 설비 배치 판 그림 + 설비 기금/놓인 것과 상태/손봐야 할 것/최근 기록
+  · /포링푸드이웃 [작품] - 애니메이션 인물들을 지금 바로 거리로 이사 오게 한다 (원래는 주 1회 자동)
 """
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ class PoringFood(commands.Cog):
                 elif it["kind"] == "kakao":
                     await asyncio.to_thread(notifier.send_to_local_bot, it["text"])
                 elif it["kind"] == "file":
-                    await self._send_file_as_agent(it.get("name", "마을 소식"), it["path"], it.get("text", ""),
+                    await self._send_file_as_agent(it.get("name", "거리 소식"), it["path"], it.get("text", ""),
                                                    it.get("channel_id", 0))
                 elif it["kind"] in ("draw", "ant"):  # 인물의 /그림, /개미소리 - 만드는 데 시간이 걸려서 따로 돌린다
                     task = asyncio.create_task(self._make_and_send_image(it))
@@ -149,7 +149,7 @@ class PoringFood(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def plex_watch(self) -> None:
-        """Plex 상영 알림(poring_food/plex_watch.py): 새로 재생이 시작되면 마을 통신방에 알린다.
+        """Plex 상영 알림(poring_food/plex_watch.py): 새로 재생이 시작되면 사내 단톡방에 알린다.
         재생 확인은 매분 하고, 새 재생이 있을 때만 회차/실시간 대화와 같은 잠금을 기다렸다가 알린다
         (예전엔 잠금이 잡혀 있으면 건너뛰었는데, 실시간 대화가 거의 늘 잠금을 잡고 있어서 한 번도 못 돌았다)."""
         from poring_food import plex_watch
@@ -172,18 +172,18 @@ class PoringFood(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def load_guard(self) -> None:
-        """결계 조절(poring_food/loadshed.py) + 감시탑 바로 확인(facilities.quick), 매분.
+        """서버 조절(poring_food/loadshed.py) + 모니터링 바로 확인(facilities.quick), 매분.
         재기/내리기/늦추기는 잠금 없이(자기 파일만 쓴다). 한 일이나 바뀐 컨테이너가 있으면 채널엔 바로 알리고,
-        인물 세계(마을 사건 + 관련 인물의 즉시 반응)는 회차와 같은 잠금 안에서 바로 이어서 반영한다."""
+        인물 세계(거리 사건 + 관련 인물의 즉시 반응)는 회차와 같은 잠금 안에서 바로 이어서 반영한다."""
         from poring_food import loadshed
         if not loadshed.ENABLED:
             return
         try:
             done = await asyncio.to_thread(loadshed.step)
         except Exception:  # noqa: BLE001
-            log.exception("포링푸드 결계 조절 실패")
+            log.exception("포링푸드 서버 조절 실패")
             return
-        # 몬스터 불시 습격: 재생 중에 결계 부하(CPU)가 갑자기 치솟으면 (poring_food/raids.py surge 모드)
+        # 불시 비상 호출: 재생 중에 서버 부하(CPU)가 갑자기 치솟으면 (poring_food/raids.py surge 모드)
         from poring_food import raids
         try:
             sg = await asyncio.to_thread(raids.surge_due)
@@ -191,13 +191,13 @@ class PoringFood(commands.Cog):
                 async with self._lock:
                     await asyncio.to_thread(raids.run, None, False, None, None, sg)
         except Exception:  # noqa: BLE001
-            log.exception("포링푸드 몬스터 불시 습격 실패")
-        # 사람이 직접 끄고 켠 컨테이너도 방금 잰 목록으로 바로 잡는다 (감시탑 - 원래는 매시 회차에만 봤다)
+            log.exception("포링푸드 불시 비상 호출 실패")
+        # 사람이 직접 끄고 켠 컨테이너도 방금 잰 목록으로 바로 잡는다 (모니터링 - 원래는 매시 회차에만 봤다)
         from poring_food import facilities
         try:
             changed = await asyncio.to_thread(lambda: facilities.quick(loadshed.running_by_server()))
         except Exception:  # noqa: BLE001
-            log.exception("포링푸드 감시탑 바로 확인 실패")
+            log.exception("포링푸드 모니터링 바로 확인 실패")
             changed = []
         if not done and not changed:
             return
@@ -208,8 +208,8 @@ class PoringFood(commands.Cog):
             if changed:
                 await asyncio.to_thread(facilities.notify, changed)
         except Exception:  # noqa: BLE001
-            log.exception("포링푸드 결계 조절/감시탑 알림 실패")
-        # 2) 인물 세계엔 잠금 안에서 바로 이어서 (마을 사건 + 관련 인물이 다음 회차를 기다리지 않고 지금 반응)
+            log.exception("포링푸드 서버 조절/모니터링 알림 실패")
+        # 2) 인물 세계엔 잠금 안에서 바로 이어서 (거리 사건 + 관련 인물이 다음 회차를 기다리지 않고 지금 반응)
         async with self._lock:
             try:
                 if done:
@@ -217,12 +217,12 @@ class PoringFood(commands.Cog):
                 if changed:
                     await asyncio.to_thread(facilities.react, changed)
             except Exception:  # noqa: BLE001
-                log.exception("포링푸드 결계 조절/감시탑 세계 반영 실패")
+                log.exception("포링푸드 서버 조절/모니터링 세계 반영 실패")
 
     @tasks.loop(minutes=30)
     async def waitfree_pilot(self) -> None:
         """짐꾼 담당 인물이 하루 한 번 기다무 충전 시간대를 스스로 살펴 바꾼다 (poring_food/waitfree.autopilot).
-        원격 명령이 몇 분 걸릴 수 있어 결계 조절(매분)과 따로 돈다."""
+        원격 명령이 몇 분 걸릴 수 있어 서버 조절(매분)과 따로 돈다."""
         from poring_food import waitfree
         try:
             async with self._lock:   # 조율 회의가 인물 기억/연대기를 쓰므로 회차와 겹치지 않게
@@ -233,7 +233,7 @@ class PoringFood(commands.Cog):
     @tasks.loop(minutes=30)
     async def app_updater(self) -> None:
         """GitHub에 새 버전이 오면 담당 인물이 살펴보고 안전할 때 업데이트 (poring_food/updater.py).
-        채널엔 바로, 인물 세계(마을 사건 + 바로 반응)는 회차 잠금 안에서."""
+        채널엔 바로, 인물 세계(거리 사건 + 바로 반응)는 회차 잠금 안에서."""
         from poring_food import updater
         try:
             async with self._lock:   # 새 버전 판단(조율 회의)이 인물 기억/연대기를 쓰므로
@@ -276,7 +276,7 @@ class PoringFood(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        """📣│알림방의 메일 관리 Apps Script 알림 -> 성벽 잔해 치우기/전령 우편함 (poring_food/street_mail.py). 웹훅 메시지만 본다."""
+        """📣│알림방의 메일 관리 Apps Script 알림 -> 서버실 잔해 치우기/우편함 (poring_food/street_mail.py). 웹훅 메시지만 본다."""
         from poring_food import street_mail
         if (not settings.PORING_FOOD_ENABLED or not street_mail.ENABLED or not message.webhook_id
                 or message.channel.id not in street_mail.channels()):
@@ -296,7 +296,7 @@ class PoringFood(commands.Cog):
             try:
                 await asyncio.to_thread(street_mail.handle, ev)
             except Exception:  # noqa: BLE001
-                log.exception("포링푸드 성벽 청소 소식 처리 실패 (%s)", ev.get("kind"))
+                log.exception("포링푸드 서버실 청소 소식 처리 실패 (%s)", ev.get("kind"))
 
     async def _start_webhook(self) -> None:
         """Tautulli 웹훅 수신 (PORING_WEBHOOK_PORT + PORING_WEBHOOK_TOKEN이 있을 때만).
@@ -376,7 +376,7 @@ class PoringFood(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def lib3d_delivery(self) -> None:
-        """BookOasis 3D 서재 배달 (poring_food/lib3d_link.py): 북오아시스 신간·Plex 새 영상이 들어오면 마을 인물이 서점 건물에 배달"""
+        """BookOasis 3D 서재 배달 (poring_food/lib3d_link.py): 북오아시스 신간·Plex 새 영상이 들어오면 거리 인물이 서점 건물에 배달"""
         from poring_food import lib3d_link
         if not lib3d_link.delivery_enabled() or time.monotonic() - self._lib3d_last_poll < lib3d_link.DELIVERY_SEC:
             return
@@ -404,7 +404,7 @@ class PoringFood(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def book_watch(self) -> None:
-        """도서관 손님 알림(poring_food/book_watch.py): 북오아시스에서 누가 책을 읽기 시작하면 통신방에 알린다.
+        """편집국 손님 알림(poring_food/book_watch.py): 북오아시스에서 누가 책을 읽기 시작하면 단톡방에 알린다.
         북오아시스엔 웹훅이 없어서 PORING_BOOK_WATCH_SEC(기본 10분)마다 묻는다 (MCP가 매번 SSH라 자주는 무겁다)."""
         from poring_food import book_watch
         if not book_watch.ENABLED or time.monotonic() - self._book_last_poll < book_watch.POLL_SEC:
@@ -413,7 +413,7 @@ class PoringFood(commands.Cog):
         try:
             rows = await asyncio.wait_for(book_watch.fetch_async(), timeout=90)
         except Exception as e:  # noqa: BLE001 - 북오아시스가 잠깐 안 받아도 다음 차례에 다시
-            log.warning("포링푸드 도서관 손님 확인 실패: %r", e)
+            log.warning("포링푸드 편집국 손님 확인 실패: %r", e)
             return
         if rows is None or not await asyncio.to_thread(book_watch.has_new, rows):
             return
@@ -421,7 +421,7 @@ class PoringFood(commands.Cog):
             try:
                 await asyncio.to_thread(book_watch.process, rows)
             except Exception:  # noqa: BLE001
-                log.exception("포링푸드 도서관 손님 알림 실패")
+                log.exception("포링푸드 편집국 손님 알림 실패")
 
     @book_watch.before_loop
     async def _before_book(self) -> None:
@@ -450,7 +450,7 @@ class PoringFood(commands.Cog):
 
     async def _send_as_agent(self, account: str, name: str, text: str, avatar_url: str = "", channel_id: int = 0) -> None:
         """
-        에이전트의 말을 채널에 올린다 (channel_id 기본: 에이전트 대화 채널, 회사 통신방 등은 지정).
+        에이전트의 말을 채널에 올린다 (channel_id 기본: 에이전트 대화 채널, 회사 단톡방 등은 지정).
         1) 봇 계정이 있는 에이전트(애순이/소라): 그 계정으로
         2) 봇 토큰 없는 에이전트: 그 채널의 웹훅으로 이름/아바타만 바꿔서 (사람마다 다른 사람처럼 보인다)
         3) 둘 다 안 되면 아메하나가 이름을 붙여 대신
@@ -476,7 +476,7 @@ class PoringFood(commands.Cog):
         """포링푸드 인물의 /그림(봇 이미지 생성 큐) 또는 /개미소리(말풍선 짤)를 만들어 그 인물 이름으로 올린다."""
         import os
         from poring_food.config import STATE_DIR
-        name = it.get("name", "마을 사람")
+        name = it.get("name", "거리 사람")
         try:
             if it["kind"] == "draw":
                 from ai.image_engine import generate_image
@@ -649,8 +649,8 @@ class PoringFood(commands.Cog):
         return out[:25]
 
     @app_commands.command(name="포링푸드모임", description="[관리자] 에이전트들이 모여 토론합니다 (결론 없으면 5차까지 자동 소집 후 투표)")
-    @app_commands.describe(주제="모임 주제 (예: 우리 마을 이름 짓기)", 참가자="에이전트 이름 쉼표로 (비우면 깨어 있는 마을 통신방 멤버)",
-                           장소="모임 장소 (비우면 촌장 회관 회의실)", 발언수="전체 발언 수 4~30 (기본 12)")
+    @app_commands.describe(주제="모임 주제 (예: 우리 거리 이름 짓기)", 참가자="에이전트 이름 쉼표로 (비우면 깨어 있는 사내 단톡방 멤버)",
+                           장소="모임 장소 (비우면 번영회 사무실 회의실)", 발언수="전체 발언 수 4~30 (기본 12)")
     @app_commands.autocomplete(참가자=_agents_csv_autocomplete)
     async def meeting(self, interaction: Interaction, 주제: str, 참가자: str = "", 장소: str = "",
                       발언수: app_commands.Range[int, 4, 30] = 12):
@@ -692,7 +692,7 @@ class PoringFood(commands.Cog):
         text = await asyncio.to_thread(chronicle.lookup, date)
         await interaction.response.send_message(text, ephemeral=True)
 
-    @app_commands.command(name="포링푸드골목", description="[관리자] 마을 방어 배치 판 - 판 그림(지금 누가 어디 있는지 포함), 방어 기금, 놓인 것과 상태, 최근 기록")
+    @app_commands.command(name="포링푸드골목", description="[관리자] 사옥 설비 배치 판 - 판 그림(지금 누가 어디 있는지 포함), 설비 기금, 놓인 것과 상태, 최근 기록")
     async def decor_view(self, interaction: Interaction):
         if not is_admin(interaction.user.id):
             await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
@@ -705,15 +705,15 @@ class PoringFood(commands.Cog):
             people = await asyncio.to_thread(lambda: decor.people_from_states(characters.load_states(), agents.names()))
             path = await asyncio.to_thread(decor.render, None, people)
         except Exception:  # noqa: BLE001 - 그림을 못 그려도 글은 보여 준다
-            log.exception("마을 방어 배치 판 그리기 실패")
+            log.exception("사옥 설비 배치 판 그리기 실패")
             path = None
         if path:
             await interaction.followup.send(text, file=discord.File(path), ephemeral=True)
         else:
             await interaction.followup.send(text + "\n-# (판 그림은 글꼴/Pillow가 없어서 못 그렸어요)", ephemeral=True)
 
-    @app_commands.command(name="포링푸드침입", description="[관리자] 몬스터 침입 - 오늘 밤 숲의 기척(위험도)과 최근 밤들 (지금 침입시키기도 가능)")
-    @app_commands.describe(지금="True면 위험도와 상관없이 지금 바로 몬스터가 쳐들어온다 (시험용)")
+    @app_commands.command(name="포링푸드비상", description="[관리자] 장애 비상 - 오늘 밤 트래픽 기상도(위험도)과 최근 밤들 (지금 장애 비상시키기도 가능)")
+    @app_commands.describe(지금="True면 위험도와 상관없이 지금 바로 장애 비상이 터진다 (시험용)")
     async def raid_view(self, interaction: Interaction, 지금: bool = False):
         if not is_admin(interaction.user.id):
             await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
@@ -725,7 +725,7 @@ class PoringFood(commands.Cog):
                 try:
                     await asyncio.to_thread(raids.run, None, True)
                 except Exception:  # noqa: BLE001
-                    log.exception("포링푸드 침입 실행 실패")
+                    log.exception("포링푸드 장애 비상 실행 실패")
         from poring_food import loadshed
         text = await asyncio.to_thread(lambda: raids.summary() + "\n\n" + loadshed.summary())
         await interaction.followup.send(text[:1990], ephemeral=True)
@@ -741,7 +741,7 @@ class PoringFood(commands.Cog):
         await interaction.followup.send(text[:1990], ephemeral=True)
 
     @app_commands.command(name="포링푸드명단", description="[관리자] 지금 스스로 사는 인물들의 소속/자리/맡은 일/지금 하는 일을 봅니다")
-    @app_commands.describe(소속="도서관 / 극장 / 마을 (비우면 전부)")
+    @app_commands.describe(소속="편집국 / 영상팀 / 거리 (비우면 전부)")
     async def staff_view(self, interaction: Interaction, 소속: str = ""):
         if not is_admin(interaction.user.id):
             await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
@@ -752,7 +752,7 @@ class PoringFood(commands.Cog):
         for page in pages[1:]:
             await interaction.followup.send(page, ephemeral=True)
 
-    @app_commands.command(name="포링푸드이웃", description="[관리자] 애니메이션 인물들을 지금 마을로 이사 오게 합니다 (원래 주 1회 자동)")
+    @app_commands.command(name="포링푸드이웃", description="[관리자] 애니메이션 인물들을 지금 거리로 이사 오게 합니다 (원래 주 1회 자동)")
     @app_commands.describe(작품="애니메이션 제목 (비우면 후보 목록에서 아직 안 쓴 것)")
     async def newcomers_now(self, interaction: Interaction, 작품: str = ""):
         if not is_admin(interaction.user.id):

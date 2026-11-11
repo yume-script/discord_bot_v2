@@ -1,17 +1,17 @@
 """
-마을 방어 배치 판 - 오아시스 마을을 칸으로 나눈 지도에 인물들이 목책/감시탑/함정/결계석/횃불... 을 놓고 고치고 치운다.
+사옥 설비 배치 판 - 오아시스 거리를 칸으로 나눈 지도에 인물들이 방화벽/모니터링/자동 차단 스크립트/메인 서버/비상등... 을 놓고 고치고 치운다.
 
-- 판은 크게(BOARD_W x BOARD_H) 잡아 두고, 지금은 "열린 구역"(DISTRICTS 중 open)만 쓴다 - 마을이 넓어지면
+- 판은 크게(BOARD_W x BOARD_H) 잡아 두고, 지금은 "열린 구역"(DISTRICTS 중 open)만 쓴다 - 거리가 넓어지면
   구역을 열어서(open_district) 같은 판 위에 이어 붙인다. 좌표는 판 전체 기준이라 구역이 늘어도 바뀌지 않는다.
 - 놓는 사람은 인물만 (사람/관리자 명령 없음). 매시 판단 때 놓을 수 있는 인물(ROLES)에게만 규칙이 붙고,
   "decor"를 고르면 실제로 판에 반영된다 (LLM 호출 추가 없음 - 판단 응답에 한 칸 더).
-  · 카즈마: 설치/수리 (품삯), 베니마루(수비대장): 방어 시설, 슈나(결계 마법사): 결계석/마법등,
-    쿠로베(룬 각인사): 룬 벽화, 리그루드(촌장): 설치/수리, 알다프(영주): 철거
+  · 카즈마: 설치/수리 (품삯), 베니마루(시설관리팀장): 설비, 슈나(서버 관리자): 메인 서버/조명,
+    쿠로베(벽화 장인): 응원 벽화, 리그루드(번영회장): 설치/수리, 알다프(건물주): 철거
   · 자리는 LLM이 좌표를 고르지 않는다 - "어디 근처"(랜드마크 이름)만 고르면 가장 가까운 빈칸에 놓는다.
-- 돈은 "방어 기금"(마을 회의비가 매일 DAILY_FUND씩 쌓임)에서 나간다. 모자라면 못 한다.
-- 매일 상태가 줄고(함정/횃불/약초밭은 빨리), 비 오는 날은 약초밭/가시덤불이 살아난다. 상태가 나빠지면 마을 사건 한 번,
-  0이 되면 "망가짐" - 수리하거나 치울 때까지 그대로. 밤마다 몬스터 침입(raids.py) 때 이 판이 방어력이 되고 부서진다.
-- 인물들은 판단 때 [마을 방어 배치]를 본다 (어디가 약한지/무슨 얘기를 할지 얘깃거리, 망가진 건 민원거리).
+- 돈은 "설비 기금"(거리 회의비가 매일 DAILY_FUND씩 쌓임)에서 나간다. 모자라면 못 한다.
+- 매일 상태가 줄고(자동 차단 스크립트/비상등/휴게실 화분은 빨리), 비 오는 날은 습도가 올라 휴게실 화분이 살아난다. 상태가 나빠지면 거리 사건 한 번,
+  0이 되면 "망가짐" - 수리하거나 치울 때까지 그대로. 밤마다 장애 비상(raids.py) 때 이 판이 대응력이 되고 부서진다.
+- 인물들은 판단 때 [사옥 설비 배치]를 본다 (어디가 약한지/무슨 얘기를 할지 얘깃거리, 망가진 건 민원거리).
 - 그림: 매일 저녁 RENDER_HOUR 회차에 판 그림(PNG)을 대화 채널에 올린다 (바뀐 게 있는 날만, townmap 글꼴).
 저장: storage/poring_food/decor.json {"fund", "fund_day", "items": [...], "log": [...], "acts": {날짜: {이름: 횟수}},
 "open": [구역 id], "decayed_day"}
@@ -32,65 +32,65 @@ ENABLED = os.getenv("PORING_DECOR", "1") not in ("0", "false", "False", "")
 DECOR_PATH = os.path.join(STATE_DIR, "decor.json")
 DECOR_DIR = os.path.join(STATE_DIR, "decor")
 
-BOARD_W, BOARD_H = 64, 40          # 판 전체 (앞으로 넓어질 마을까지)
+BOARD_W, BOARD_H = 64, 40          # 판 전체 (앞으로 넓어질 거리까지)
 START_FUND = int(os.getenv("PORING_DECOR_START_FUND", "300000"))
 DAILY_FUND = int(os.getenv("PORING_DECOR_DAILY_FUND", "20000"))
 WAGE = 20000                        # 설치/수리 품삯 (카즈마)
 ACTS_PER_PERSON = 1                 # 한 사람 하루 배치 횟수
-ACTS_PER_DAY = 4                    # 마을 전체 하루
+ACTS_PER_DAY = 4                    # 거리 전체 하루
 BAD = 30                            # 이 아래면 "낡음/시듦" 사건
 RENDER_HOUR = int(os.getenv("PORING_DECOR_RENDER_HOUR", "20"))
 CELL = 34
-TITLE = "마을 방어 배치"
+TITLE = "사옥 설비 배치"
 
-# 구역 (판 전체 좌표 x0, y0, x1, y1 - 끝 포함). 지금은 마을 광장만 열려 있다. 몬스터는 서쪽(검은 숲)에서 길을 따라 온다.
+# 구역 (판 전체 좌표 x0, y0, x1, y1 - 끝 포함). 지금은 사옥 앞만 열려 있다. 트래픽은 서쪽 큰길(회선 입구)에서 길을 따라 들어온다.
 DISTRICTS = {
-    "oasis": {"name": "오아시스 마을 광장", "rect": (22, 14, 41, 25), "open": True},
-    "upper": {"name": "북쪽 성벽길", "rect": (22, 2, 41, 13), "open": False},
+    "oasis": {"name": "오아시스 거리 사옥 앞", "rect": (22, 14, 41, 25), "open": True},
+    "upper": {"name": "북쪽 골목", "rect": (22, 2, 41, 13), "open": False},
     "market": {"name": "동쪽 시장길", "rect": (42, 14, 63, 25), "open": False},
     "river": {"name": "남쪽 강가", "rect": (22, 26, 41, 39), "open": False},
-    "west": {"name": "검은 숲 어귀", "rect": (0, 14, 21, 25), "open": False},
+    "west": {"name": "서쪽 큰길", "rect": (0, 14, 21, 25), "open": False},
 }
-# 랜드마크 (기관/건물 - 방어 시설을 놓을 수 없는 칸). (x0, y0, x1, y1)
+# 랜드마크 (기관/건물 - 설비를 놓을 수 없는 칸). (x0, y0, x1, y1)
 LANDMARKS = {
-    "서쪽 성문": (22, 17, 23, 18),
-    "오아시스 마법도서관": (24, 15, 26, 16),
-    "별빛 환영극장": (28, 15, 31, 16),
-    "찻집 오후세시": (28, 17, 29, 17),
-    "수비대 초소": (34, 15, 35, 16),
-    "길드 주점": (38, 15, 39, 16),
-    "대장간": (23, 22, 24, 23),
-    "치유원": (27, 22, 28, 23),
-    "결계석": (30, 21, 31, 21),
+    "서쪽 출입구": (22, 17, 23, 18),
+    "ZEEPS 편집국": (24, 15, 26, 16),
+    "ZEEPS 영상콘텐츠팀": (28, 15, 31, 16),
+    "카페 오후세시": (28, 17, 29, 17),
+    "관리실": (34, 15, 35, 16),
+    "센시네 주점": (38, 15, 39, 16),
+    "수리 공방": (23, 22, 24, 23),
+    "약국": (27, 22, 28, 23),
+    "메인 서버": (30, 21, 31, 21),
     "시장 입구": (33, 22, 34, 23),
-    "촌장 회관": (37, 22, 39, 23),
+    "번영회 사무실": (37, 22, 39, 23),
 }
-# 마을 길 (가운데 가로길 = 몬스터가 들어오는 길 - 방어 시설은 길가에만, 길 위엔 못 놓음)
+# 거리 길 (가운데 가로길 = 트래픽이 들어오는 길 - 설비는 길가에만, 길 위엔 못 놓음)
 ROAD_Y = (19, 20)
 
 ITEMS = {  # key: (이름, 비용, 하루 닳는 정도, 그림 색, 한 글자)
-    "목책": ("목책", 40000, 4, "#B07D4F", "책"),
-    "감시탑": ("감시탑", 120000, 2, "#56CCF2", "탑"),
-    "함정": ("함정", 30000, 8, "#828282", "함"),
-    "결계석": ("결계석", 150000, 1, "#BB6BD9", "결"),
-    "마법등": ("마법등", 50000, 3, "#F2C94C", "등"),
-    "횃불": ("횃불", 10000, 20, "#F2994A", "불"),
-    "투석기": ("투석기", 100000, 2, "#EB5757", "투"),
-    "룬 벽화": ("룬 벽화", 100000, 1, "#9B51E0", "룬"),
-    "약초밭": ("약초밭", 30000, 8, "#5BB974", "약"),
-    "가시덤불": ("가시덤불", 20000, 5, "#2E8B57", "덤"),
+    "방화벽": ("방화벽", 40000, 4, "#B07D4F", "벽"),
+    "모니터링": ("모니터링", 120000, 2, "#56CCF2", "모"),
+    "자동 차단 스크립트": ("자동 차단 스크립트", 30000, 8, "#828282", "차"),
+    "메인 서버": ("메인 서버", 150000, 1, "#BB6BD9", "서"),
+    "조명": ("조명", 50000, 3, "#F2C94C", "등"),
+    "비상등": ("비상등", 10000, 20, "#F2994A", "비"),
+    "부하 분산기": ("부하 분산기", 100000, 2, "#EB5757", "분"),
+    "응원 벽화": ("응원 벽화", 100000, 1, "#9B51E0", "화"),
+    "휴게실 화분": ("휴게실 화분", 30000, 8, "#5BB974", "초"),
+    "출입 통제선": ("출입 통제선", 20000, 5, "#2E8B57", "통"),
 }
-GROWS_IN_RAIN = ("약초밭", "가시덤불")
+GROWS_IN_RAIN = ("휴게실 화분",)   # 비 오는 날 습도가 올라 살아난다
 # 누가 무엇을 할 수 있나 (agents.json 이름)
 ROLES = {
-    "카즈마": {"do": ("place", "repair"), "items": [k for k in ITEMS if k not in ("룬 벽화", "결계석")],
-            "why": "품삯 받고 뭐든 하는 잔머리 모험가 - 설치와 수리 담당"},
-    "베니마루": {"do": ("place", "repair"), "items": ["목책", "감시탑", "함정", "투석기", "횃불"],
-            "why": "성벽 수비대장 - 몬스터가 들어오는 길목을 막는다"},
-    "슈나": {"do": ("place", "repair"), "items": ["결계석", "마법등"], "why": "결계 마법사 - 결계석과 마법등 담당"},
-    "쿠로베": {"do": ("place", "repair"), "items": ["룬 벽화"], "why": "룬 각인사 - 몬스터를 막는 룬 벽화 담당"},
-    "리그루드": {"do": ("place", "repair"), "items": list(ITEMS), "why": "촌장 - 마을 회의에서 정한 방어 시설을 챙긴다"},
-    "알다프": {"do": ("remove",), "items": list(ITEMS), "why": "영주 - 마음에 안 드는 건 치우라고 한다"},
+    "카즈마": {"do": ("place", "repair"), "items": [k for k in ITEMS if k not in ("응원 벽화", "메인 서버")],
+            "why": "품삯 받고 뭐든 하는 잔머리 프리랜서 - 설치와 수리 담당"},
+    "베니마루": {"do": ("place", "repair"), "items": ["방화벽", "모니터링", "자동 차단 스크립트", "부하 분산기", "비상등"],
+            "why": "시설관리팀장 - 트래픽이 몰리는 길목을 막는다"},
+    "슈나": {"do": ("place", "repair"), "items": ["메인 서버", "조명"], "why": "서버 관리자 - 메인 서버와 조명 담당"},
+    "쿠로베": {"do": ("place", "repair"), "items": ["응원 벽화"], "why": "벽화 장인 - 밤샘하는 사람들 기운 나게 하는 응원 벽화 담당"},
+    "리그루드": {"do": ("place", "repair"), "items": list(ITEMS), "why": "번영회장 - 거리 회의에서 정한 설비를 챙긴다"},
+    "알다프": {"do": ("remove",), "items": list(ITEMS), "why": "건물주 - 마음에 안 드는 건 치우라고 한다"},
 }
 
 
@@ -125,7 +125,7 @@ def _state() -> dict:
 
 
 def open_district(key: str) -> bool:
-    """[마을이 넓어질 때] 구역 하나를 연다. 반환: 새로 열었는지."""
+    """[거리가 넓어질 때] 구역 하나를 연다. 반환: 새로 열었는지."""
     data = _state()
     if key not in DISTRICTS or key in data["open"]:
         return False
@@ -153,7 +153,7 @@ def _blocked(x, y) -> bool:
 
 
 def _free_near(data: dict, near: str) -> tuple[int, int] | None:
-    """랜드마크(없으면 마을 길 한가운데) 바로 옆의 가장 가까운 빈칸."""
+    """랜드마크(없으면 거리 길 한가운데) 바로 옆의 가장 가까운 빈칸."""
     taken = {(i["x"], i["y"]) for i in data["items"]}
     r = LANDMARKS.get(near)
     if r:
@@ -179,7 +179,7 @@ def _cond_word(c: int) -> str:
 
 # ===================================================================== 매일
 def daily(now: datetime | None = None, weather: str = "", inject=None) -> list[str]:
-    """[하루 한 번] 방어 기금 적립 + 닳기 + 비 오면 약초밭/가시덤불 회복 + 나빠진 것 사건. 반환: 사건 제목들."""
+    """[하루 한 번] 설비 기금 적립 + 닳기 + 비 오면 휴게실 화분/출입 통제선 회복 + 나빠진 것 사건. 반환: 사건 제목들."""
     now = now or now_kst()
     data = _state()
     day = now.strftime("%Y-%m-%d")
@@ -203,7 +203,7 @@ def daily(now: datetime | None = None, weather: str = "", inject=None) -> list[s
     if inject:
         for title in out:
             try:
-                inject(["마을"], f"{TITLE}: {title} - 몬스터가 오기 전에 누가 손봐야 한다.", title)
+                inject(["거리"], f"{TITLE}: {title} - 장애가 나기 전에 누가 손봐야 한다.", title)
             except Exception as e:  # noqa: BLE001
                 print(f"[{TITLE}] 사건 전달 실패: {e}")
     return out
@@ -211,7 +211,7 @@ def daily(now: datetime | None = None, weather: str = "", inject=None) -> list[s
 
 # ===================================================================== 판단 규칙 / 실행
 def prompt_rule(name: str, now: datetime | None = None) -> str:
-    """판단에 붙는 규칙 (놓을 수 있는 사람만, 오늘 이미 했거나 마을 전체 상한이면 "")."""
+    """판단에 붙는 규칙 (놓을 수 있는 사람만, 오늘 이미 했거나 거리 전체 상한이면 "")."""
     if not ENABLED or name not in ROLES:
         return ""
     now = now or now_kst()
@@ -228,8 +228,8 @@ def prompt_rule(name: str, now: datetime | None = None) -> str:
         can.append("고치기(repair): 낡거나 망가진 것 (값의 20%)")
     if "remove" in role["do"]:
         can.append("치우기(remove): 마음에 안 들거나 망가진 것")
-    return (f"- {TITLE}({role['why']}): {' / '.join(can)}. 방어 기금 {data['fund']:,}원. "
-            f"지금 마을에 놓인 방어 시설: {have}. 몬스터는 서쪽 검은 숲에서 마을 길을 따라 들어온다. "
+    return (f"- {TITLE}({role['why']}): {' / '.join(can)}. 설비 기금 {data['fund']:,}원. "
+            f"지금 거리에 놓인 설비: {have}. 트래픽은 서쪽 큰길(회선 입구)에서 거리 길을 따라 들어온다. "
             f"자리는 장소 이름(어디 근처)만 고르면 된다 - {', '.join(LANDMARKS)}. "
             "할 만할 때만 decor에 쓰고 대부분은 null (하루 한 번).\n")
 
@@ -252,7 +252,7 @@ def parse(raw, name: str) -> dict | None:
 
 
 def act(name: str, d: dict, now: datetime | None = None) -> dict | None:
-    """방어 시설 하나를 판에 반영. 반환 {"text", "cost", "wage", "item"} 또는 None(못 함)."""
+    """설비 하나를 판에 반영. 반환 {"text", "cost", "wage", "item"} 또는 None(못 함)."""
     if not ENABLED or not d:
         return None
     now = now or now_kst()
@@ -268,7 +268,7 @@ def act(name: str, d: dict, now: datetime | None = None) -> dict | None:
     if do == "place":
         cost = ITEMS[item][1]
         if data["fund"] < cost:
-            print(f"[{TITLE}] {name}: {item} 놓기 - 방어 기금 모자람 ({data['fund']:,}원)")
+            print(f"[{TITLE}] {name}: {item} 놓기 - 설비 기금 모자람 ({data['fund']:,}원)")
             return None
         spot = _free_near(data, near)
         if not spot:
@@ -308,14 +308,14 @@ def act(name: str, d: dict, now: datetime | None = None) -> dict | None:
 
 
 def damage(count: int, amount: int, rnd, now: datetime | None = None) -> list[str]:
-    """[몬스터 침입] 시설 count개의 상태를 amount만큼 깎는다 (서쪽 성문/마을 길에 가까운 것부터 잘 맞는다).
+    """[장애 비상] 시설 count개의 상태를 amount만큼 깎는다 (서쪽 출입구/거리 길에 가까운 것부터 잘 맞는다).
     반환: 부서진 것 ["어디 근처 무엇"]."""
     now = now or now_kst()
     data = _state()
     alive = [i for i in data["items"] if i["cond"] > 0]
     if not alive or count <= 0:
         return []
-    gate = LANDMARKS["서쪽 성문"]
+    gate = LANDMARKS["서쪽 출입구"]
     alive.sort(key=lambda i: (abs(i["x"] - gate[0]) + min(abs(i["y"] - y) for y in ROAD_Y)) + rnd.random() * 6)
     hit = []
     for it in alive[:count]:
@@ -327,7 +327,7 @@ def damage(count: int, amount: int, rnd, now: datetime | None = None) -> list[st
 
 
 def add_fund(amount: int) -> int:
-    """[몬스터 침입] 전리품(마석 판 돈)을 방어 기금에. 반환: 남은 기금."""
+    """[장애 비상] 성과급(비상 수당)을 설비 기금에. 반환: 남은 기금."""
     data = _state()
     data["fund"] += int(amount)
     _save(data)
@@ -335,37 +335,37 @@ def add_fund(amount: int) -> int:
 
 
 def prompt_block(now: datetime | None = None) -> str:
-    """판단용: 마을에 놓인 방어 시설 (모두가 보는 마을이라 다 안다)."""
+    """판단용: 거리에 놓인 설비 (모두가 보는 거리라 다 안다)."""
     data = _load()
     items = data.get("items") or []
     if not items:
         return ""
     bad = [i for i in items if i["cond"] < BAD]
     lines = [f"- {i['near']} 근처 {i['item']} ({_cond_word(i['cond'])})" for i in items[-10:]]
-    return (f"[마을 방어 배치 - {len(items)}개, 방어 기금 {data.get('fund', 0):,}원"
+    return (f"[사옥 설비 배치 - {len(items)}개, 설비 기금 {data.get('fund', 0):,}원"
             + (f", 손봐야 할 것 {len(bad)}개" if bad else "") + "]\n" + "\n".join(lines))
 
 
 # ===================================================================== 그림
-# 사람이 있는 곳(상태의 location 글) -> 판의 랜드마크. 앞에 있는 게 먼저. "마을 길"은 길 위.
+# 사람이 있는 곳(상태의 location 글) -> 판의 랜드마크. 앞에 있는 게 먼저. "거리 길"은 길 위.
 PLACE_KEYS = [
-    ("찻집 오후세시", ("오후세시", "찻집")),
-    ("별빛 환영극장", ("극장", "상영관", "영사실", "매표")),
-    ("오아시스 마법도서관", ("도서관", "서가", "금서고", "수선실")),
-    ("서쪽 성문", ("성문",)),
-    ("수비대 초소", ("수비대", "초소", "성벽", "망루", "감시탑", "창고")),
-    ("결계석", ("결계",)),
-    ("길드 주점", ("길드 주점", "주점", "모험가 길드", "길드")),
-    ("대장간", ("대장간",)),
-    ("치유원", ("치유원", "치유", "신전")),
+    ("카페 오후세시", ("오후세시", "카페")),
+    ("ZEEPS 영상콘텐츠팀", ("영상팀", "상영관", "영사실", "매표")),
+    ("ZEEPS 편집국", ("편집국", "서가", "성인 서고", "수선실")),
+    ("서쪽 출입구", ("출입구",)),
+    ("관리실", ("시설관리팀", "초소", "서버실", "망루", "모니터링", "창고")),
+    ("메인 서버", ("서버",)),
+    ("센시네 주점", ("센시네 주점", "주점", "구인구직 센터", "길드")),
+    ("수리 공방", ("수리 공방",)),
+    ("약국", ("약국", "의원", "병원")),
     ("시장 입구", ("시장", "반찬가게", "생선가게", "어물전")),
-    ("촌장 회관", ("촌장 회관",)),
-    ("마을 길", ("골목", "마을 길", "광장", "오아시스 마을")),
+    ("번영회 사무실", ("번영회 사무실",)),
+    ("거리 길", ("골목", "거리 길", "광장", "오아시스 거리")),
 ]
 
 
 def place_of(location: str) -> str:
-    """상태의 장소 글 -> 판 위 자리 (랜드마크 이름 / "마을 길" / "" = 판 밖: 집, 숲 등)."""
+    """상태의 장소 글 -> 판 위 자리 (랜드마크 이름 / "거리 길" / "" = 판 밖: 집, 공원 등)."""
     loc = location or ""
     return next((name for name, keys in PLACE_KEYS if any(k in loc for k in keys)), "")
 
@@ -412,7 +412,7 @@ def render(now: datetime | None = None, people: dict | None = None) -> str | Non
     img = Image.new("RGB", (w, h), townmap.BG)
     dr = ImageDraw.Draw(img)
     f_t, f_c, f_s = (ImageFont.truetype(font_file, s) for s in (26, 15, 13))
-    dr.text((pad, 20), f"방어 배치 판 · {now:%m/%d} · 기금 {data['fund']:,}원 · {len(data['items'])}개",
+    dr.text((pad, 20), f"설비 배치 판 · {now:%m/%d} · 기금 {data['fund']:,}원 · {len(data['items'])}개",
             font=f_t, fill=townmap.TEXT)
 
     def box(x, y):
@@ -435,7 +435,7 @@ def render(now: datetime | None = None, people: dict | None = None) -> str | Non
         dr.text((X0 + 9, Y0 + 7), ITEMS[it["item"]][4], font=f_c, fill="#1E1F22")
         if it["cond"] < BAD:
             dr.line((X0 + 3, Y1 - 4, X1 - 3, Y0 + 4), fill="#EB5757", width=2)
-    # 지금 있는 사람: 랜드마크/마을 길에 인원 배지, 오른쪽에 누가 어디
+    # 지금 있는 사람: 랜드마크/거리 길에 인원 배지, 오른쪽에 누가 어디
     if people:
         def badge(X, Y, n):
             label = f"{n}명"
@@ -446,7 +446,7 @@ def render(now: datetime | None = None, people: dict | None = None) -> str | Non
             n = len(p["agents"]) + p["others"]
             if not n:
                 continue
-            if where == "마을 길":
+            if where == "거리 길":
                 xs_ = [c[0] for c in _open_cells(data)]
                 gx = (min(xs_) + max(xs_)) // 2
                 X1 = box(gx, ROAD_Y[0])[2]
@@ -505,14 +505,14 @@ def mark_rendered(now: datetime) -> None:
 
 
 def summary(now: datetime | None = None, limit: int = 25) -> str:
-    """관리자 조회(/포링푸드골목)용 글: 방어 기금, 열린 구역, 놓인 것(상태), 손봐야 할 것, 최근 기록, 오늘 한 사람."""
+    """관리자 조회(/포링푸드골목)용 글: 설비 기금, 열린 구역, 놓인 것(상태), 손봐야 할 것, 최근 기록, 오늘 한 사람."""
     now = now or now_kst()
     data = _state()
     items = data["items"]
     opened = ", ".join(DISTRICTS[k]["name"] for k in data["open"])
     locked = ", ".join(v["name"] for k, v in DISTRICTS.items() if k not in data["open"])
     lines = [f"🛡️ **{TITLE} 판** ({now:%m/%d %H:%M})",
-             f"방어 기금 **{data['fund']:,}원** (마을 회의비 하루 +{DAILY_FUND:,}원) · 놓인 것 {len(items)}개",
+             f"설비 기금 **{data['fund']:,}원** (거리 회의비 하루 +{DAILY_FUND:,}원) · 놓인 것 {len(items)}개",
              f"열린 구역: {opened}" + (f" · 아직 닫힌 구역: {locked}" if locked else "")]
     if items:
         lines.append("\n**놓인 것**")

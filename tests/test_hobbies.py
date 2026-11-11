@@ -36,7 +36,7 @@ def test_market_prompt_and_trade_roundtrip():
     assert int(life.get("덴켄")["money"]) == money - shares * 50_000
     assert hobbies.holdings("덴켄")["삼성전자"]["shares"] == shares
     assert hobbies.trade("덴켄", {"action": "매도", "name": "삼성전자", "amount": 0}, T) is None   # 하루 한 번
-    assert "내 상단 지분(주식)" in hobbies.prompt_block(kwon, T)
+    assert "내 주식" in hobbies.prompt_block(kwon, T)
     # 다음 날 값이 오른 뒤 전량 매도 - 손익이 이야기 속 돈에 반영
     nxt = T + timedelta(days=1)
     _refresh(nxt, 60_000.0)
