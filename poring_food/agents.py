@@ -88,7 +88,7 @@ GROUP_RECENT = 10
 GOSSIP_MAX_RECIPIENTS = 2
 GOSSIP_P_SAME_PLACE = 0.6     # 직접 만난 대화를 같은 곳에 있던 사람이 엿들음
 GOSSIP_P_COLLEAGUE = 0.25     # 같은 회사 동료에게 말이 돎
-GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/센시네 주점 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
+GOSSIP_P_REGULAR = 0.3       # 같은 단골 가게(카페/솥뚜껑 주점 등)를 쓰는 사이 - 사장/단골끼리 말이 돈다
 GOSSIP_P_OTHER = 0.05
 # 담당 업무(kpi.py 자리) - 실제 서비스 수치가 그 자리 담당자의 실적이다
 DUTY_BIG_RATIO = 2.0      # 오늘 입고가 평소 하루 평균의 이만큼 이상이면 회사 사건 (하루 한 번)
@@ -530,7 +530,7 @@ ARCADE_NAME = f"🎰 {arcade.PLACE}"
 
 
 def _arcade_manager(by_name: dict, player: str, now) -> dict | None:
-    """지금 가게를 보고 있는 오락기 주인 (실적 자리 담당 - 처음엔 자인). 손님 본인이거나 자는 중이면 None."""
+    """지금 가게를 보고 있는 오락기 주인 (실적 자리 담당 - 처음엔 주재인). 손님 본인이거나 자는 중이면 None."""
     name = kpi.holder("arcade") or arcade.MANAGER
     m = by_name.get(name)
     if not m or name == player or _asleep(m, now.hour):
@@ -545,7 +545,7 @@ def _arcade_comment(manager: dict, player: str, r: dict, now) -> dict | None:
     sign = "+" if r["change"] >= 0 else ""
     user = (
         "\n\n".join(b for b in (
-            f"[지금] {now.strftime('%H:%M')}, 내 가게(센시네 주점) 구석의 내기 판 앞.",
+            f"[지금] {now.strftime('%H:%M')}, 내 가게(솥뚜껑 주점) 구석의 내기 판 앞.",
             life.prompt_block(manager["name"]),
             memory.prompt_block(manager["name"], [player], k=3),
         ) if b) + "\n\n"
@@ -1488,7 +1488,7 @@ def role_tag(name: str, roster: list[dict] | None = None) -> str:
 
 def _talk_header(how: str, place: str, t: datetime, speaker: str, listener: str) -> str:
     """대화 한 마디의 출처 (말한 사람이 뭐 하는 사람인지 앞에):
-    (거리 이웃집 동네 교회 전도사) 🔮 메신저 · 14:36 · 세실리 → 카이진 / (영상팀 로비 카페 바리스타) 📍 카페 오후세시 · 11:14 · 소라 → 카즈마."""
+    (거리 이웃집 동네 교회 전도사) 🔮 메신저 · 14:36 · 신세리 → 김기진 / (영상팀 로비 카페 바리스타) 📍 카페 오후세시 · 11:14 · 소라 → 민재현."""
     role = role_tag(speaker)
     return (f"-# {role + ' ' if role else ''}{'🔮 메신저' if how == '메신저' else '📍 ' + place} · "
             f"{t.strftime('%H:%M')} · {speaker} → {listener}")
@@ -2275,7 +2275,7 @@ def tick(roster: list[dict], routine_hints: dict[str, str] | None = None) -> dic
 
 _LAST_FRESH: dict = {}
 _PLACES = [  # 장소 이름이 제각각이라 묶어서 보여 준다 (앞에 있는 게 먼저)
-    (("오후세시", "카페"), "☕ 카페 오후세시"), (("센시네 주점", "주점", "센시네 주점", "구인구직 센터", "길드"), "🍺 센시네 주점"),
+    (("오후세시", "카페"), "☕ 카페 오후세시"), (("솥뚜껑 주점", "주점", "솥뚜껑 주점", "구인구직 센터", "길드"), "🍺 솥뚜껑 주점"),
     (("헬스장", "헬스장"), "🏋️ 헬스장"), (("편의점", "편의점"), "🏪 편의점"), (("약국", "의원", "치과"), "💊 약국"),
     (("번영회 사무실",), "🏛️ 번영회 사무실"), (("시장", "반찬가게", "생선가게", "어물전", "무기점"), "🧺 시장"),
     (("수리 공방",), "⚒️ 수리 공방"), (("학원", "학원"), "📜 학원"),

@@ -4,19 +4,19 @@
 |-------------------------------------------|--------------------------------|-------------|----------------------------------------------|
 | 전체 조정                                   | ZEEPS 편집국 대표실        | 애순이       | 목표 순서: 시청·독서 > 서버 95% > 자료 등록       |
 | Plex 시청 (Plex Media Server)              | ZEEPS 영상콘텐츠팀 상영관              | 소라         | 지금 보는 손님이 버퍼링 없이                     |
-| flaskfarm (plex_mate rclone 새로 고침, GDS) | 영상팀 이야기 배급소            | 일레이나     | 새 영상이 Plex에 빨리 등록                       |
-| 북오아시스 (웹 서가 + MariaDB + 스캐너)      | 편집국 서가 모니터링               | 페른         | 책 열람이 빠르고, 새 책이 서가에 제때 등록         |
-| bookoasis_assistant (웹툰/웹소설 다운로드)   | 편집국 원고 운반 자동화 봇          | 슈타르크     | 기다무 대여권을 놓치지 않고 최대한 받기             |
-| YM_PLAYER (Plex/텔레그램/IPTV 재생)         | 영상팀 영사 모니터              | 프랑         | 텔레그램/IPTV 시청이 끊기지 않게                  |
-| Tautulli (시청 집계)                        | 영상팀 관객 세는 모니터          | 크리스       | 관객 집계가 멈추지 않게                           |
-| 서버 조절 (부하 단계)                        | 메인 서버                          | 슈나         | 부하 지수 95% 아래                                |
-| LiteLLM                                    | 시설관리팀 리소스 중계탑               | 고브타       | 거리 사람들의 주문(LLM)이 막히지 않게               |
-| vaultwarden                                | 거리 열쇠지기 탑                 | 소우에이     | 열쇠 금고가 늘 열려 있게                          |
-| docker-warproxy                            | 택배 영업소                   | 가비루       | 바깥 택배가 오갈 수 있게                          |
-| ClamAV (호스트 zeeps)                       | 보안 점검(바이러스 검사)               | 팔린         | 바이러스 검사를 거르지 않게                  |
-| rclone zeeps_member 업로드 (스테이징)         | 클라우드로 가는 원고 업로드        | 카즈마       | 로컬에 쌓인 짐을 제때 서울로                       |
+| flaskfarm (plex_mate rclone 새로 고침, GDS) | 영상팀 이야기 배급소            | 이나연     | 새 영상이 Plex에 빨리 등록                       |
+| 북오아시스 (웹 서가 + MariaDB + 스캐너)      | 편집국 서가 모니터링               | 정하린         | 책 열람이 빠르고, 새 책이 서가에 제때 등록         |
+| bookoasis_assistant (웹툰/웹소설 다운로드)   | 편집국 원고 운반 자동화 봇          | 강태오     | 기다무 대여권을 놓치지 않고 최대한 받기             |
+| YM_PLAYER (Plex/텔레그램/IPTV 재생)         | 영상팀 송출 모니터              | 이나연     | 텔레그램/IPTV 시청이 끊기지 않게                  |
+| Tautulli (시청 집계)                        | 영상팀 시청 집계 모니터          | 배수진         | 관객 집계가 멈추지 않게                           |
+| 서버 조절 (부하 단계)                        | 메인 서버                          | 권지아         | 부하 지수 95% 아래                                |
+| LiteLLM                                    | 시설관리팀 리소스 중계탑               | 고민수       | 거리 사람들의 주문(LLM)이 막히지 않게               |
+| vaultwarden                                | 거리 열쇠지기 탑                 | 서경호     | 열쇠 금고가 늘 열려 있게                          |
+| docker-warproxy                            | 택배 영업소                   | 탁기범       | 바깥 택배가 오갈 수 있게                          |
+| ClamAV (호스트 zeeps)                       | 보안 점검(바이러스 검사)               | 류하은         | 바이러스 검사를 거르지 않게                  |
+| rclone zeeps_member 업로드 (스테이징)         | 클라우드로 가는 원고 업로드        | 민재현       | 로컬에 쌓인 짐을 제때 서울로                       |
 
-- 담당은 .env PORING_STEWARDS="ff=일레이나,bookoasis=페른,..."로 바꾼다. 담당자가 교대(rotation)로 쉬는 중이면 같은 소속의
+- 담당은 .env PORING_STEWARDS="ff=이나연,bookoasis=정하린,..."로 바꾼다. 담당자가 교대(rotation)로 쉬는 중이면 같은 소속의
   다른 인물이 대신 맡는다(없으면 조정자).
 - prompt_block(이름): 매시 판단 프롬프트에 "내가 맡은 시스템"과 실제 상태가 들어간다 - 그래서 담당자는 자기 시스템을
   걱정하고, 다른 담당자에게 따지거나 부탁한다.
@@ -38,29 +38,29 @@ SYSTEMS = {
               "wants": "모든 시설이 최대한 살아 있게 조율하되 목표 순서(시청·독서 > 서버 95% > 자료 등록)를 지킨다"},
     "plex": {"label": "Plex 시청", "facility": "영상팀 상영관", "steward": "소라",
              "wants": "지금 영상을 보는 손님이 버퍼링 없이 끝까지 보게 한다 - 시청 중엔 다른 일이 양보해야 한다"},
-    "ff": {"label": "flaskfarm (plex_mate rclone 새로 고침·GDS 감시)", "facility": "영상팀 이야기 배급소", "steward": "일레이나",
+    "ff": {"label": "flaskfarm (plex_mate rclone 새로 고침·GDS 감시)", "facility": "영상팀 이야기 배급소", "steward": "이나연",
            "wants": "새 영상이 올라오면 rclone 새로 고침으로 Plex에 빨리 등록되게 한다 (새벽 정기 새로 고침 포함)"},
-    "bookoasis": {"label": "북오아시스 (웹 서가·MariaDB·스캐너)", "facility": "편집국 서가 모니터링", "steward": "페른",
+    "bookoasis": {"label": "북오아시스 (웹 서가·MariaDB·스캐너)", "facility": "편집국 서가 모니터링", "steward": "정하린",
                   "wants": "책 열람이 빠르고, 새로 들어온 책이 스캐너로 제때 서가(DB)에 등록되게 한다"},
     "assistant": {"label": "bookoasis_assistant (웹툰/웹소설 다운로드)", "facility": "편집국 원고 운반 자동화 봇",
-                  "steward": "슈타르크",
+                  "steward": "강태오",
                   "wants": "기다무 대여권을 놓치지 않고 웹툰/웹소설을 최대한 많이 받아 북오아시스에 등록 요청한다"},
-    "ym_player": {"label": "YM_PLAYER (Plex/텔레그램/IPTV 재생)", "facility": "영상팀 영사 모니터", "steward": "프랑",
+    "ym_player": {"label": "YM_PLAYER (Plex/텔레그램/IPTV 재생)", "facility": "영상팀 송출 모니터", "steward": "이나연",
                   "wants": "텔레그램·IPTV·라디오 중계와 Plex 재생이 끊기지 않게 한다"},
-    "tautulli": {"label": "Tautulli (시청 집계)", "facility": "영상팀 관객 세는 모니터", "steward": "크리스",
+    "tautulli": {"label": "Tautulli (시청 집계)", "facility": "영상팀 시청 집계 모니터", "steward": "배수진",
                  "wants": "관객 집계와 재생 알림이 멈추지 않게 한다"},
-    "loadshed": {"label": "서버 조절 (부하 단계)", "facility": "메인 서버", "steward": "슈나",
+    "loadshed": {"label": "서버 조절 (부하 단계)", "facility": "메인 서버", "steward": "권지아",
                  "wants": "부하 지수를 95% 아래로 지키고, 꼭 필요한 만큼만 늦추고 바로 되돌린다"},
-    "litellm": {"label": "LiteLLM", "facility": "시설관리팀 리소스 중계탑", "steward": "고브타",
+    "litellm": {"label": "LiteLLM", "facility": "시설관리팀 리소스 중계탑", "steward": "고민수",
                 "wants": "거리 사람들의 주문(LLM 요청)이 막히지 않게 한다"},
-    "vaultwarden": {"label": "vaultwarden", "facility": "거리 열쇠지기 탑", "steward": "소우에이",
+    "vaultwarden": {"label": "vaultwarden", "facility": "거리 열쇠지기 탑", "steward": "서경호",
                     "wants": "열쇠 금고가 늘 열려 있게 한다 (절대 끄지 않음)"},
-    "warproxy": {"label": "docker-warproxy", "facility": "택배 영업소", "steward": "가비루",
+    "warproxy": {"label": "docker-warproxy", "facility": "택배 영업소", "steward": "탁기범",
                  "wants": "바깥으로 나가는 택배가 필요할 때 오갈 수 있게 한다 (놀 때는 쉬어도 됨)"},
-    "clamav": {"label": "ClamAV (호스트 바이러스 검사)", "facility": "보안 점검(바이러스 검사)", "steward": "팔린",
+    "clamav": {"label": "ClamAV (호스트 바이러스 검사)", "facility": "보안 점검(바이러스 검사)", "steward": "류하은",
                "wants": "정기 바이러스 검사를 너무 오래 거르지 않게 한다"},
     "upload": {"label": "rclone zeeps_member 업로드 (로컬 스테이징)", "facility": "클라우드로 가는 원고 업로드",
-               "steward": "카즈마", "wants": "로컬에 쌓인 짐을 제때 서울(드라이브)로 올려 창고가 넘치지 않게 한다"},
+               "steward": "민재현", "wants": "로컬에 쌓인 짐을 제때 서울(드라이브)로 올려 창고가 넘치지 않게 한다"},
 }
 
 # loadshed/facilities가 쓰는 실제 이름 -> 시스템

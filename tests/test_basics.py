@@ -10,9 +10,9 @@ from poring_food.josa import j
 def test_josa():
     assert j("크리스", "가") == "크리스가"
     assert j("소라", "가") == "소라가"
-    assert j("페른", "와") == "페른과"
+    assert j("정하린", "와") == "정하린과"
     assert j("애순이", "와") == "애순이와"
-    assert j("리리나", "랑") == "리리나랑"
+    assert j("유리나", "랑") == "유리나랑"
 
 
 def test_similar_topics():
@@ -23,7 +23,7 @@ def test_similar_topics():
 
 def test_place_label_groups():
     assert agents._place_label("회사 1층 카페 오후세시") == "☕ 카페 오후세시"
-    assert agents._place_label("센시네 주점") == "🍺 센시네 주점"
+    assert agents._place_label("솥뚜껑 주점") == "🍺 솥뚜껑 주점"
     assert agents._place_label("자취방에서 쉬는 중") == "🏠 집"
 
 

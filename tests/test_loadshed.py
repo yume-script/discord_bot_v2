@@ -142,11 +142,11 @@ def test_announce_story_and_facilities_ignore_quiet():
                        {"host": "plex01", "do": "stage", "name": "서버 경보", "from": 3, "to": 4, "why": "5분 평균 95%",
                         "alert": True}], T0,
                       post=posts.append, react=lambda d, title, key: sent.append((title, key)) or [])
-    assert "택배 영업소" in posts[0] and "슈나" in posts[0]
+    assert "택배 영업소" in posts[0] and "권지아" in posts[0]
     assert "4단계" in posts[1] and "⚠️" in posts[1] and "영상과 책 열람은 그대로" in posts[1]
     assert sent[0][0] == "택배 영업소 잠시 소등 (서버 조절)" and sent[1][0].startswith("서버 경보 4단계")
-    assert sent[1][1][:3] == ["슈나", "베니마루", "애순이"]
-    assert any("불을 잠시 껐다" in m["text"] for m in memory.store.memories("슈나"))
+    assert sent[1][1][:3] == ["권지아", "권태준", "애순이"]
+    assert any("불을 잠시 껐다" in m["text"] for m in memory.store.memories("권지아"))
     # 서버 조절로 끈 docker-warproxy는 facilities가 "불 꺼짐" 사고로 알리지 않는다
     _run([85] * 3)
     etc = list(facilities.HOSTS)[0]
@@ -178,7 +178,7 @@ def test_react_now_reaches_everyone_quietly_and_key_people_react_now(fake_llm):
         return {"consider": "어쩌지", "matters": 7, "react": "가만히", "thought": "서버가 걱정된다"}
     fake_llm(llm)
     key = loadshed.key_people(["flaskfarm"])
-    got = agents.react_now("슈나가 이야기 배급소로 가는 리소스 흐름을 좁혔다.", "이야기 배급소 리소스 흐름 제한 (서버 조절)", key)
+    got = agents.react_now("권지아가 이야기 배급소로 가는 리소스 흐름을 좁혔다.", "이야기 배급소 리소스 흐름 제한 (서버 조절)", key)
     awake_key = [n for n in key if not agents.is_asleep_now(n)]
     assert set(got) == set(awake_key)
     st = agents._load_state()

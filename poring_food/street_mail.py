@@ -12,9 +12,9 @@ Apps Script(scripts/gas/mail_manage.gs)의 NOTICE_MODE:
 
 | 알림방 메시지                                   | 오아시스 거리                                                    |
 |------------------------------------------------|-----------------------------------------------------------------|
-| ...메일 정리.GAS: 🗑️ N개의 메일을 휴지통으로     | 🧹 카즈마가 서버실 아래 폐기 박스 N수레를 치움 (품삯, 많으면 "서버실 대청소") |
+| ...메일 정리.GAS: 🗑️ N개의 메일을 휴지통으로     | 🧹 민재현이 서버실 아래 폐기 박스 N수레를 치움 (품삯, 많으면 "서버실 대청소") |
 | 알림대기: 일일 기본 제공량을 모두 사용            | 시설관리팀: 통신망 리소스가 바닥남 (거리 사건)                     |
-| 알림대기: 예약 작업이 정상적으로 완료             | 지하 물류창고 정리 끝 (시설관리팀 소우에이에게)                          |
+| 알림대기: 예약 작업이 정상적으로 완료             | 지하 물류창고 정리 끝 (시설관리팀 서경호에게)                          |
 | 알림대기: Google Takeout                       | 택배 영업소에 큰 짐 상자 도착                                    |
 | 알림대기: 서버 다운 알림                         | 이웃 거리 서버가 무너졌다는 소식 (거리 사건)                         |
 | 알림대기: 이메일 인증 코드 / 새 메일 도착          | 거리 우편함에 등기 우편/편지 한 통 (개수만 센다)                 |
@@ -37,7 +37,7 @@ from .config import STATE_DIR
 
 ENABLED = os.getenv("PORING_STREET_MAIL", "1") not in ("0", "false", "False", "")
 CHANNEL_ID = int(os.getenv("PORING_MAIL_CHANNEL_ID", "591180628842774554") or 0)
-CLEANER = os.getenv("PORING_STREET_CLEANER", "카즈마")
+CLEANER = os.getenv("PORING_STREET_CLEANER", "민재현")
 WAGE_PER_BAG = 2000          # 잔해 한 수레 품삯 (이야기 속 돈)
 BAG_SIZE = 5                 # 메일 5개 = 잔해 한 수레
 BIG_CLEANUP = 30             # 이만큼 넘게 치우면 "서버실 대청소" 거리 사건
@@ -140,11 +140,11 @@ def handle(ev: dict, now: datetime | None = None) -> str:
             ag.inject_event([ag.world.TOWN], "이웃 거리 서버가 무너졌다는 소식이 거리에 돌았다.", "이웃 거리 서버 붕괴")
             out = "이웃 거리 서버 붕괴"
         elif kind == "nas":
-            ag.deliver("소우에이", "지하 물류창고 정리 작업이 예정대로 끝났다.", "업무", quiet=True)
-            out = "지하 창고 정리 끝 (소우에이)"
+            ag.deliver("서경호", "지하 물류창고 정리 작업이 예정대로 끝났다.", "업무", quiet=True)
+            out = "지하 창고 정리 끝 (서경호)"
         elif kind == "takeout":
             ag.deliver(CLEANER, "택배 영업소에 큰 짐 상자가 하나 도착했다 - 누가 날라 줘야 한다.", "소식", quiet=True)
-            out = "택배 영업소 큰 짐 (카즈마)"
+            out = "택배 영업소 큰 짐 (민재현)"
     _save(data)
     if out:
         print(f"[서버실 청소] {out}")

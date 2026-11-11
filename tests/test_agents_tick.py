@@ -5,7 +5,7 @@ import re
 
 from poring_food import agents, characters
 
-PAIRS = {"카즈마": "아쿠아", "카이진": "나마리", "가비루": "팔린", "알다프": "리그루드", "이즈츠미": "쿠로베"}
+PAIRS = {"민재현": "하수아", "김기진": "나미란", "탁기범": "류하은", "안대풍": "구영철", "이주미": "구본우"}
 
 
 def _handler(system, user):
@@ -100,7 +100,7 @@ def test_decide_all_runs_lanes_in_parallel_and_keeps_order(monkeypatch):
     import time as _t
     active = {"own": 0, "base": 0, "max_own": 0, "max_base": 0}
     lock = threading.Lock()
-    own_names = {"소라", "위벨", "메구밍"}
+    own_names = {"소라", "윤채아", "문하늘"}
     monkeypatch.setattr(agents, "agent_model", lambda n: "groq" if n in own_names else "")
     monkeypatch.setattr(agents, "DECIDE_PARALLEL", 1)
     monkeypatch.setattr(agents, "DECIDE_PARALLEL_OWN", 3)
@@ -115,7 +115,7 @@ def test_decide_all_runs_lanes_in_parallel_and_keeps_order(monkeypatch):
             active[lane] -= 1
         return {"who": agent["name"]}
     monkeypatch.setattr(agents, "_decide", fake_decide)
-    people = [{"name": n} for n in ("애순이", "소라", "슈타르크", "위벨", "메구밍", "페른")]
+    people = [{"name": n} for n in ("애순이", "소라", "강태오", "윤채아", "문하늘", "정하린")]
     out = agents._decide_all([(p, {}, "", [], "") for p in people], people)
     assert [d["who"] for d in out] == [p["name"] for p in people]  # 결과는 원래 순서대로
     assert active["max_base"] == 1  # 기본 모델(분당 한도가 작은 무료 키)은 한 번에 한 명
@@ -138,11 +138,11 @@ def test_persona_and_voice_reach_every_speaking_prompt(fake_llm, monkeypatch):
 
 
 def test_ripple_round_chains_reactions_within_the_hour(fake_llm, monkeypatch, caplog):
-    """카즈마-아쿠아 대화 -> (반응) 아쿠아가 팔린에게 하소연 -> (다음 바퀴) 팔린이 사내 단톡방에 한마디. 같은 시간 안에."""
+    """민재현-하수아 대화 -> (반응) 하수아가 류하은에게 하소연 -> (다음 바퀴) 류하은이 사내 단톡방에 한마디. 같은 시간 안에."""
     caplog.set_level(logging.INFO, logger="poring_food")
     _quiet(monkeypatch)
     monkeypatch.setattr(agents, "RIPPLE_CONVOS_PER_HOUR", 2)
-    first = {"카즈마": "아쿠아"}
+    first = {"민재현": "하수아"}
 
     def handler(system, user):
         me = re.search(r"'([^']+)'", system).group(1)
@@ -152,12 +152,12 @@ def test_ripple_round_chains_reactions_within_the_hour(fake_llm, monkeypatch, ca
         if "다음 한마디" in user:
             return {"say": "응", "end": True}
         if "방금 이번 시간에 일어난 일" in user:
-            if me == "아쿠아":
+            if me == "하수아":
                 return {"react": "연락", "thought": "미선이한테 얘기해야지", "matters": 7, "consider": "속상해서 못 참겠다",
-                        "contact": {"to": "팔린", "how": "메신저", "opening": "미선아 있잖아"}}
-            if me == "팔린":
+                        "contact": {"to": "류하은", "how": "메신저", "opening": "미선아 있잖아"}}
+            if me == "류하은":
                 return {"react": "단톡방", "thought": "다들 알아야 해",
-                        "group_post": {"group": "사내 단톡방", "text": "리그루드 번영회장님 이것 좀 보세요"}}
+                        "group_post": {"group": "사내 단톡방", "text": "구영철 번영회장님 이것 좀 보세요"}}
             return {"react": "가만히", "thought": "그렇구나"}
         return {}
     fake_llm(handler)
@@ -166,10 +166,10 @@ def test_ripple_round_chains_reactions_within_the_hour(fake_llm, monkeypatch, ca
     monkeypatch.setattr(agents.runtime, "send_as", lambda *a, **k: None)
     agents.tick(characters.load_roster())
     log = "\n".join(r.getMessage() for r in caplog.records)
-    assert re.search(r"대화 \d+마디: 카즈마[와과] 아쿠아", log)
-    assert "파급 1바퀴" in log and "아쿠아" in log
-    assert re.search(r"대화 \d+마디: 아쿠아와 팔린", log)          # 반응이 새 대화로
-    assert "사내 단톡방 팔린: 리그루드 번영회장님 이것 좀 보세요" in log    # 그 대화가 또 다음 바퀴 반응으로
+    assert re.search(r"대화 \d+마디: 민재현[와과] 하수아", log)
+    assert "파급 1바퀴" in log and "하수아" in log
+    assert re.search(r"대화 \d+마디: 하수아와 류하은", log)          # 반응이 새 대화로
+    assert "사내 단톡방 류하은: 구영철 번영회장님 이것 좀 보세요" in log    # 그 대화가 또 다음 바퀴 반응으로
     assert "파급 3바퀴" in log or "파급 2바퀴" in log
     m = re.search(r"파급 라운드: 반응 고민 (\d+)번, 행동 (\d+)번", log)
     assert m and int(m.group(1)) <= agents.RIPPLE_MAX_REACTIONS and int(m.group(2)) >= 2
@@ -193,7 +193,7 @@ def test_ripple_respects_caps(fake_llm, monkeypatch, caplog):
         if "다음 한마디" in user:
             return {"say": "응", "end": True}
         if "방금 이번 시간에 일어난 일" in user:
-            return {"react": "연락", "thought": "또 연락", "contact": {"to": "리그루드", "how": "메신저", "opening": "번영회장님"}}
+            return {"react": "연락", "thought": "또 연락", "contact": {"to": "구영철", "how": "메신저", "opening": "번영회장님"}}
         return {}
     fake_llm(handler)
     agents.tick(characters.load_roster())
@@ -213,23 +213,23 @@ def test_ripple_agent_decides_whether_to_react(fake_llm, monkeypatch, caplog):
     def handler(system, user):
         me = re.search(r"'([^']+)'", system).group(1)
         if "이번 한 시간 동안" in user:
-            gp = {"group": "사내 단톡방", "text": "오늘 골목 시끄럽네요"} if me == "알다프" else None
-            c = {"to": "아쿠아", "how": "직접", "opening": "쌤"} if me == "카즈마" else None
+            gp = {"group": "사내 단톡방", "text": "오늘 골목 시끄럽네요"} if me == "안대풍" else None
+            c = {"to": "하수아", "how": "직접", "opening": "쌤"} if me == "민재현" else None
             return {"location": "골목", "activity": "일", "state": "일하는 중", "thought": "흠", "contact": c, "group_post": gp}
         if "다음 한마디" in user:
             return {"say": "응", "end": True}
         if "방금 이번 시간에 일어난 일" in user:
             return {"consider": "별로 상관없는 일", "matters": 2, "react": "연락",
-                    "contact": {"to": "리그루드", "how": "메신저", "opening": "번영회장님"}, "thought": "그냥 넘기자"}
+                    "contact": {"to": "구영철", "how": "메신저", "opening": "번영회장님"}, "thought": "그냥 넘기자"}
         return {}
     fake_llm(handler)
     agents.tick(characters.load_roster())
     log = "\n".join(r.getMessage() for r in caplog.records)
-    assert "반응 아쿠아: 가만히 (중요도 2) - 고민: 별로 상관없는 일" in log
+    assert "반응 하수아: 가만히 (중요도 2) - 고민: 별로 상관없는 일" in log
     m = re.search(r"파급 라운드: 반응 고민 (\d+)번, 행동 (\d+)번, 새 대화 (\d+)개", log)
     assert m and m.group(2) == "0" and m.group(3) == "0"
     first = re.search(r"파급 1바퀴 \([^)]*\): (.+)", log).group(1).split(", ")
-    assert len(set(first) - {"카즈마", "아쿠아"}) >= 1  # 단톡방 글을 본 사람도 반응할지 고민해 본다
+    assert len(set(first) - {"민재현", "하수아"}) >= 1  # 단톡방 글을 본 사람도 반응할지 고민해 본다
 
 
 def test_town_map_png(fake_llm, monkeypatch, tmp_path):
@@ -282,17 +282,17 @@ def test_agent_plays_bot_game_in_free_time(fake_llm, monkeypatch, caplog):
 
     def handler(system, user):
         out = _handler(system, user)
-        if "이번 한 시간 동안" in user and "'카즈마'" in system:
+        if "이번 한 시간 동안" in user and "'민재현'" in system:
             seen["rule"] = "봇 미니게임" in user
             out.update(state="개인시간", contact=None, game={"name": "주사위", "bet": 5000})
         return out
 
     fake_llm(handler)
-    before = int(life.get("카즈마")["money"])
+    before = int(life.get("민재현")["money"])
     agents.tick(characters.load_roster())
     assert seen["rule"]
-    assert any("[오락실] 카즈마 /주사위 5000" in r.getMessage() for r in caplog.records)
-    assert int(life.get("카즈마")["money"]) != before or any("+0원" in r.getMessage() for r in caplog.records)
+    assert any("[오락실] 민재현 /주사위 5000" in r.getMessage() for r in caplog.records)
+    assert int(life.get("민재현")["money"]) != before or any("+0원" in r.getMessage() for r in caplog.records)
 
 
 def test_live_conversations_are_made_at_their_own_time(fake_llm, monkeypatch, caplog):
@@ -344,16 +344,16 @@ def test_live_no_duplicate_or_overlapping_pair_conversations(fake_llm, monkeypat
     fake_llm(handler)
     t = datetime(2026, 10, 13, 20, 10)
     monkeypatch.setattr(agents, "now_kst", lambda: t)
-    assert live.enqueue_convo(t, "카즈마", "아쿠아", opening="쌤", how="메신저", place="골목", depth=0, hk="x")
-    assert not live.enqueue_convo(t, "아쿠아", "카즈마", opening="두식씨", how="메신저", place="골목", depth=0, hk="x")
+    assert live.enqueue_convo(t, "민재현", "하수아", opening="쌤", how="메신저", place="골목", depth=0, hk="x")
+    assert not live.enqueue_convo(t, "하수아", "민재현", opening="두식씨", how="메신저", place="골목", depth=0, hk="x")
     assert live.run_one(t)
-    assert not live.pending_pair("카즈마", "아쿠아")                # 반응으로 같은 두 사람 대화가 또 잡히지 않음
-    # 카즈마가 아직 대화 중(마디가 올라가는 중)이면 다른 사람과의 대화는 그 뒤로
-    live.enqueue_convo(t, "카이진", "카즈마", opening="두식아", how="직접", place="센시네 주점", depth=0, hk="x")
+    assert not live.pending_pair("민재현", "하수아")                # 반응으로 같은 두 사람 대화가 또 잡히지 않음
+    # 민재현이 아직 대화 중(마디가 올라가는 중)이면 다른 사람과의 대화는 그 뒤로
+    live.enqueue_convo(t, "김기진", "민재현", opening="두식아", how="직접", place="솥뚜껑 주점", depth=0, hk="x")
     jobs_before = live.pending()
     live.run_one(t)
-    ends = agents._load_state()["_talking"]["카즈마"]
+    ends = agents._load_state()["_talking"]["민재현"]
     assert ends > t.isoformat() and live.pending() == jobs_before   # 미뤄서 다시 들어감
     later = datetime.fromisoformat(ends) + timedelta(minutes=1)
     monkeypatch.setattr(agents, "now_kst", lambda: later)
-    assert live.run_one(later) and not live.pending_pair("카이진", "카즈마")
+    assert live.run_one(later) and not live.pending_pair("김기진", "민재현")

@@ -8,15 +8,15 @@ T = datetime(2026, 10, 12, 15)
 
 def test_repeat_hint_and_worn_out_topics():
     for d in range(5):
-        novelty.note("대화", "이번 주말 등산 같이 갈래? 무등산 단풍이 예쁘대", ["소라", "위벨"], at=T - timedelta(days=d + 1))
-    novelty.note("대화", "어제 회의록 정리 부탁해요", ["소라", "슈타르크"], at=T - timedelta(days=1))
-    novelty.note("대화", "무등산 등산 갈래? 단풍 예쁘대", ["소라", "위벨"], at=T - timedelta(days=30))  # 오래돼서 지워짐
-    h = novelty.hint("이번 주말에 무등산 등산 같이 갈래?", ["소라", "위벨"], now=T)
+        novelty.note("대화", "이번 주말 등산 같이 갈래? 무등산 단풍이 예쁘대", ["소라", "윤채아"], at=T - timedelta(days=d + 1))
+    novelty.note("대화", "어제 회의록 정리 부탁해요", ["소라", "강태오"], at=T - timedelta(days=1))
+    novelty.note("대화", "무등산 등산 갈래? 단풍 예쁘대", ["소라", "윤채아"], at=T - timedelta(days=30))  # 오래돼서 지워짐
+    h = novelty.hint("이번 주말에 무등산 등산 같이 갈래?", ["소라", "윤채아"], now=T)
     assert "처음이 아니다" in h and "5번" in h
     assert novelty.hint("오늘 점심 뭐 먹지", ["소라"], now=T) == ""
     worn = novelty.worn_out("소라", now=T)
     assert "지겹게" in worn and "등산" in worn and "회의록" not in worn
-    assert novelty.worn_out("슈타르크", now=T) == ""
+    assert novelty.worn_out("강태오", now=T) == ""
 
 
 def test_kind_balance_and_calendar():

@@ -17,7 +17,7 @@ def load_resources():
             org["market_info"] = {
                 "rival": "체인 서점 '북스타'",
                 "rival_product": "OTT 앱과 할인 전자책",
-                "relation": "감사역(덴켄)를 보내 편집국을 북스타 계열사로 삼키려는 출판그룹 북스타, 독자 시간을 빼앗는 경쟁자"
+                "relation": "감사역(장만석)를 보내 편집국을 북스타 계열사로 삼키려는 출판그룹 북스타, 독자 시간을 빼앗는 경쟁자"
             }
 
         return org, issues, persona

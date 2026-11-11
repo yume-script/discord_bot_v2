@@ -72,8 +72,8 @@ def test_llm_summary_prefers_proxy_then_bot():
 def test_erinn_llm_posts(monkeypatch):
     from poring_food import agents, characters
     posts, _ = kpi.assign(agents.load_agents(), characters.load_roster())
-    assert [p["id"] for p in posts["고브타"]] == ["llm_requests"]
-    assert [p["id"] for p in posts["리리나"]] == ["llm_cost"]
+    assert [p["id"] for p in posts["고민수"]] == ["llm_requests"]
+    assert [p["id"] for p in posts["유리나"]] == ["llm_cost"]
     counts = {"llm_requests": {"today": 40, "avg": 100.0, "saturated": False, "pace": "평소보다 한산함", "failures": 12},
               "llm_tokens": {"today": 1000, "avg": 10000.0, "saturated": False, "pace": "평소보다 한산함"}}
     monkeypatch.setattr(kpi.metrics, "count", lambda k: counts.get(k))

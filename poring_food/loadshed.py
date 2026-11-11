@@ -36,7 +36,7 @@
   /run/village/stage를 쓰고(가이드 6.3 게이트 - 방역/정비 타이머가 ExecCondition으로 읽고 스스로 건너뜀),
   1단계~ 바이러스 검사 CPUQuota 25%, 2단계~ 돌고 있는 정기 스캔(risk/deep) 중단, 0단계면 60%로. 실시간 감시(malware-watch)는 유지.
 
-이야기: 서버 관리자 슈나(ACTOR)가 서버 경보 단계를 올리고 내리며, 짐 나르는 자동화 봇의 리소스 흐름을 좁히고 출입구 초소 불을 잠시 끈다.
+이야기: 서버 관리자 권지아(ACTOR)가 서버 경보 단계를 올리고 내리며, 짐 나르는 자동화 봇의 리소스 흐름을 좁히고 출입구 초소 불을 잠시 끈다.
 facilities.py는 이 기능이 끈 컨테이너를 "불 꺼짐" 사고로 치지 않는다 (quiet_names). raids 위험도는 max_cpu()(가장 높은 지수).
 봇(cogs/poring_food.py load_guard)이 CHECK_SEC(60초)마다 step()을 부르고, 한 일이 있으면 바로 notify, 잠금 안에서 reflect.
 저장: storage/poring_food/loadshed.json {"hosts": {서버: {"samples": [[시각, 지수, psi]], "stage", "stage_at", "shed": {이름: 시각},
@@ -79,7 +79,7 @@ SLOW_TTL_H = float(os.getenv("PORING_LOADSHED_SLOW_HOURS", "2"))
 COOLDOWN_MIN = 30
 KEEP_SAMPLES = 40
 TIMEOUT = 25
-ACTOR = "슈나"
+ACTOR = "권지아"
 NAME = "💠 서버 조절"
 LOADSHED_PATH = os.path.join(STATE_DIR, "loadshed.json")
 UNIT_WEIGHT = {4: 30, 5: 15}                # 짐꾼 CPUWeight (기본 100) - 끄지 않고 늦춘다
@@ -760,13 +760,13 @@ OWNERS = {"bookoasis_assistant.service": "BOOK", "upload": "BOOK"}
 
 
 def key_people(names: list[str], agents: list[dict] | None = None, per_company: int = 2) -> list[str]:
-    """바로 반응할 사람: 슈나(서버 담당) + 시설관리팀장 베니마루 + 조치를 당한 시설의 담당자(stewards) + 시청 담당 소라
+    """바로 반응할 사람: 권지아(서버 담당) + 시설관리팀장 권태준 + 조치를 당한 시설의 담당자(stewards) + 시청 담당 소라
     (그 시설이 밀린 게 시청 때문이니 서로 아웅다웅) - 담당이 없는 시설이면 그 기관 사람 몇 명."""
     from . import stewards, worldcfg
     from .agents import load_agents
     from .facilities import FACILITIES
     agents = agents if agents is not None else load_agents()
-    out = [ACTOR, "베니마루"] + ([stewards.steward("chair", agents)] if "서버 경보" in names else [])   # 단계는 총괄도 바로 안다
+    out = [ACTOR, "권태준"] + ([stewards.steward("chair", agents)] if "서버 경보" in names else [])   # 단계는 총괄도 바로 안다
     for name in names:
         key = stewards.for_name(name)
         if key and key != "loadshed":
@@ -779,7 +779,7 @@ def key_people(names: list[str], agents: list[dict] | None = None, per_company: 
 
 
 def reflect(done: list[dict], react=None) -> list[str]:
-    """[잠금 안에서, notify 바로 뒤] 인물 세계에 바로 반영: 거리 사건 + 관련 인물이 지금 반응 + 슈나 기억."""
+    """[잠금 안에서, notify 바로 뒤] 인물 세계에 바로 반영: 거리 사건 + 관련 인물이 지금 반응 + 권지아 기억."""
     from . import agents as ag, memory
     react = react or ag.react_now
     reacted = []
