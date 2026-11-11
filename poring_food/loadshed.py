@@ -51,6 +51,7 @@ import shlex
 import subprocess
 from datetime import datetime, timedelta
 
+from . import loadcause
 from .clock import now_kst
 from ._log import pf_print as print  # print()를 봇 로그로 (systemd에서 stdout 버퍼링 방지)
 from .config import STATE_DIR
@@ -411,7 +412,9 @@ def measure() -> dict:
         probe = parse_probe(_sh(host, _PROBE) or "")
         stats = _run(host, ["docker", "stats", "--no-stream", "--format", "'{{.Name}}\t{{.CPUPerc}}'"]
                      if HOSTS[host]["ssh"] else ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}"])
-        out[host] = {"probe": probe, "running": parse_stats(stats) if stats is not None else None}
+        ps = _sh(host, "ps -eo pcpu=,args= --sort=-pcpu 2>/dev/null | head -25")   # 원인 가리기용 (loadcause)
+        out[host] = {"probe": probe, "running": parse_stats(stats) if stats is not None else None,
+                     "procs": loadcause.parse_ps(ps) if ps else None}
     # 호스트는 village-ctl.sh(강제 명령) 뒤에 있다 - 셸 대신 "probe"만 보낸다
     out["_zeeps"] = parse_probe(_run("zeeps", ["probe"]) or "") if ZEEPS_SSH else None
     out["_playing"], out["_struggle"] = _viewing()
@@ -468,13 +471,25 @@ def next_stage(samples: list, current: int, changed_at: str, playing: bool, now:
     return current, ""
 
 
+CAUSE_ACT = os.getenv("PORING_LOADSHED_CAUSE_ACT", "1") not in ("0", "false", "False", "")   # 원인에 맞춰 한 단계 일찍 늦추기
+
+
 def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, playing: bool = True,
-         struggling: bool = True) -> list[dict]:
+         struggling: bool = True, cause: str = "") -> list[dict]:
     """지금 단계에 맞춰 할 일 [{"host", "do": stop|start|throttle|unthrottle, "name", "kind"?, "weight"?, "why"}].
     복구는 조치의 역순(마지막에 한 것부터). ttl이 지나면 단계와 상관없이 되돌린다. 순수 함수 (테스트용).
     짐꾼(units)/업로드(rclone) 늦추기는 재생 중이고 그 재생이 버벅일 때만 (struggling - 버퍼링/변환이 실시간을 못 따라감,
-    STRUGGLE_HOLD_MIN분 유지). 아무도 안 보거나 잘 나오면 자료 등록을 그대로 둔다."""
+    STRUGGLE_HOLD_MIN분 유지). 아무도 안 보거나 잘 나오면 자료 등록을 그대로 둔다.
+    원인(cause, loadcause)이 뚜렷하면 그 원인을 만든 쪽을 한 단계 일찍, 버벅임을 기다리지 않고 늦춘다 (재생 중일 때만):
+    webtoon = 짐꾼(units), download = 업로드(rclone). 재생이 원인이면 재생은 건드리지 않고 지금처럼 다른 일을 미룬다."""
     need = playing and struggling
+    early = {"unit": CAUSE_ACT and playing and cause == "webtoon", "rclone": CAUSE_ACT and playing and cause == "download"}
+
+    def slow_from(kind: str) -> int:
+        return SLOW_STAGE - 1 if early.get(kind) else SLOW_STAGE
+
+    def wanted(kind: str) -> bool:
+        return need or bool(early.get(kind))
     cfg = HOSTS[host]
     shed = st.get("shed") or {}
     slow = st.get("throttled") or {}
@@ -492,13 +507,14 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, p
     for key, t in slow.items():
         stale = t["kind"] not in ("unit", "rclone") or protected(t["name"]) or \
             (t["kind"] == "unit" and t["name"] not in cfg["units"])
-        if stale or stage < SLOW_STAGE or not need or t.get("at", "") <= slow_old:
+        kd = t.get("kind", "")
+        if stale or stage < slow_from(kd) or not wanted(kd) or t.get("at", "") <= slow_old:
             undo.append((t.get("at", ""), {"host": host, "do": "unthrottle", "name": t["name"], "kind": t["kind"],
                                             "orig": t.get("orig"),
                                             "why": "시청 경로/이제 조치 대상이 아님" if stale else
-                                            "재생이 없어 자료 등록 우선" if not playing and stage >= SLOW_STAGE else
-                                            "재생이 잘 나와서(버퍼링 없음) 자료 등록 우선" if not need and stage >= SLOW_STAGE else
-                                            f"서버 경보 {stage}단계로 내려감" if stage < SLOW_STAGE else f"{SLOW_TTL_H:g}시간 지남(ttl)"}))
+                                            "재생이 없어 자료 등록 우선" if not playing and stage >= slow_from(kd) else
+                                            "재생이 잘 나와서(버퍼링 없음) 자료 등록 우선" if not wanted(kd) and stage >= slow_from(kd) else
+                                            f"서버 경보 {stage}단계로 내려감" if stage < slow_from(kd) else f"{SLOW_TTL_H:g}시간 지남(ttl)"}))
     acts = [a for _, a in sorted(undo, key=lambda x: x[0], reverse=True)]
     undone = {a["name"] for a in acts}
     if running is None:
@@ -510,19 +526,23 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, p
                 continue
             if running[name] < IDLE_CPU:
                 acts.append({"host": host, "do": "stop", "name": name, "why": f"{why}, 이 시설은 놀고 있음({running[name]:g}%)"})
-    if stage >= SLOW_STAGE and need:
+    if stage >= slow_from("unit") and wanted("unit"):
         for name in cfg["units"]:
-            key, w = f"unit:{name}", UNIT_WEIGHT.get(stage, min(UNIT_WEIGHT.values()))
+            key = f"unit:{name}"
+            w = UNIT_WEIGHT.get(stage, max(UNIT_WEIGHT.values()) if stage < SLOW_STAGE else min(UNIT_WEIGHT.values()))
             if protected(name) or name in undone or restored.get(key, "") >= cool:
                 continue
             if (slow.get(key) or {}).get("weight") != w:
                 acts.append({"host": host, "do": "throttle", "name": name, "kind": "unit", "weight": w,
-                             "why": f"{why} · 재생이 버벅임 - 끄지 않고 늦춤(진행 중인 회차는 끝까지)"})
+                             "why": f"{why} · " + ("원인이 웹툰 내려받기 - 재생을 위해 미리 늦춤" if early["unit"] and not need else "재생이 버벅임")
+                                    + " - 끄지 않고 늦춤(진행 중인 회차는 끝까지)"})
+    if stage >= slow_from("rclone") and wanted("rclone"):
         if cfg.get("rclone"):
             key = "rclone:upload"
             if key not in slow and "upload" not in undone and restored.get(key, "") < cool:
                 acts.append({"host": host, "do": "throttle", "name": "upload", "kind": "rclone", "weight": RCLONE_RATE,
-                             "why": f"{why} - 업로드만 {RCLONE_RATE} (재생 읽기는 그대로)"})
+                             "why": f"{why}" + (" · 원인이 영상 입고(올리기)" if early["rclone"] and not need else "")
+                                    + f" - 업로드만 {RCLONE_RATE} (재생 읽기는 그대로)"})
     return acts
 
 
@@ -654,17 +674,29 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         if r.get("running") is not None:   # 매분 도는 컨테이너 목록 - facilities.quick이 사람이 끄고 켠 것도 바로 잡는다
             st["running"], st["running_at"] = sorted(r["running"]), stamp
         st["playing"] = playing
+        if r.get("procs") is not None or r.get("running") is not None:   # 왜 바쁜지 (웹툰 내려받기 / 영상 입고 / 재생 / 보안 점검)
+            st["cause"] = dict(loadcause.classify(r.get("procs"), r.get("running"), playing, struggling), at=stamp)
         if probe is None:          # 못 쟀으면 단계는 그대로, 아무것도 안 한다
             continue
         cur = int(st.get("stage", 0))
+        cause = (st.get("cause") or {}) if (st.get("cause") or {}).get("at") == stamp else {}
         new, why = next_stage(st.get("samples") or [], cur, st.get("stage_at", ""), bool(playing), now)
         if new != cur:
             st["stage"], st["stage_at"] = new, stamp
             done.append({"host": host, "do": "stage", "name": "서버 경보", "from": cur, "to": new, "why": why,
-                         "cpu": st["last_cpu"], "alert": new >= TOP or st["last_cpu"] > ALERT})
-            print(f"[서버 조절] {host} 서버 경보 {cur} -> {new}단계 - {why}")
+                         "cpu": st["last_cpu"], "alert": new >= TOP or st["last_cpu"] > ALERT,
+                         "cause": cause.get("cause", ""), "cause_top": cause.get("top", "")})
+            print(f"[서버 조절] {host} 서버 경보 {cur} -> {new}단계 - {why}" + (f" · 원인 {cause['label']} {cause.get('top', '')}" if cause.get("cause") else ""))
         st["struggling"] = struggling
-        for a in plan(host, new, st, r.get("running"), now, bool(playing), struggling):
+        # 조치에 쓰는 원인은 STRUGGLE_HOLD_MIN분 동안 붙들어 둔다 (분마다 원인이 오락가락해도 늦췄다 풀었다 하지 않게)
+        held = st.setdefault("cause_at", {})
+        if cause.get("cause") in ("webtoon", "download"):
+            held[cause["cause"]] = stamp
+        hold_since = (now - timedelta(minutes=STRUGGLE_HOLD_MIN)).isoformat(timespec="seconds")
+        plan_cause = cause.get("cause", "") if cause.get("cause") in ("webtoon", "download") else \
+            next((k for k in ("webtoon", "download") if held.get(k, "") >= hold_since), cause.get("cause", ""))
+        for a in plan(host, new, st, r.get("running"), now, bool(playing), struggling, plan_cause):
+            a.setdefault("cause", cause.get("cause", ""))
             if a["do"] in ("stop", "start"):
                 if not docker(host, a["do"], a["name"]):
                     continue
@@ -726,11 +758,15 @@ def _story(a: dict) -> tuple[str, str, str]:
         up = a["to"] > a["from"]
         name = STAGE_NAMES.get(a["to"], "")
         if up:
-            text = (f"{j(ACTOR, '이')} 서버 경보를 {a['to']}단계({name})로 올렸다 ({a['why']}). "
-                    "영상과 책 열람은 그대로 지키고, 짐 나르는 일과 정비부터 쉬게 한다.")
+            extra = loadcause.story(a.get("cause", ""), a.get("cause_top", ""))   # 원인에 따라 할 일이 다르다
+            text = (f"{j(ACTOR, '이')} 서버 경보를 {a['to']}단계({name})로 올렸다 ({a['why']})."
+                    + (extra or " 영상과 책 열람은 그대로 지키고, 짐 나르는 일과 정비부터 쉬게 한다."))
         else:
             text = f"{j(ACTOR, '이')} 서버 경보를 {a['to']}단계({name})로 내렸다 ({a['why']}). 쉬던 일이 차례로 돌아온다."
-        return text, f"서버 경보 {a['to']}단계 ({name})", ("⚠️ " if a.get("alert") else "") + ("⬆" if up else "⬇") + f" {a['to']}단계"
+        c = loadcause.CAUSES.get(a.get("cause", "")) if up else None
+        tail = f" · {c['mark']} {c['label']}" if c and c["story"] else ""
+        return (text, f"서버 경보 {a['to']}단계 ({name}){tail}",
+                ("⚠️ " if a.get("alert") else "") + ("⬆" if up else "⬇") + f" {a['to']}단계{tail}")
     label = _label(a["name"])
     ro = label + ("으로" if has_batchim(label) and (ord(label[-1]) - 0xAC00) % 28 != 8 else "로")   # ㄹ 받침은 "로"
     return {
@@ -759,7 +795,7 @@ def notify(done: list[dict], now: datetime | None = None, post=None) -> None:
 OWNERS = {"bookoasis_assistant.service": "BOOK", "upload": "BOOK"}
 
 
-def key_people(names: list[str], agents: list[dict] | None = None, per_company: int = 2) -> list[str]:
+def key_people(names: list[str], agents: list[dict] | None = None, per_company: int = 2, cause: str = "") -> list[str]:
     """바로 반응할 사람: 권지아(서버 담당) + 시설관리팀장 권태준 + 조치를 당한 시설의 담당자(stewards) + 시청 담당 소라
     (그 시설이 밀린 게 시청 때문이니 서로 아웅다웅) - 담당이 없는 시설이면 그 기관 사람 몇 명."""
     from . import stewards, worldcfg
@@ -767,6 +803,7 @@ def key_people(names: list[str], agents: list[dict] | None = None, per_company: 
     from .facilities import FACILITIES
     agents = agents if agents is not None else load_agents()
     out = [ACTOR, "권태준"] + ([stewards.steward("chair", agents)] if "서버 경보" in names else [])   # 단계는 총괄도 바로 안다
+    out += [stewards.steward(k, agents) for k in loadcause.stewards_of(cause)]   # 원인을 맡은 사람들 (웹툰=원고 운반·서가, 입고=배급·업로드, 재생=시청)
     for name in names:
         key = stewards.for_name(name)
         if key and key != "loadshed":
@@ -786,7 +823,7 @@ def reflect(done: list[dict], react=None) -> list[str]:
     for a in done:
         text, title, _ = _story(a)
         try:
-            reacted += react(text, title, key_people([a["name"]]))
+            reacted += react(text, title, key_people([a["name"]], cause=a.get("cause", "") if a.get("do") == "stage" and a.get("to", 0) > a.get("from", 0) else ""))
         except Exception as e:  # noqa: BLE001
             print(f"[서버 조절] 세계 반영 실패: {e}")
         memory.remember(ACTOR, text, 5, [], "서버")
@@ -859,6 +896,8 @@ def summary(now: datetime | None = None) -> str:
                      + (f"{idx:g}%" if idx is not None else "모름")
                      + (f" (CPU {det.get('busy')}% · 메모리 {det.get('mem')}% · I/O {(det.get('psi') or {}).get('io')})" if det else "")
                      + (f" · 재생 {st['playing']}" + (" (버벅임 있음)" if st.get("struggling") else "") if st.get("playing") else "")
+                     + (f" · 원인 {st['cause']['label']}" + (f"({st['cause']['top']})" if st['cause'].get('top') else "")
+                        if (st.get("cause") or {}).get("cause") not in (None, "", "other") else "")
                      + f" · 대상 {', '.join(parts) or '없음'}"
                      + (f" · 지금 내려 둔 것 {', '.join(st['shed'])}" if st.get("shed") else "")
                      + (f" · 지금 늦춘 것 {', '.join(t['name'] for t in st['throttled'].values())}" if st.get("throttled") else ""))
