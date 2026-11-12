@@ -37,6 +37,15 @@
   /run/village/stage를 쓰고(가이드 6.3 게이트 - 방역/정비 타이머가 ExecCondition으로 읽고 스스로 건너뜀),
   1단계~ 바이러스 검사 CPUQuota 25%, 2단계~ 돌고 있는 정기 스캔(risk/deep) 중단, 0단계면 60%로. 실시간 감시(malware-watch)는 유지.
 
+부하 대책 회의 (PORING_LOADSHED_COUNCIL, 기본 켬): 경보가 COUNCIL_STAGE(2)단계 이상으로 오르면 (30분에 한 번)
+- 담당자들이 자기 시설이 부하에 얼마나 원인인지 숫자로 보고한다 - 서버 담당(권지아: 호스트 전체에서 CPU를 쓰는 곳),
+  원인을 맡은 담당(웹툰=원고 운반·서가, 입고=배급소·업로드, 재생=시청·송출, 보안 점검), 시청 담당(소라: 지금 재생·버벅임).
+- 대표 애순이가 보고를 듣고 지시한다: 원인을 만든 쪽을 지금 늦출지(slow) 지켜볼지. 이 지시가 실제 조치를 바꾼다 (directive):
+  늦추라고 하면 재생이 버벅이기를 기다리지 않고 한 단계 일찍, 재생이 없어도 4단계부터 그 원인(짐꾼/업로드)을 늦춘다.
+  지켜보라고 하면 원인 때문에 미리 늦추지 않는다 (버벅이면 늦추는 기본 규칙은 그대로). 지시는 DIRECTIVE_HOLD_MIN(60분) 동안.
+- 지시가 할 수 있는 것은 여기까지다 - 보호 목록(시청 경로)·ttl·복구 순서는 지시로도 못 넘는다. 회의가 실패하면 예전 자동 규칙대로.
+- 회의는 매분 측정과 따로 돈다 (LLM이 몇 분 걸려도 측정·조치는 멈추지 않는다). 지시는 loadshed_directive.json에.
+
 이야기: 서버 관리자 권지아(ACTOR)가 서버 경보 단계를 올리고 내리며, 짐 나르는 자동화 봇의 리소스 흐름을 좁히고 출입구 초소 불을 잠시 끈다.
 facilities.py는 이 기능이 끈 컨테이너를 "불 꺼짐" 사고로 치지 않는다 (quiet_names). raids 위험도는 max_cpu()(가장 높은 지수).
 봇(cogs/poring_food.py load_guard)이 CHECK_SEC(60초)마다 step()을 부르고, 한 일이 있으면 바로 notify, 잠금 안에서 reflect.
@@ -474,11 +483,17 @@ def next_stage(samples: list, current: int, changed_at: str, playing: bool, now:
     return current, ""
 
 
+COUNCIL = os.getenv("PORING_LOADSHED_COUNCIL", "1") not in ("0", "false", "False", "")   # 부하 대책 회의 (담당 보고 -> 애순이 지시)
+COUNCIL_STAGE = int(os.getenv("PORING_LOADSHED_COUNCIL_STAGE", "2"))    # 이 단계 이상으로 오를 때 회의
+COUNCIL_GAP_MIN = 30            # 회의는 이만큼에 한 번
+DIRECTIVE_HOLD_MIN = 60         # 지시가 살아 있는 시간
+DIRECTIVE_PATH = os.path.join(STATE_DIR, "loadshed_directive.json")
+CAUSE_KIND = {"webtoon": "unit", "download": "rclone"}   # 원인 -> 늦출 수 있는 것 (짐꾼 / 업로드)
 CAUSE_ACT = os.getenv("PORING_LOADSHED_CAUSE_ACT", "1") not in ("0", "false", "False", "")   # 원인에 맞춰 한 단계 일찍 늦추기
 
 
 def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, playing: bool = True,
-         struggling: bool = True, cause: str = "") -> list[dict]:
+         struggling: bool = True, cause: str = "", order: dict | None = None) -> list[dict]:
     """지금 단계에 맞춰 할 일 [{"host", "do": stop|start|throttle|unthrottle, "name", "kind"?, "weight"?, "why"}].
     복구는 조치의 역순(마지막에 한 것부터). ttl이 지나면 단계와 상관없이 되돌린다. 순수 함수 (테스트용).
     짐꾼(units)/업로드(rclone) 늦추기는 재생 중이고 그 재생이 버벅일 때만 (struggling - 버퍼링/변환이 실시간을 못 따라감,
@@ -487,12 +502,22 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, p
     webtoon = 짐꾼(units), download = 업로드(rclone). 재생이 원인이면 재생은 건드리지 않고 지금처럼 다른 일을 미룬다."""
     need = playing and struggling
     early = {"unit": CAUSE_ACT and playing and cause == "webtoon", "rclone": CAUSE_ACT and playing and cause == "download"}
+    # 대표(애순이)의 지시 (order = {"cause", "slow": True/False, "by"}): 늦추라고 한 원인은 버벅임을 기다리지 않고,
+    # 재생이 없어도 SLOW_STAGE부터 늦춘다. 지켜보라고 한 원인은 미리 늦추지 않는다 (버벅이면 늦추는 건 그대로).
+    order = order or {}
+    okind = CAUSE_KIND.get(order.get("cause", ""))
+    forced = {okind: True} if okind and order.get("slow") is True else {}
+    if okind and order.get("slow") is False:
+        early[okind] = False
+    elif okind and forced:
+        early[okind] = bool(playing)
+    by = f" · {order.get('by') or '대표'} 지시" if forced else ""
 
     def slow_from(kind: str) -> int:
         return SLOW_STAGE - 1 if early.get(kind) else SLOW_STAGE
 
     def wanted(kind: str) -> bool:
-        return need or bool(early.get(kind))
+        return need or bool(early.get(kind)) or bool(forced.get(kind))
     cfg = HOSTS[host]
     shed = st.get("shed") or {}
     slow = st.get("throttled") or {}
@@ -537,14 +562,15 @@ def plan(host: str, stage: int, st: dict, running: dict | None, now: datetime, p
                 continue
             if (slow.get(key) or {}).get("weight") != w:
                 acts.append({"host": host, "do": "throttle", "name": name, "kind": "unit", "weight": w,
-                             "why": f"{why} · " + ("원인이 웹툰 내려받기 - 재생을 위해 미리 늦춤" if early["unit"] and not need else "재생이 버벅임")
+                             "why": f"{why} · " + ("원인이 웹툰 내려받기 - 서버를 위해 늦춤" + by if forced.get("unit") and not need and not early["unit"] else
+                                                   "원인이 웹툰 내려받기 - 재생을 위해 미리 늦춤" + by if early["unit"] and not need else "재생이 버벅임")
                                     + " - 끄지 않고 늦춤(진행 중인 회차는 끝까지)"})
     if stage >= slow_from("rclone") and wanted("rclone"):
         if cfg.get("rclone"):
             key = "rclone:upload"
             if key not in slow and "upload" not in undone and restored.get(key, "") < cool:
                 acts.append({"host": host, "do": "throttle", "name": "upload", "kind": "rclone", "weight": RCLONE_RATE,
-                             "why": f"{why}" + (" · 원인이 영상 입고(올리기)" if early["rclone"] and not need else "")
+                             "why": f"{why}" + (" · 원인이 영상 입고(올리기)" + by if (early["rclone"] or forced.get("rclone")) and not need else "")
                                     + f" - 업로드만 {RCLONE_RATE} (재생 읽기는 그대로)"})
     return acts
 
@@ -707,7 +733,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         hold_since = (now - timedelta(minutes=STRUGGLE_HOLD_MIN)).isoformat(timespec="seconds")
         plan_cause = cause.get("cause", "") if cause.get("cause") in ("webtoon", "download") else \
             next((k for k in ("webtoon", "download") if held.get(k, "") >= hold_since), cause.get("cause", ""))
-        for a in plan(host, new, st, r.get("running"), now, bool(playing), struggling, plan_cause):
+        for a in plan(host, new, st, r.get("running"), now, bool(playing), struggling, plan_cause, directive(host, now)):
             a.setdefault("cause", cause.get("cause", ""))
             if a["do"] in ("stop", "start"):
                 if not docker(host, a["do"], a["name"]):
@@ -752,6 +778,90 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     return done
 
 
+# ===================================================================== 부하 대책 회의 (담당 보고 -> 대표 지시)
+def _directives() -> dict:
+    try:
+        with open(DIRECTIVE_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def directive(host: str, now: datetime | None = None) -> dict:
+    """그 서버에 지금 살아 있는 대표 지시 {"cause", "slow", "by", "say", "at"} (없거나 지났으면 {})"""
+    d = (_directives().get("hosts") or {}).get(host) or {}
+    now = now or now_kst()
+    if not d or d.get("at", "") < (now - timedelta(minutes=DIRECTIVE_HOLD_MIN)).isoformat():
+        return {}
+    return d
+
+
+def _save_directives(data: dict) -> None:
+    os.makedirs(os.path.dirname(DIRECTIVE_PATH), exist_ok=True)
+    tmp = DIRECTIVE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, DIRECTIVE_PATH)
+
+
+def council_event(done: list[dict], now: datetime | None = None) -> dict | None:
+    """방금 한 일 중 회의를 열 일: COUNCIL_STAGE 이상으로 오른 경보 (그 서버에서 COUNCIL_GAP_MIN에 한 번)"""
+    if not COUNCIL:
+        return None
+    now = now or now_kst()
+    held = _directives().get("held") or {}
+    since = (now - timedelta(minutes=COUNCIL_GAP_MIN)).isoformat()
+    ups = [a for a in done if a.get("do") == "stage" and a.get("to", 0) > a.get("from", 0) and a["to"] >= COUNCIL_STAGE
+           and held.get(a["host"], "") < since]
+    return max(ups, key=lambda a: a["to"]) if ups else None
+
+
+COUNCIL_SPEC = """담당자들의 보고를 듣고 대표로서 지시한다. 고를 수 있는 것은 하나다: 부하의 원인을 만든 쪽(웹툰 내려받기면 원고 운반 봇,
+영상 입고면 클라우드 업로드)을 지금 늦출지, 지켜볼지. 재생·책 열람은 어떤 경우에도 건드리지 않는다.
+- 지금 보는 사람이 있고 원인이 뚜렷하면 늦춘다. 서버가 95%에 가까우면 보는 사람이 없어도 늦춘다.
+- 원인이 재생 자체이거나, 원인을 모르거나, 곧 내려갈 것 같으면 지켜본다 (자료 등록을 괜히 막지 않는다).
+JSON으로만: {"slow": true/false, "reason": "한 문장", "say": "내 말투로 지시하는 1~2문장 - 누구에게 무엇을 하라고"}"""
+
+
+def hold_council(event: dict, now: datetime | None = None, council=None) -> dict | None:
+    """[잠금 안에서, 매분 측정과 따로] 담당자들이 자기 시설 상황을 보고하고 대표가 지시한다. 지시를 저장하고 돌려준다."""
+    from . import stewards
+    now = now or now_kst()
+    host = event["host"]
+    data = _load()
+    st = (data.get("hosts") or {}).get(host) or {}
+    cause = (st.get("cause") or {}).get("cause") or event.get("cause") or "other"
+    info = loadcause.CAUSES.get(cause) or loadcause.CAUSES["other"]
+    hostinfo = data.get("host") or {}
+    cores = hostinfo.get("cores") or 1
+    guests = " · ".join(f"{g[0]} {g[2] / cores:.0f}%" for g in hostinfo.get("guests") or [] if g[2] / cores >= 3) or "모름"
+    parties = list(dict.fromkeys(["loadshed"] + list(loadcause.stewards_of(cause)) + ["plex"]))[:5]
+    facts = (f"서버 {host} 경보 {event.get('from')} → {event.get('to')}단계 ({event.get('why', '')}), 부하 지수 {event.get('cpu')}%\n"
+             f"호스트 전체에서 CPU를 많이 쓰는 곳(머신 대비): {guests}\n"
+             f"가려낸 원인: {info['label']}" + (f" ({(st.get('cause') or {}).get('top', '')})" if (st.get('cause') or {}).get('top') else "") + "\n"
+             + "\n".join(f"- {stewards.SYSTEMS[k]['label']}: {stewards.status_line(k, data)}" for k in parties if k in stewards.SYSTEMS)
+             + "\n\n[보고 요령] 내 시설이 지금 부하의 원인인지 아닌지, 얼마나 쓰고 있는지 위 숫자로 보고한다. "
+               "원인이 내 쪽이면 인정하고 얼마나 줄일 수 있는지, 아니면 누구 쪽인지 짚는다.")
+    try:
+        res = (council or stewards.council)("서버 부하 대책 회의", facts, parties, COUNCIL_SPEC)
+    except Exception as e:  # noqa: BLE001
+        print(f"[서버 조절] 부하 대책 회의 실패: {e}")
+        res = None
+    store = _directives()
+    store.setdefault("held", {})[host] = now.isoformat(timespec="seconds")
+    d = (res or {}).get("decision") or {}
+    if not isinstance(d.get("slow"), bool):      # 결론을 못 냈으면 지시 없음 - 예전 자동 규칙대로
+        _save_directives(store)
+        return None
+    order = {"cause": cause, "slow": d["slow"], "by": (res or {}).get("chair") or "대표", "at": now.isoformat(timespec="seconds"),
+             "say": str(d.get("say") or "")[:300], "reason": str(d.get("reason") or "")[:200], "stage": event.get("to")}
+    store.setdefault("hosts", {})[host] = order
+    _save_directives(store)
+    print(f"[서버 조절] {host} 대표 지시: {'늦춤' if order['slow'] else '지켜봄'} (원인 {info['label']}) - {order['reason']}")
+    return order
+
+
 # ===================================================================== 이야기 / 다른 모듈
 LABELS = {"bookoasis_assistant.service": "편집국 원고 운반 자동화 봇", "upload": "클라우드로 가는 원고 업로드",
           "clamav": CLAM_LABEL, "clamav-risk-scan.service": "매시 바이러스 검사", "clamav-deep-scan.service": "새벽 정밀 바이러스 검사"}
@@ -761,6 +871,11 @@ STAGE_NAMES = {0: "평시", 1: "경계", 2: "방역 정지", 3: "방어", 4: "�
 def _label(name: str) -> str:
     from .facilities import FACILITIES
     return LABELS.get(name) or (FACILITIES[name][0] if name in FACILITIES else name)
+
+
+def stewards_chair() -> str:
+    from . import stewards
+    return stewards.CHAIR
 
 
 def _story(a: dict) -> tuple[str, str, str]:
@@ -786,7 +901,8 @@ def _story(a: dict) -> tuple[str, str, str]:
         "stop": (f"{j(ACTOR, '이')} 서버 부하를 줄이려고 {label}의 불을 잠시 껐다 ({a['why']}).",
                  f"{label} 잠시 소등 (서버 조절)", "⏸ 내림"),
         "start": (f"{j(ACTOR, '이')} {label}에 다시 불을 켰다 ({a['why']}).", f"{label} 다시 점등 (서버 조절)", "▶ 다시 올림"),
-        "throttle": (f"{j(ACTOR, '이')} 서버 부하를 줄이려고 {ro} 가는 리소스 흐름을 좁혔다 ({a['why']}).",
+        "throttle": ((f"{stewards_chair()}의 지시로 " if "지시" in a.get("why", "") else "")
+                     + f"{j(ACTOR, '이')} 서버 부하를 줄이려고 {ro} 가는 리소스 흐름을 좁혔다 ({a['why']}).",
                      f"{label} 리소스 흐름 제한 (서버 조절)", "🐢 늦춤"),
         "unthrottle": (f"{j(ACTOR, '이')} {ro} 가는 리소스 흐름을 원래대로 되돌렸다 ({a['why']}).",
                        f"{label} 리소스 흐름 복구 (서버 조절)", "↩ 되돌림"),

@@ -114,3 +114,63 @@ def test_step_uses_host_cause_for_every_server(tmp_path, monkeypatch):
     data = loadshed._load()
     assert data["host"]["cause"]["cause"] == "scan" and data["host"]["cause"]["guests"] == "zeeps 75%"
     assert data["hosts"]["etc"]["cause"]["cause"] == "scan" and data["hosts"]["plex01"]["cause"]["cause"] == "scan"
+
+
+def test_chair_directive_changes_what_is_slowed(monkeypatch):
+    """대표(애순이)의 지시가 실제 조치를 바꾼다: 늦추라면 일찍·재생이 없어도, 지켜보라면 미리 늦추지 않는다"""
+    from datetime import datetime
+
+    from poring_food import loadshed
+    monkeypatch.setitem(loadshed.HOSTS["plex01"], "units", ["bookoasis_assistant.service"])
+    now = datetime(2026, 11, 13, 21, 0)
+
+    def acts(stage, playing, struggling, cause="", order=None):
+        return [(a["do"], a["name"]) for a in loadshed.plan("plex01", stage, {}, {}, now, playing, struggling, cause, order)]
+    slow = {"cause": "webtoon", "slow": True, "by": "애순이"}
+    watch = {"cause": "webtoon", "slow": False, "by": "애순이"}
+    unit = ("throttle", "bookoasis_assistant.service")
+    assert unit not in acts(4, False, False)                              # 지시 없음 · 재생 없음: 4단계여도 그대로
+    assert unit in acts(4, False, False, order=slow)                      # 늦추라는 지시: 재생이 없어도 4단계부터
+    assert unit not in acts(3, False, False, order=slow)                  # (재생이 없으면 3단계에서는 아직)
+    assert unit in acts(3, True, False, order=slow)                       # 재생 중이면 버벅임을 기다리지 않고 한 단계 일찍
+    assert unit in acts(3, True, False, cause="webtoon")                  # 지시가 없으면 예전 자동 규칙 (원인이 웹툰)
+    assert unit not in acts(3, True, False, cause="webtoon", order=watch)  # 지켜보라는 지시: 미리 늦추지 않는다
+    assert unit in acts(4, True, True, cause="webtoon", order=watch)      # 그래도 재생이 버벅이면 늦춘다 (시청이 먼저)
+    why = [a["why"] for a in loadshed.plan("plex01", 4, {}, {}, now, False, False, "", slow) if a["do"] == "throttle"][0]
+    assert "애순이 지시" in why
+    text, _title, _mark = loadshed._story({"do": "throttle", "name": "bookoasis_assistant.service", "kind": "unit", "why": why, "host": "plex01"})
+    assert text.startswith("애순이의 지시로")
+
+
+def test_council_reports_then_chair_orders(monkeypatch, tmp_path):
+    from datetime import datetime, timedelta
+
+    from poring_food import loadshed
+    monkeypatch.setattr(loadshed, "LOADSHED_PATH", str(tmp_path / "loadshed.json"))
+    monkeypatch.setattr(loadshed, "DIRECTIVE_PATH", str(tmp_path / "directive.json"))
+    now = datetime(2026, 11, 13, 21, 0)
+    loadshed._save({"hosts": {"plex01": {"stage": 3, "last_cpu": 88.0, "playing": 2, "cause": {"cause": "webtoon", "top": "gdrive_watch 180%"}}},
+                    "host": {"cores": 8, "guests": [["plex01", "ct", 520.0], ["win10", "vm", 80.0], ["etc", "ct", 8.0]]}})
+    up = {"host": "plex01", "do": "stage", "name": "서버 경보", "from": 2, "to": 3, "why": "1분 평균 88%", "cpu": 88.0, "cause": "webtoon"}
+    assert loadshed.council_event([{"host": "plex01", "do": "stage", "from": 3, "to": 2}], now) is None      # 내려갈 때는 회의 없음
+    assert loadshed.council_event([dict(up, **{"from": 0, "to": 1})], now) is None                            # 1단계는 회의 없음
+    assert loadshed.council_event([up], now) == up
+    seen = {}
+
+    def council(topic, facts, parties, spec):
+        seen.update(topic=topic, facts=facts, parties=parties, spec=spec)
+        return {"decision": {"slow": True, "reason": "보는 사람이 있고 원인이 웹툰", "say": "태오 씨, 원고 운반은 잠깐 늦춥시다."}, "chair": "애순이"}
+    order = loadshed.hold_council(up, now, council=council)
+    assert seen["topic"] == "서버 부하 대책 회의" and seen["parties"] == ["loadshed", "assistant", "bookoasis", "plex"]
+    assert "plex01 65%" in seen["facts"] and "win10 10%" in seen["facts"] and "웹툰·원고 내려받기" in seen["facts"] and "gdrive_watch 180%" in seen["facts"]
+    assert "보고 요령" in seen["facts"] and '"slow"' in seen["spec"]
+    assert order["slow"] is True and order["by"] == "애순이" and order["cause"] == "webtoon"
+    assert loadshed.directive("plex01", now + timedelta(minutes=30))["slow"] is True                           # 60분 동안 살아 있다
+    assert loadshed.directive("plex01", now + timedelta(minutes=61)) == {} and loadshed.directive("etc", now) == {}
+    assert loadshed.council_event([up], now + timedelta(minutes=10)) is None                                  # 30분에 한 번
+    assert loadshed.council_event([up], now + timedelta(minutes=31)) == up
+    # 결론을 못 내면 지시 없음 (예전 자동 규칙) - 그래도 회의를 연 것으로 쳐서 바로 또 열지 않는다
+    monkeypatch.setattr(loadshed, "DIRECTIVE_PATH", str(tmp_path / "directive2.json"))
+    assert loadshed.hold_council(up, now, council=lambda *a: {"decision": {}, "chair": "애순이"}) is None
+    assert loadshed.directive("plex01", now) == {} and loadshed.council_event([up], now + timedelta(minutes=5)) is None
+    assert loadshed.hold_council(up, now, council=lambda *a: 1 / 0) is None                                    # 회의가 터져도 조용히

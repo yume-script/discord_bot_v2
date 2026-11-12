@@ -234,6 +234,24 @@ class PoringFood(commands.Cog):
                     await asyncio.to_thread(facilities.react, changed)
             except Exception:  # noqa: BLE001
                 log.exception("포링푸드 서버 조절/모니터링 세계 반영 실패")
+        # 3) 경보가 높게 오르면 부하 대책 회의: 담당자들이 원인을 보고하고 대표(애순이)가 지시한다.
+        #    LLM이 몇 분 걸릴 수 있어 매분 측정을 막지 않게 따로 돌린다 (지시는 다음 측정부터 조치에 반영).
+        try:
+            ev = loadshed.council_event(done) if done else None
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 부하 대책 회의 준비 실패")
+            ev = None
+        if ev and not getattr(self, "_load_council_task", None):
+            self._load_council_task = asyncio.create_task(self._load_council(ev))
+
+    async def _load_council(self, ev: dict) -> None:
+        try:
+            async with self._lock:   # 회의가 인물 기억/연대기를 쓰므로 회차와 겹치지 않게
+                await asyncio.to_thread(loadshed.hold_council, ev)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 부하 대책 회의 실패")
+        finally:
+            self._load_council_task = None
 
     @tasks.loop(minutes=30)
     async def waitfree_pilot(self) -> None:

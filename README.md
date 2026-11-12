@@ -263,6 +263,12 @@ python app.py
   - **재생 여부**: Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER `/api/activity`(텔레그램/IPTV·라디오 중계 스트림 수, 숫자만).
     YM_PLAYER는 `scripts/patches/ym_player-activity.patch`를 적용하고 `MP_ACTIVITY_TOKEN`을 정한 뒤, etc `.env`에
     `PORING_YMPLAYER_URL=http://<plex01>:8899` / `PORING_YMPLAYER_TOKEN=<같은 값>`. 원본 주소로 바로 트는 IPTV는 안 보인다.
+  - **부하 대책 회의** (`PORING_LOADSHED_COUNCIL`, 기본 켬): 경보가 2단계(`PORING_LOADSHED_COUNCIL_STAGE`) 이상으로 오르면 30분에 한 번,
+    담당자들이 자기 시설이 부하에 얼마나 원인인지 숫자로 **보고**하고(서버 담당 권지아 - 호스트 전체에서 CPU를 쓰는 곳, 원인을 맡은 담당,
+    시청 담당 소라) 대표 **애순이가 지시**한다: 원인을 만든 쪽(웹툰 내려받기 → 원고 운반 봇, 영상 입고 → 업로드)을 지금 늦출지, 지켜볼지.
+    이 지시가 60분 동안 실제 조치를 바꾼다 - 늦추라고 하면 재생이 버벅이기를 기다리지 않고 한 단계 일찍, 재생이 없어도 4단계부터 늦추고,
+    지켜보라고 하면 원인 때문에 미리 늦추지 않는다(버벅이면 늦추는 기본 규칙은 그대로). 보호 목록·ttl·복구 순서는 지시로도 못 넘고,
+    회의가 실패하면 예전 자동 규칙대로 돈다. 회의는 매분 측정과 따로 돌아 측정·조치를 막지 않는다.
   - **방역관(ClamAV, 호스트 zeeps)**: 봇은 호스트에 셸을 받지 않는다. `scripts/zeeps/install.sh`를 호스트에서 root로 한 번 실행하면
     1) `village-gate.sh`(가이드 6.3)와 `village-ctl.sh` 설치, 2) ClamAV·정비 타이머에 드롭인(`/etc/systemd/system/<unit>.d/10-village.conf` - 10-이라 봇의 런타임 제한이 이보다 나중에 적용,
     원본 유닛은 그대로): `ExecCondition=village-gate.sh <최대 단계>`(risk-scan 1, deep-scan/freshclam/feed-update/malware-watch 2,
