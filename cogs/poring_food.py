@@ -76,6 +76,7 @@ class PoringFood(commands.Cog):
             self.plex_watch.start()
             self.book_watch.start()
             self.load_guard.start()
+            self.gdw_queue_watch.start()
             self.waitfree_pilot.start()
             self.app_updater.start()
             self.avatar_maker.start()
@@ -95,12 +96,27 @@ class PoringFood(commands.Cog):
         self.plex_watch.cancel()
         self.book_watch.cancel()
         self.load_guard.cancel()
+        self.gdw_queue_watch.cancel()
         self.waitfree_pilot.cancel()
         self.app_updater.cancel()
         self.avatar_maker.cancel()
         self.lib3d_delivery.cancel()
         if self._web_runner:
             await self._web_runner.cleanup()
+
+    @tasks.loop(minutes=5)
+    async def gdw_queue_watch(self) -> None:
+        """원고 입고 대기열(poring_food/gdw_queue.py): bookoasis_assistant 드라이브 감시의 대기·실패가 달라지면 채널과 인물 세계에 알린다."""
+        from poring_food import gdw_queue
+        if not gdw_queue.enabled():
+            return
+        try:
+            async with self._lock:
+                line = await asyncio.to_thread(gdw_queue.check)
+            if line:
+                log.info("포링푸드 원고 입고: %s", line)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 원고 입고 대기열 확인 실패")
 
     @tasks.loop(seconds=5)
     async def drain_outbox(self) -> None:

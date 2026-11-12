@@ -136,6 +136,14 @@ def status_line(key: str, data: dict | None = None) -> str:
                     bits.append(f"기다무 시간대 {last[0]['start']:02d}~{last[0]['end']:02d}시")
             except Exception:  # noqa: BLE001
                 pass
+        if key == "assistant":   # 원고 입고 대기열 (bookoasis_assistant의 드라이브 변경 감시)
+            try:
+                from . import gdw_queue
+                q = gdw_queue.line(gdw_queue.digest(gdw_queue.fetch(timeout=4))) if gdw_queue.enabled() else ""
+                if q:
+                    bits.append(q)
+            except Exception:  # noqa: BLE001
+                pass
         return " · ".join(bits) or "평소대로 일하는 중"
     if key in ("bookoasis", "ym_player"):
         try:
