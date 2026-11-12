@@ -395,7 +395,7 @@ def get_app_versions() -> str:
 def update_app(app: str) -> str:
     """
     plex01의 앱 하나를 지금 GitHub 최신 버전으로 업데이트하고 다시 켠다. app은 bookoasis(북오아시스) / ym_player /
-    bookoasis_assistant(짐꾼), bookoasis_3d(3D 서재), plex(Plex Media Server - 패키지 새 버전 설치). 재생 중이거나 서버 3단계 이상이거나 로컬 수정이 있으면 하지 않고 이유만 돌려준다.
+    bookoasis_assistant(짐꾼), bookoasis_3d(3D 서재), plex(Plex Media Server - apt 저장소의 새 버전 설치). 재생 중이거나 서버 3단계 이상이거나 로컬 수정이 있으면 하지 않고 이유만 돌려준다.
     결과는 시설 정비 채널에도 알린다.
     """
     from . import updater

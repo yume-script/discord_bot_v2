@@ -111,61 +111,56 @@ def test_bookoasis_3d_is_updated_from_mnt(monkeypatch, tmp_path):
     assert runs == ["bookoasis_3d"] and [e["kind"] for e in ev] == ["updated"]
 
 
-FEED = {"computer": {"Linux": {"version": "999.1.2.3-abcdef012", "items_added": "(Player) 새 기능", "items_fixed": "(DVR) 고침\n(Web) 고침 둘",
-                               "releases": [
-                                   {"distro": "debian", "url": "https://downloads.plex.tv/plex-media-server-new/999.1.2.3-abcdef012/debian/plexmediaserver_999.1.2.3-abcdef012_ARCH.deb",
-                                    "checksum": "a" * 40},
-                                   {"distro": "redhat", "url": "https://downloads.plex.tv/x/plexmediaserver-999.x86_64.rpm", "checksum": "b" * 40}]}}}
-
-
-def _deb_check(monkeypatch, tmp_path, version, package="bash"):
-    """확인 프로그램을 이 컴퓨터에서 그대로 돌려 본다 (깔려 있는 꾸러미 bash를 Plex인 셈 치고, 내려받기 목록은 파일로)"""
-    import json
-    import shutil
+def _local(monkeypatch):
+    """plex01 대신 이 컴퓨터에서 그대로 돌린다"""
     import subprocess
-    if not shutil.which("dpkg-query"):
-        pytest.skip("dpkg가 없는 환경")
-    arch = subprocess.run(["dpkg", "--print-architecture"], capture_output=True, text=True).stdout.strip()
-    feed = json.loads(json.dumps(FEED).replace("ARCH", arch))
-    feed["computer"]["Linux"]["version"] = version
-    path = tmp_path / "feed.json"
-    path.write_text(json.dumps(feed), encoding="utf-8")
-    monkeypatch.setitem(updater.APPS["plex"], "package", package)
-    monkeypatch.setitem(updater.APPS["plex"], "feed", path.as_uri())
     monkeypatch.setattr(updater.waitfree, "_remote", lambda script, timeout: (
-        lambda p: (p.returncode, p.stdout + p.stderr))(subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=60)))
-    return updater.check("plex"), arch
+        lambda p: (p.returncode, p.stdout + p.stderr))(subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=120)))
 
 
-def test_plex_check_reads_the_official_feed(monkeypatch, tmp_path):
-    info, arch = _deb_check(monkeypatch, tmp_path, "999.1.2.3-abcdef012")
-    assert info["up"] == info["new_version"] == "999.1.2.3-abcdef012" and info["head"] == info["version"] != info["up"]
-    assert info["url"].endswith(f"_{arch}.deb") and info["sha1"] == "a" * 40 and info["dirty"] == 0
-    assert info["log"] == ["- (Player) 새 기능", "- (DVR) 고침", "- (Web) 고침 둘"]
-    older, _ = _deb_check(monkeypatch, tmp_path, "0.0.1-old")                     # 깔린 것보다 낮으면 최신으로 본다
-    assert older["head"] == older["up"]
-    missing, _ = _deb_check(monkeypatch, tmp_path, "999.1", package="no-such-package-zz")
-    assert missing is None                                                        # 꾸러미로 안 깔려 있으면 대상이 아니다
+def test_plex_check_uses_the_apt_repository(monkeypatch, tmp_path):
+    """확인 프로그램을 실제로 돌려 본다 (깔려 있는 꾸러미 bash를 Plex인 셈 치고, 저장소 목록은 빈 파일)"""
+    import shutil
+    if not shutil.which("apt-cache") or not shutil.which("dpkg-query"):
+        pytest.skip("apt가 없는 환경")
+    _local(monkeypatch)
+    said = []
+    monkeypatch.setattr(updater, "print", lambda *a: said.append(" ".join(map(str, a))), raising=False)
+    repo = tmp_path / "plex.list"
+    repo.write_text("", encoding="utf-8")
+    monkeypatch.setitem(updater.APPS["plex"], "package", "bash")
+    monkeypatch.setitem(updater.APPS["plex"], "repo_list", str(repo))
+    monkeypatch.setitem(updater.APPS["plex"], "feed", (tmp_path / "none.json").as_uri())
+    info = updater.check("plex")
+    assert info and info["head"] == info["up"] == info["version"] and info["dirty"] == 0     # 설치 후보가 같으면 최신
+    monkeypatch.setitem(updater.APPS["plex"], "repo_list", str(tmp_path / "missing.list"))  # 새 저장소를 아직 안 넣음
+    assert updater.check("plex") is None and "setupRepo.sh" in said[-1]
+    monkeypatch.setitem(updater.APPS["plex"], "repo_list", str(repo))
+    monkeypatch.setitem(updater.APPS["plex"], "package", "no-such-package-zz")              # apt로 안 깔려 있음 (도커 등)
+    assert updater.check("plex") is None and "apt로 깔려 있지" in said[-1]
 
 
-def test_plex_update_installs_only_a_verified_official_deb(monkeypatch, tmp_path):
+def test_plex_update_goes_through_apt(monkeypatch, tmp_path):
     app = updater.APPS["plex"]
-    assert app["kind"] == "deb" and app["hours"] == (4, 8) and "plexmediaserver" in app["health"]
+    assert app["kind"] == "apt" and app["hours"] == (4, 8) and "plexmediaserver" in app["health"]
+    assert app["repo_list"] == "/etc/apt/sources.list.d/plex.list"
     scripts = []
     monkeypatch.setattr(updater.waitfree, "_remote", lambda script, timeout: (scripts.append(script), (0, "NOW 2 OLD 1 RC 0 HEALTH 0"))[1])
-    good = {"head": "1.0.0.1-aaa", "up": "1.0.0.2-bbb", "sha1": "c" * 40,
-            "url": "https://downloads.plex.tv/plex-media-server-new/1.0.0.2-bbb/debian/plexmediaserver_1.0.0.2-bbb_amd64.deb"}
-    ok, _out = updater.run_update("plex", good)
-    assert ok and len(scripts) == 1
-    assert "sha1sum -c" in scripts[0] and "c" * 40 in scripts[0] and "dpkg -i" in scripts[0] and good["url"] in scripts[0]
-    assert scripts[0].index("sha1sum -c") < scripts[0].index("dpkg -i")           # 확인이 먼저
-    for bad in (dict(good, url="https://evil.example/plexmediaserver.deb"), dict(good, url=good["url"] + ";reboot"),
-                dict(good, sha1="zz"), dict(good, url="http://downloads.plex.tv/a.deb")):
-        ok, why = updater.run_update("plex", bad)
-        assert not ok and "올바르지" in why
-    assert len(scripts) == 1                                                      # 이상한 주소로는 아무것도 실행하지 않는다
+    info = {"head": "1.43.4.10000-aaaaaaaaa", "up": "1.43.5.11079-b3b13e506", "dirty": 0, "log": ["- (DVR) 고침"], "notes": ""}
+    ok, _out = updater.run_update("plex", info)
+    assert ok and "apt-get install -y -qq --only-upgrade" in scripts[0] and scripts[0].count("plexmediaserver") >= 3
+    assert "curl" not in scripts[0] and "git " not in scripts[0]                             # 받아 오기·서명 확인은 apt가 한다
     assert updater._short("a" * 40) == "aaaaaaa" and updater._short("1.43.5.11079-b3b13e506") == "1.43.5.11079"
-    # 재생이 없어도 낮에는 하지 않는다
-    assert "04~08시" in updater.guard("plex", T0.replace(hour=14), dict(good, dirty=0), playing=0)
-    assert updater.guard("plex", T0.replace(hour=5), dict(good, dirty=0), playing=0) is None
-    assert "재생 중" in updater.guard("plex", T0.replace(hour=5), dict(good, dirty=0), playing=1)
+    # 새 버전이면 담당이 판단하고, 새벽·재생 없음일 때만 실행
+    _env(monkeypatch, tmp_path)
+    runs = []
+    go = dict(checker={"plex": info}.get, decide=lambda f: {"update": True, "reason": "수정뿐", "story": "상영관 영사기를 손봤다."},
+              runner=lambda k, i: (runs.append(k), (True, "ok"))[1])
+    from datetime import timedelta
+    assert updater.step(T0, playing=1, **go) == [] and runs == []                            # 재생 중이면 기다린다
+    assert updater.step(NOON, playing=0, **go) == [] and runs == []                          # 낮에는 기다린다
+    ev = updater.step(T0 + timedelta(days=1), playing=0, **go)
+    assert runs == ["plex"] and ev[0]["kind"] == "updated" and "1.43.5.11079" in ev[0]["text"]
+    failed = updater.step(T0 + timedelta(days=2), playing=0, checker={"plex": dict(info, up="1.43.6.1-ccccccccc")}.get,
+                          decide=lambda f: {"update": True}, runner=lambda k, i: (False, "E: broken"))
+    assert failed[0]["kind"] == "failed" and "apt-get install plexmediaserver=1.43.4.10000-aaaaaaaaa" in failed[0]["text"]
