@@ -93,3 +93,17 @@ def test_tool_policy():
     names = {t.name for t in tools.PORING_FOOD_TOOLS}
     assert {"get_app_versions", "update_app"} <= names
     assert is_server_affecting("update_app") and not is_server_affecting("get_app_versions")
+
+
+def test_bookoasis_3d_is_updated_from_mnt(monkeypatch, tmp_path):
+    """3D 서재도 자동 업데이트 대상 - /mnt/bookoasis_3d에서 git pull + 의존성 설치 + 재시작, 시간대 제한 없음"""
+    app = updater.APPS["bookoasis_3d"]
+    assert app["dir"] == "/mnt/bookoasis_3d" and app["hours"] is None and app["notes"] == "CHANGELOG.md"
+    assert "git pull --ff-only" in app["run"] and "requirements.txt" in app["run"] and app["run"].endswith("systemctl restart bookoasis_3d")
+    assert "bookoasis_3d" in app["health"]
+    _env(monkeypatch, tmp_path)
+    runs = []
+    ev = updater.step(T0, checker={"bookoasis_3d": _info(notes="## 2.63.0\n- 새 기능")}.get,
+                      decide=lambda f: {"update": True, "reason": "기능 추가", "story": "3D 서재를 손봤다."},
+                      runner=lambda k, i: (runs.append(k), (True, "ok"))[1])
+    assert runs == ["bookoasis_3d"] and [e["kind"] for e in ev] == ["updated"]

@@ -4,6 +4,7 @@
   북오아시스          ~/docker/BookOasis_stable  ./update.sh            (leeyj/BookOasis_stable - CHANGELOG.md)
   YM_PLAYER           /mnt/ym_player             git pull + systemctl restart ym_player
   짐꾼(bookoasis_assistant) /mnt/bookoasis_assistant git pull + systemctl restart bookoasis_assistant
+  3D 서재(bookoasis_3d) /mnt/bookoasis_3d         git pull + pip install -r requirements.txt + systemctl restart bookoasis_3d
 경로는 .env PORING_UPDATE_<KEY>_DIR로 바꾼다.
 
 흐름 (봇이 30분마다 step):
@@ -66,6 +67,14 @@ APPS = {
                             "run": "git pull --ff-only -q && systemctl restart bookoasis_assistant", "notes": "",
                             "health": "sleep 5; systemctl is-active -q bookoasis_assistant",
                             "hours": _hours("PORING_UPDATE_BOOKOASIS_ASSISTANT_HOURS", "")},
+    # 3D 서재: 영상 재생·책 읽기 경로가 아니라 시간대 제한 없음. 새 의존성이 생길 수 있어 pip도 같이 (venv가 없으면 건너뜀)
+    "bookoasis_3d": {"label": "3D 서재(bookoasis_3d)", "facility": "편집국 3D 서재", "company": worldcfg.BOOK,
+                     "system": "bookoasis", "affects": [],
+                     "dir": os.getenv("PORING_UPDATE_BOOKOASIS_3D_DIR", "/mnt/bookoasis_3d"),
+                     "run": ("git pull --ff-only -q && { [ ! -x venv/bin/pip ] || venv/bin/pip install -q -r requirements.txt; } "
+                             "&& systemctl restart bookoasis_3d"), "notes": "CHANGELOG.md",
+                     "health": "sleep 5; systemctl is-active -q bookoasis_3d",
+                     "hours": _hours("PORING_UPDATE_BOOKOASIS_3D_HOURS", "")},
 }
 
 DECIDE_SYSTEM = """너는 오아시스 거리의 시설 담당자다. 실제로는 서버의 앱을 GitHub 새 버전으로 업데이트할지 정한다.
