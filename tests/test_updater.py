@@ -1,6 +1,8 @@
 """앱 자동 업데이트: 새 버전 확인 -> 담당 인물 판단 -> 안전할 때만 실행 -> 알림/이야기."""
 from datetime import datetime
 
+import pytest
+
 from poring_food import loadshed, updater
 
 T0 = datetime(2026, 10, 30, 5, 0)      # 새벽 (북오아시스 시간대 안)
@@ -107,3 +109,63 @@ def test_bookoasis_3d_is_updated_from_mnt(monkeypatch, tmp_path):
                       decide=lambda f: {"update": True, "reason": "기능 추가", "story": "3D 서재를 손봤다."},
                       runner=lambda k, i: (runs.append(k), (True, "ok"))[1])
     assert runs == ["bookoasis_3d"] and [e["kind"] for e in ev] == ["updated"]
+
+
+FEED = {"computer": {"Linux": {"version": "999.1.2.3-abcdef012", "items_added": "(Player) 새 기능", "items_fixed": "(DVR) 고침\n(Web) 고침 둘",
+                               "releases": [
+                                   {"distro": "debian", "url": "https://downloads.plex.tv/plex-media-server-new/999.1.2.3-abcdef012/debian/plexmediaserver_999.1.2.3-abcdef012_ARCH.deb",
+                                    "checksum": "a" * 40},
+                                   {"distro": "redhat", "url": "https://downloads.plex.tv/x/plexmediaserver-999.x86_64.rpm", "checksum": "b" * 40}]}}}
+
+
+def _deb_check(monkeypatch, tmp_path, version, package="bash"):
+    """확인 프로그램을 이 컴퓨터에서 그대로 돌려 본다 (깔려 있는 꾸러미 bash를 Plex인 셈 치고, 내려받기 목록은 파일로)"""
+    import json
+    import shutil
+    import subprocess
+    if not shutil.which("dpkg-query"):
+        pytest.skip("dpkg가 없는 환경")
+    arch = subprocess.run(["dpkg", "--print-architecture"], capture_output=True, text=True).stdout.strip()
+    feed = json.loads(json.dumps(FEED).replace("ARCH", arch))
+    feed["computer"]["Linux"]["version"] = version
+    path = tmp_path / "feed.json"
+    path.write_text(json.dumps(feed), encoding="utf-8")
+    monkeypatch.setitem(updater.APPS["plex"], "package", package)
+    monkeypatch.setitem(updater.APPS["plex"], "feed", path.as_uri())
+    monkeypatch.setattr(updater.waitfree, "_remote", lambda script, timeout: (
+        lambda p: (p.returncode, p.stdout + p.stderr))(subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=60)))
+    return updater.check("plex"), arch
+
+
+def test_plex_check_reads_the_official_feed(monkeypatch, tmp_path):
+    info, arch = _deb_check(monkeypatch, tmp_path, "999.1.2.3-abcdef012")
+    assert info["up"] == info["new_version"] == "999.1.2.3-abcdef012" and info["head"] == info["version"] != info["up"]
+    assert info["url"].endswith(f"_{arch}.deb") and info["sha1"] == "a" * 40 and info["dirty"] == 0
+    assert info["log"] == ["- (Player) 새 기능", "- (DVR) 고침", "- (Web) 고침 둘"]
+    older, _ = _deb_check(monkeypatch, tmp_path, "0.0.1-old")                     # 깔린 것보다 낮으면 최신으로 본다
+    assert older["head"] == older["up"]
+    missing, _ = _deb_check(monkeypatch, tmp_path, "999.1", package="no-such-package-zz")
+    assert missing is None                                                        # 꾸러미로 안 깔려 있으면 대상이 아니다
+
+
+def test_plex_update_installs_only_a_verified_official_deb(monkeypatch, tmp_path):
+    app = updater.APPS["plex"]
+    assert app["kind"] == "deb" and app["hours"] == (4, 8) and "plexmediaserver" in app["health"]
+    scripts = []
+    monkeypatch.setattr(updater.waitfree, "_remote", lambda script, timeout: (scripts.append(script), (0, "NOW 2 OLD 1 RC 0 HEALTH 0"))[1])
+    good = {"head": "1.0.0.1-aaa", "up": "1.0.0.2-bbb", "sha1": "c" * 40,
+            "url": "https://downloads.plex.tv/plex-media-server-new/1.0.0.2-bbb/debian/plexmediaserver_1.0.0.2-bbb_amd64.deb"}
+    ok, _out = updater.run_update("plex", good)
+    assert ok and len(scripts) == 1
+    assert "sha1sum -c" in scripts[0] and "c" * 40 in scripts[0] and "dpkg -i" in scripts[0] and good["url"] in scripts[0]
+    assert scripts[0].index("sha1sum -c") < scripts[0].index("dpkg -i")           # 확인이 먼저
+    for bad in (dict(good, url="https://evil.example/plexmediaserver.deb"), dict(good, url=good["url"] + ";reboot"),
+                dict(good, sha1="zz"), dict(good, url="http://downloads.plex.tv/a.deb")):
+        ok, why = updater.run_update("plex", bad)
+        assert not ok and "올바르지" in why
+    assert len(scripts) == 1                                                      # 이상한 주소로는 아무것도 실행하지 않는다
+    assert updater._short("a" * 40) == "aaaaaaa" and updater._short("1.43.5.11079-b3b13e506") == "1.43.5.11079"
+    # 재생이 없어도 낮에는 하지 않는다
+    assert "04~08시" in updater.guard("plex", T0.replace(hour=14), dict(good, dirty=0), playing=0)
+    assert updater.guard("plex", T0.replace(hour=5), dict(good, dirty=0), playing=0) is None
+    assert "재생 중" in updater.guard("plex", T0.replace(hour=5), dict(good, dirty=0), playing=1)
