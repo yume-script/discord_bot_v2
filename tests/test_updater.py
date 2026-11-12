@@ -1,6 +1,8 @@
 """앱 자동 업데이트: 새 버전 확인 -> 담당 인물 판단 -> 안전할 때만 실행 -> 알림/이야기."""
 from datetime import datetime
 
+import pytest
+
 from poring_food import loadshed, updater
 
 T0 = datetime(2026, 10, 30, 5, 0)      # 새벽 (북오아시스 시간대 안)
@@ -107,3 +109,58 @@ def test_bookoasis_3d_is_updated_from_mnt(monkeypatch, tmp_path):
                       decide=lambda f: {"update": True, "reason": "기능 추가", "story": "3D 서재를 손봤다."},
                       runner=lambda k, i: (runs.append(k), (True, "ok"))[1])
     assert runs == ["bookoasis_3d"] and [e["kind"] for e in ev] == ["updated"]
+
+
+def _local(monkeypatch):
+    """plex01 대신 이 컴퓨터에서 그대로 돌린다"""
+    import subprocess
+    monkeypatch.setattr(updater.waitfree, "_remote", lambda script, timeout: (
+        lambda p: (p.returncode, p.stdout + p.stderr))(subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=120)))
+
+
+def test_plex_check_uses_the_apt_repository(monkeypatch, tmp_path):
+    """확인 프로그램을 실제로 돌려 본다 (깔려 있는 꾸러미 bash를 Plex인 셈 치고, 저장소 목록은 빈 파일)"""
+    import shutil
+    if not shutil.which("apt-cache") or not shutil.which("dpkg-query"):
+        pytest.skip("apt가 없는 환경")
+    _local(monkeypatch)
+    said = []
+    monkeypatch.setattr(updater, "print", lambda *a: said.append(" ".join(map(str, a))), raising=False)
+    repo = tmp_path / "plex.list"
+    repo.write_text("", encoding="utf-8")
+    monkeypatch.setitem(updater.APPS["plex"], "package", "bash")
+    monkeypatch.setitem(updater.APPS["plex"], "repo_list", str(repo))
+    monkeypatch.setitem(updater.APPS["plex"], "feed", (tmp_path / "none.json").as_uri())
+    info = updater.check("plex")
+    assert info and info["head"] == info["up"] == info["version"] and info["dirty"] == 0     # 설치 후보가 같으면 최신
+    monkeypatch.setitem(updater.APPS["plex"], "repo_list", str(tmp_path / "missing.list"))  # 새 저장소를 아직 안 넣음
+    assert updater.check("plex") is None and "setupRepo.sh" in said[-1]
+    monkeypatch.setitem(updater.APPS["plex"], "repo_list", str(repo))
+    monkeypatch.setitem(updater.APPS["plex"], "package", "no-such-package-zz")              # apt로 안 깔려 있음 (도커 등)
+    assert updater.check("plex") is None and "apt로 깔려 있지" in said[-1]
+
+
+def test_plex_update_goes_through_apt(monkeypatch, tmp_path):
+    app = updater.APPS["plex"]
+    assert app["kind"] == "apt" and app["hours"] == (4, 8) and "plexmediaserver" in app["health"]
+    assert app["repo_list"] == "/etc/apt/sources.list.d/plex.list"
+    scripts = []
+    monkeypatch.setattr(updater.waitfree, "_remote", lambda script, timeout: (scripts.append(script), (0, "NOW 2 OLD 1 RC 0 HEALTH 0"))[1])
+    info = {"head": "1.43.4.10000-aaaaaaaaa", "up": "1.43.5.11079-b3b13e506", "dirty": 0, "log": ["- (DVR) 고침"], "notes": ""}
+    ok, _out = updater.run_update("plex", info)
+    assert ok and "apt-get install -y -qq --only-upgrade" in scripts[0] and scripts[0].count("plexmediaserver") >= 3
+    assert "curl" not in scripts[0] and "git " not in scripts[0]                             # 받아 오기·서명 확인은 apt가 한다
+    assert updater._short("a" * 40) == "aaaaaaa" and updater._short("1.43.5.11079-b3b13e506") == "1.43.5.11079"
+    # 새 버전이면 담당이 판단하고, 새벽·재생 없음일 때만 실행
+    _env(monkeypatch, tmp_path)
+    runs = []
+    go = dict(checker={"plex": info}.get, decide=lambda f: {"update": True, "reason": "수정뿐", "story": "상영관 영사기를 손봤다."},
+              runner=lambda k, i: (runs.append(k), (True, "ok"))[1])
+    from datetime import timedelta
+    assert updater.step(T0, playing=1, **go) == [] and runs == []                            # 재생 중이면 기다린다
+    assert updater.step(NOON, playing=0, **go) == [] and runs == []                          # 낮에는 기다린다
+    ev = updater.step(T0 + timedelta(days=1), playing=0, **go)
+    assert runs == ["plex"] and ev[0]["kind"] == "updated" and "1.43.5.11079" in ev[0]["text"]
+    failed = updater.step(T0 + timedelta(days=2), playing=0, checker={"plex": dict(info, up="1.43.6.1-ccccccccc")}.get,
+                          decide=lambda f: {"update": True}, runner=lambda k, i: (False, "E: broken"))
+    assert failed[0]["kind"] == "failed" and "apt-get install plexmediaserver=1.43.4.10000-aaaaaaaaa" in failed[0]["text"]

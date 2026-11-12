@@ -303,7 +303,11 @@ python app.py
   - **앱 자동 업데이트** (`poring_food/updater.py`, 🛠️ 시설 정비): 30분마다 plex01에서 `git fetch`로 새 버전을 본다 -
     북오아시스(`/root/docker/BookOasis_stable`, `./update.sh`, 새 CHANGELOG 줄), YM_PLAYER(`/mnt/ym_player`, `git pull --ff-only` +
     `systemctl restart ym_player`), 짐꾼(`/mnt/bookoasis_assistant`, 같은 방식), 3D 서재(`/mnt/bookoasis_3d`, `git pull` + `venv/bin/pip install -r requirements.txt` +
-    `systemctl restart bookoasis_3d`, 새 CHANGELOG 줄 - 경로는 `PORING_UPDATE_BOOKOASIS_3D_DIR`). 새 버전을 처음 보면 그 시설 기관 담당 인물이 LLM으로
+    `systemctl restart bookoasis_3d`, 새 CHANGELOG 줄 - 경로는 `PORING_UPDATE_BOOKOASIS_3D_DIR`),
+    Plex Media Server(apt로 깐 `plexmediaserver`만 - Plex의 새 apt 저장소 `https://repo.plex.tv/deb/`(`/etc/apt/sources.list.d/plex.list`)만
+    `apt-get update` 하고 설치 후보가 깔린 것보다 높으면 `apt-get install --only-upgrade`, 04~08시(`PORING_UPDATE_PLEX_HOURS`)에만.
+    저장소는 plex01에서 한 번 직접 바꿔 둔다: `sudo rm /etc/apt/sources.list.d/plexmediaserver.list` 후
+    `curl -LsSf https://repo.plex.tv/scripts/setupRepo.sh | sudo bash` (묻고 답하는 스크립트라 봇이 대신 못 함). 도커 Plex는 대상이 아니다). 새 버전을 처음 보면 그 시설 기관 담당 인물이 LLM으로
     받을지 정하고(.env/설정 추가·수동 마이그레이션·호환 깨짐이 적혀 있으면 미루고 알림) 이야기 한두 문장을 쓴다. 실행은 재생 없음 ·
     plex01 2단계 이하 · 로컬 수정 없음(북오아시스 제외 - update.sh가 처리) · 북오아시스는 04~08시일 때만. 끝나면 서비스/컨테이너가
     살아 있는지 확인하고 채널에 ✅/⚠️(되돌릴 커밋) + 거리 사건(관련 인물 바로 반응). 도구 `get_app_versions` / `update_app`(관리자).

@@ -5,6 +5,12 @@
   YM_PLAYER           /mnt/ym_player             git pull + systemctl restart ym_player
   짐꾼(bookoasis_assistant) /mnt/bookoasis_assistant git pull + systemctl restart bookoasis_assistant
   3D 서재(bookoasis_3d) /mnt/bookoasis_3d         git pull + pip install -r requirements.txt + systemctl restart bookoasis_3d
+  Plex Media Server   (git 저장소가 아니다 - apt로 깐 plexmediaserver)
+                      Plex의 새 apt 저장소(https://repo.plex.tv/deb/ public main, /etc/apt/sources.list.d/plex.list)를 쓴다.
+                      그 저장소만 apt-get update 하고, 설치 후보(Candidate)가 깔린 것과 다르면
+                      apt-get install --only-upgrade plexmediaserver (서명 확인은 apt가 한다). 새벽 시간대에만.
+                      저장소 설정은 plex01에서 한 번 직접: 예전 목록(plexmediaserver.list)을 지우고
+                      curl -LsSf https://repo.plex.tv/scripts/setupRepo.sh | sudo bash  (묻고 답하는 스크립트라 봇이 대신 못 한다)
 경로는 .env PORING_UPDATE_<KEY>_DIR로 바꾼다.
 
 흐름 (봇이 30분마다 step):
@@ -22,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 from datetime import datetime, timedelta
 
@@ -75,7 +82,50 @@ APPS = {
                              "&& systemctl restart bookoasis_3d"), "notes": "CHANGELOG.md",
                      "health": "sleep 5; systemctl is-active -q bookoasis_3d",
                      "hours": _hours("PORING_UPDATE_BOOKOASIS_3D_HOURS", "")},
+    # Plex: apt 저장소(repo.plex.tv)로 깐 것만. 다시 켜질 때 재생이 끊기므로 재생 없음 + 새벽 시간대에만
+    "plex": {"label": "Plex Media Server", "facility": "영상팀 상영관", "company": worldcfg.CINEMA,
+             "system": "plex", "affects": ["ym_player", "tautulli"], "kind": "apt", "package": "plexmediaserver",
+             "repo_list": os.getenv("PORING_UPDATE_PLEX_LIST", "/etc/apt/sources.list.d/plex.list"),
+             "dir": "/tmp", "run": "", "notes": "",
+             "feed": os.getenv("PORING_UPDATE_PLEX_FEED", "https://plex.tv/api/downloads/5.json"),   # 변경 내용을 읽는 데만 쓴다
+             "health": "sleep 10; systemctl is-active -q plexmediaserver",
+             "hours": _hours("PORING_UPDATE_PLEX_HOURS", "4-8")},
 }
+REPO_SETUP = "plex01에서 한 번: sudo rm /etc/apt/sources.list.d/plexmediaserver.list; curl -LsSf https://repo.plex.tv/scripts/setupRepo.sh | sudo bash"
+# plex01에서 돌리는 확인 프로그램 (작은따옴표 없이 쓴다 - 셸에서 작은따옴표로 감싼다).
+# Plex 저장소만 새로 받고(apt-get update), 깔린 버전과 설치 후보를 본다. 변경 내용은 Plex 내려받기 목록에서 (못 받아도 됨)
+_APT_CHECK = """
+import json, os, re, subprocess, sys, urllib.request
+pkg, repo, feed = sys.argv[1], sys.argv[2], sys.argv[3]
+run = lambda *a: subprocess.run(a, capture_output=True, text=True)
+if not os.path.exists(repo):
+    sys.exit("NOREPO " + repo)
+run("apt-get", "update", "-qq", "-o", "Dir::Etc::sourcelist=" + repo, "-o", "Dir::Etc::sourceparts=-", "-o", "APT::Get::List-Cleanup=0")
+pol = run("apt-cache", "policy", pkg).stdout
+cur = (re.search(r"Installed: *(\\S+)", pol) or [None, ""])[1]
+cand = (re.search(r"Candidate: *(\\S+)", pol) or [None, ""])[1]
+if not cur or cur == "(none)":
+    sys.exit("NOTINSTALLED " + pkg)
+if not cand or cand == "(none)":
+    cand = cur
+newer = run("dpkg", "--compare-versions", cand, "gt", cur).returncode == 0
+print("HEAD", cur)
+print("UP", cand if newer else cur)
+print("DIRTY 0")
+print("VERSION", cur)
+print("NEW_VERSION", cand if newer else cur)
+print("@@log")
+if newer:
+    try:
+        req = urllib.request.Request(feed, headers={"User-Agent": "poring-updater"})
+        d = json.load(urllib.request.urlopen(req, timeout=20))["computer"]["Linux"]
+        if str(d.get("version") or "") == cand:
+            for line in (str(d.get("items_added") or "") + chr(10) + str(d.get("items_fixed") or "")).splitlines():
+                if line.strip():
+                    print("-", line.strip()[:150])
+    except Exception:
+        pass
+"""
 
 DECIDE_SYSTEM = """너는 오아시스 거리의 시설 담당자다. 실제로는 서버의 앱을 GitHub 새 버전으로 업데이트할지 정한다.
 목표 순서: 1) 영상 재생·책 읽기에 불편이 없게 2) 서버 안정 3) 새 기능·성능 개선은 빨리 받는다.
@@ -136,6 +186,19 @@ def parse_check(out: str) -> dict | None:
 
 def check(key: str) -> dict | None:
     app = APPS[key]
+    if app.get("kind") == "apt":
+        script = (f"python3 -c '{_APT_CHECK}' {shlex.quote(app['package'])} {shlex.quote(app['repo_list'])} "
+                  f"{shlex.quote(app['feed'])}")
+        rc, out = waitfree._remote(script, 120)
+        if rc != 0:
+            why = out.strip()[-200:]
+            if "NOREPO" in why:
+                why = f"Plex apt 저장소({app['repo_list']})가 없습니다 - {REPO_SETUP}"
+            elif "NOTINSTALLED" in why:
+                why = f"{app['package']}가 apt로 깔려 있지 않습니다 (도커로 돌리는 Plex는 대상이 아님)"
+            print(f"[시설 정비] {key} 확인 실패: {why}")
+            return None
+        return parse_check(out)
     notes = (f"echo @@notes; git diff HEAD '@{{u}}' -- {app['notes']} 2>/dev/null | grep '^+' | grep -v '^+++' | cut -c2- | head -60;"
              if app["notes"] else "")   # 새로 붙은 변경 기록 줄만
     script = (f"{_cd(app)} && git fetch -q origin 2>&1 | tail -2; "
@@ -149,6 +212,12 @@ def check(key: str) -> dict | None:
         print(f"[시설 정비] {key} 확인 실패: {out.strip()[:160]}")
         return None
     return parse_check(out)
+
+
+def _short(rev: str) -> str:
+    """기록에 남길 짧은 이름: 커밋은 앞 7자, 패키지 버전(1.43.5.11079-b3b13e506)은 숫자 부분"""
+    rev = str(rev or "")
+    return rev[:7] if re.fullmatch(r"[0-9a-f]{40}", rev) else rev.split("-")[0][:16]
 
 
 def _changes(info: dict) -> str:
@@ -179,6 +248,15 @@ def guard(key: str, now: datetime, info: dict, playing: int | None = -1, force: 
 # ===================================================================== 실행
 def run_update(key: str, info: dict) -> tuple[bool, str]:
     app = APPS[key]
+    if app.get("kind") == "apt":
+        pkg, log = shlex.quote(app["package"]), f"/tmp/poring_update_{key}.log"
+        # 서명 확인은 apt가 한다. 설정 파일은 지금 것을 그대로 두고, 패키지가 서비스를 다시 켠다
+        script = (f"old=$(dpkg-query -W -f='${{Version}}' {pkg}); "
+                  f"(DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --only-upgrade -o Dpkg::Options::=--force-confold {pkg}) "
+                  f"> {log} 2>&1; rc=$?; tail -5 {log}; {app['health']}; h=$?; "
+                  f"echo; echo NOW $(dpkg-query -W -f='${{Version}}' {pkg}) OLD $old RC $rc HEALTH $h; [ $rc -eq 0 ] && [ $h -eq 0 ]")
+        rc, out = waitfree._remote(script, 1200)
+        return rc == 0, out.strip()[-600:]
     script = (f"{_cd(app)} && old=$(git rev-parse --short HEAD) && ({app['run']}) > /tmp/poring_update_{key}.log 2>&1; "
               f"rc=$?; tail -5 /tmp/poring_update_{key}.log; {app['health']}; h=$?; "
               "echo; echo NOW $(git rev-parse --short HEAD) OLD $old RC $rc HEALTH $h; [ $rc -eq 0 ] && [ $h -eq 0 ]")
@@ -254,16 +332,19 @@ def step(now: datetime | None = None, checker=None, decide=None, runner=None, pl
         a.pop("pending", None)
         a.setdefault("history", [])
         a["history"] = a["history"][-9:] + [{"at": now.isoformat(timespec="minutes"), "ok": ok,
-                                             "from": info["head"][:7], "to": info["up"][:7], "who": who}]
-        ver = info.get("new_version") or info["up"][:7]
+                                             "from": _short(info["head"]), "to": _short(info["up"]), "who": who}]
+        ver = info.get("new_version") or _short(info["up"])
         if ok:
             events.append({"key": key, "who": who, "kind": "updated", "title": f"{app['facility']} 정비 완료",
-                           "story": pend["story"], "text": f"{app['label']} {info.get('version') or info['head'][:7]} → {ver} "
+                           "story": pend["story"], "text": f"{app['label']} {info.get('version') or _short(info['head'])} → {ver} "
                            f"업데이트하고 다시 켬 ({pend['reason']})"})
         else:
             events.append({"key": key, "who": who, "kind": "failed", "title": f"{app['facility']} 정비 실패",
-                           "story": "", "text": f"⚠️ {app['label']} 업데이트 실패 - 확인 필요. 되돌리려면 {app['dir']}에서 "
-                           f"`git checkout {info['head'][:7]}` 후 다시 시작\n```{out[-400:]}```"})
+                           "story": "", "text": (f"⚠️ {app['label']} 업데이트 실패 - 확인 필요. "
+                           + (f"이전 버전은 {info['head']} (`apt-get install {app['package']}={info['head']}`로 돌아감)"
+                              if app.get("kind") == "apt"
+                              else f"되돌리려면 {app['dir']}에서 `git checkout {info['head'][:7]}` 후 다시 시작")
+                           + f"\n```{out[-400:]}```")})
         print(f"[시설 정비] {key} {'업데이트' if ok else '실패'} {info['head'][:7]} -> {info['up'][:7]}")
     _save(st)
     return events
@@ -312,7 +393,8 @@ def status_text() -> str:
             lines.append(f"• {app['label']}: 최신 ({info.get('version') or info['head'][:7]})")
         else:
             pend = a.get("pending") or {}
-            lines.append(f"• {app['label']}: 새 버전 {info.get('new_version') or info['up'][:7]} (커밋 {len(info['log'])}개)"
+            lines.append(f"• {app['label']}: 새 버전 {info.get('new_version') or info['up'][:7]} "
+                         + (f"(변경 {len(info['log'])}줄)" if app.get("kind") == "apt" else f"(커밋 {len(info['log'])}개)")
                          + (f" - {pend['who']} 판단: {'받음(안전할 때 실행)' if pend.get('update') else '미룸'} {pend.get('reason', '')}"
                             if pend.get("up") == info["up"] else " - 아직 판단 전")
                          + (f" · 로컬 수정 {info['dirty']}개" if info["dirty"] else ""))
