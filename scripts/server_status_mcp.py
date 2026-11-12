@@ -20,6 +20,13 @@
   STATUS_TOTAL_FSTYPES 기본 "ext2,ext3,ext4,xfs,btrfs,zfs,f2fs" - 서버 전체 디스크(disk_total)에 넣는 로컬 파일시스템 종류
                        (네트워크/클라우드 마운트(nfs, cifs, fuse.rclone 등)와 tmpfs/overlay 같은 가상 파일시스템은 뺀다)
   STATUS_SERVICES    기본 "discord_bot_v2,cron,docker,ssh"
+  STATUS_HOST_SSH    호스트(zeeps)에 붙는 ssh 대상 (기본 PORING_LOADSHED_ZEEPS_SSH). 봇 키는 호스트의
+                     village-ctl.sh에 묶여 있어 "top"(게스트별·프로세스별 CPU, 읽기만)만 부른다.
+                     MCP는 stdio로 떠서 봇의 환경변수를 물려받지 못하므로 봇의 .env 파일에서도 읽는다.
+
+[부하는 호스트 기준]
+이 서버(etc)는 호스트 zeeps 위의 LXC 컨테이너라 안에서는 다른 게스트(CT/VM)와 호스트의 프로세스가 안 보인다.
+그래서 "왜 바쁜가"는 get_host_load(호스트 전체: 게스트별 합계 + 상위 프로세스)로 답한다.
 """
 import glob
 import os
@@ -33,6 +40,29 @@ from datetime import timedelta
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("Server Status")
+
+
+def _dotenv(key: str) -> str:
+    """봇의 .env(이 파일의 한 단계 위)에서 값 하나 (MCP는 봇의 환경변수를 물려받지 못한다)"""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                k, sep, v = line.strip().partition("=")
+                if sep and k.strip() == key:
+                    v = re.split(r"\s+#", v, maxsplit=1)[0].strip().strip("'\"")
+                    return v
+    except OSError:
+        pass
+    return ""
+
+
+def _host_ssh() -> str:
+    for key in ("STATUS_HOST_SSH", "PORING_LOADSHED_ZEEPS_SSH"):
+        v = (os.getenv(key) or _dotenv(key)).strip()
+        if v:
+            return v
+    return ""
 
 _DISK_PATHS = [p.strip() for p in os.getenv("STATUS_DISK_PATHS", "/,/mnt,/docker").split(",") if p.strip()]
 _DEFAULT_SERVICES = [s.strip() for s in os.getenv("STATUS_SERVICES", "discord_bot_v2,cron,docker,ssh").split(",") if s.strip()]
@@ -234,14 +264,107 @@ def _cpu_summary(load) -> dict:
     }
 
 
+def parse_top(out: str) -> dict | None:
+    """village-ctl.sh top 출력 -> {"cores", "guests": [{kind, id, name, cpu_percent}], "processes": [{guest, name, cpu_percent}]}"""
+    cores, guests, procs = None, [], []
+    for line in (out or "").splitlines():
+        parts = line.split()
+        try:
+            if parts[:1] == ["cores"] and len(parts) == 2:
+                cores = int(parts[1])
+            elif parts[:1] == ["guest"] and len(parts) == 3:
+                kind, gid, name = (parts[1].split(":", 2) + ["", ""])[:3]
+                guests.append({"kind": kind, "id": gid, "name": name, "cpu_percent": float(parts[2])})
+            elif parts[:1] == ["proc"] and len(parts) >= 4:
+                kind, gid, name = (parts[1].split(":", 2) + ["", ""])[:3]
+                procs.append({"guest": f"{kind}:{gid}:{name}", "name": " ".join(parts[2:-1]), "cpu_percent": float(parts[-1])})
+        except (ValueError, IndexError):
+            continue
+    if cores is None and not guests:
+        return None
+    guests.sort(key=lambda g: g["cpu_percent"], reverse=True)
+    procs.sort(key=lambda p: p["cpu_percent"], reverse=True)
+    return {"cores": cores, "guests": guests, "processes": procs}
+
+
+_GUEST_WORD = {"ct": "컨테이너", "vm": "가상머신", "host": "호스트 자체"}
+
+
+def _host_top() -> dict:
+    """호스트에서 '어디서 CPU를 쓰는가' (ssh 실패/미설정이면 available False와 이유)"""
+    ssh = _host_ssh()
+    if not ssh:
+        return {"available": False, "reason": "호스트 접속(STATUS_HOST_SSH 또는 PORING_LOADSHED_ZEEPS_SSH)이 설정되지 않음"}
+    try:
+        p = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", ssh, "top"],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {"available": False, "reason": f"호스트에 접속하지 못함: {type(e).__name__}"}
+    data = parse_top(p.stdout) if p.returncode == 0 else None
+    if not data:
+        err = (p.stderr.strip().splitlines() or [""])[-1][:160]
+        return {"available": False, "reason": "호스트가 top을 지원하지 않음 (scripts/zeeps/install.sh를 다시 실행해 village-ctl.sh 갱신 필요)"
+                if "허용되지 않은" in err else f"호스트 응답을 읽지 못함: {err or p.returncode}"}
+    return {"available": True, **data}
+
+
+def _host_summary(top: dict, host_percent) -> str:
+    """사람이 읽는 한 줄: 호스트 CPU와 가장 많이 쓰는 게스트·프로세스"""
+    if not top.get("available"):
+        return ""
+    cores = top.get("cores") or 1
+    parts = []
+    for g in top["guests"][:3]:
+        word = _GUEST_WORD.get(g["kind"], g["kind"])
+        label = g["name"] if g["kind"] == "host" else f"{g['name']}({word} {g['id']})"
+        parts.append(f"{label} {g['cpu_percent'] / cores:.0f}%")
+    procs = [f"{p['name']}@{p['guest'].split(':')[-1]} {p['cpu_percent'] / cores:.0f}%" for p in top["processes"][:3]]
+    head = f"호스트 전체 CPU {host_percent:g}%" if host_percent is not None else "호스트 CPU"
+    return head + (" - 많이 쓰는 곳: " + ", ".join(parts) if parts else "") + (" · 프로세스: " + ", ".join(procs) if procs else "")
+
+
+@mcp.tool()
+def get_host_load() -> dict:
+    """호스트(zeeps) 전체 기준으로 지금 CPU를 어디서 쓰는지 알려 줍니다. 부하의 원인을 묻거나 부하를 이야기할 때는 이 도구를 씁니다.
+    - host_percent: 물리 머신 전체 CPU 사용률(%)
+    - guests: 게스트(ct=LXC 컨테이너, vm=가상머신, host=호스트 자체)별 CPU. cpu_percent는 코어 1개=100,
+      machine_percent는 머신 전체 대비 %
+    - processes: 호스트 전체 상위 프로세스(이름만, 어느 게스트 안인지 guest로). 명령줄은 보안상 없음
+    - summary: 한 줄 요약
+    이 봇이 도는 서버(etc)도 게스트 중 하나일 뿐이다. '이 서버 밖이라 모른다'고 답하지 말고 여기 나온 게스트·프로세스를 원인으로 말한다."""
+    cpu = _cpu_sample()
+    top = _host_top()
+    cores = (top.get("cores") if top.get("available") else None) or os.cpu_count() or 1
+    if top.get("available"):
+        for g in top["guests"]:
+            g["machine_percent"] = round(g["cpu_percent"] / cores, 1)
+        for p in top["processes"]:
+            p["machine_percent"] = round(p["cpu_percent"] / cores, 1)
+        top["processes"] = top["processes"][:15]
+    return {"host_percent": cpu["host_percent"], "vm_guest_percent": cpu["vm_guest_percent"], "cores": cores,
+            **top, "summary": _host_summary(top, cpu["host_percent"])}
+
+
+def _host_load_brief() -> dict:
+    top = _host_top()
+    if not top.get("available"):
+        return {"available": False, "reason": top.get("reason", "")}
+    cores = top.get("cores") or 1
+    return {"available": True,
+            "guests": [{"guest": f"{g['kind']}:{g['id']}:{g['name']}", "machine_percent": round(g["cpu_percent"] / cores, 1)}
+                       for g in top["guests"][:5]],
+            "processes": [{"guest": p["guest"], "name": p["name"], "machine_percent": round(p["cpu_percent"] / cores, 1)}
+                          for p in top["processes"][:5]]}
+
+
 @mcp.tool()
 def get_system_status() -> dict:
     """이 서버(etc, discord_bot_v2가 도는 서버)의 CPU, 메모리, 스왑, 디스크(파티션별), 온도(센서별,
     있을 때), 가동시간을 한 번에 조회합니다. CPU는 세 가지로 나뉩니다: host_percent(머신 전체 -
     이 서버가 컨테이너면 다른 게스트 부하까지 포함), vm_guest_percent(그중 가상머신이 쓴 몫),
-    container_cores_used(이 서버 자신이 쓴 CPU, 코어 1개=1.0). 머신은 바쁜데 이 서버 몫이 낮으면
-    부하의 원인은 이 서버 밖입니다. disk_total은 서버의 로컬 디스크 전체를 합친 사용률입니다
-    (disks는 STATUS_DISK_PATHS 파티션별)."""
+    container_cores_used(이 서버 자신이 쓴 CPU, 코어 1개=1.0). 서버 부하는 호스트 기준(host_percent)으로 말하고,
+    원인은 host_load(호스트 전체의 게스트별·프로세스별 CPU)에서 찾는다 - 더 자세히는 get_host_load.
+    disk_total은 서버의 로컬 디스크 전체를 합친 사용률입니다 (disks는 STATUS_DISK_PATHS 파티션별)."""
     mem, swap = _meminfo()
     try:
         load = dict(zip(("1min", "5min", "15min"), (round(x, 2) for x in os.getloadavg())))
@@ -251,6 +374,7 @@ def get_system_status() -> dict:
         "hostname": socket.gethostname(),
         "uptime": _uptime(),
         "cpu": _cpu_summary(load),
+        "host_load": _host_load_brief(),
         "memory": mem,
         "swap": swap,
         "disks": _disks(),
@@ -317,8 +441,8 @@ def _read_procs() -> dict:
 
 @mcp.tool()
 def get_top_processes(limit: int = 5, sort_by: str = "memory") -> list:
-    """이 서버(컨테이너) 안의 프로세스 중 리소스를 많이 쓰는 상위 목록(이름만, 명령줄은 보안상 제외)을
-    돌려줍니다. 다른 게스트/호스트의 프로세스는 보이지 않습니다.
+    """이 서버(etc 컨테이너) 안의 프로세스 중 리소스를 많이 쓰는 상위 목록(이름만, 명령줄은 보안상 제외)을
+    돌려줍니다. 다른 게스트/호스트의 프로세스는 보이지 않으므로, CPU 부하의 원인을 찾을 때는 get_host_load를 씁니다.
     sort_by는 'memory' 또는 'cpu'. cpu_percent는 0.5초 동안 측정한 '지금'의 값이고 코어 1개를
     꽉 채우면 100%입니다(멀티코어라 100%를 넘을 수 있음)."""
     if sort_by not in ("memory", "cpu"):

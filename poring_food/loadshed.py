@@ -16,7 +16,8 @@
 
 부하 지수 = max(CPU us+sy+irq+steal (nice 제외 - nice된 작업은 바로 양보하므로), 메모리 사용 %, I/O 압박 PSI some avg10).
 - 서버별로 매분 잰다: etc = 이 서버 /proc, plex01 = `ssh <host>`. PORING_LOADSHED_ZEEPS_SSH가 있으면 호스트(zeeps)도 재서
-  두 서버 지수에 같이 반영한다(호스트 부하는 모든 CT에 걸리므로).
+  두 서버 지수에 같이 반영한다(호스트 부하는 모든 CT에 걸리므로). 부하의 원인도 호스트 기준으로 가린다: 호스트의
+  village-ctl.sh "top"(게스트별·프로세스별 CPU)으로 모든 게스트(다른 CT/VM 포함)와 호스트 자체를 본다 (loadcause.host_procs).
 - 단계는 최근 5분 평균으로 정한다 (1분만 튀면 관찰만). 단 재생 중(Plex/YM_PLAYER)이면 최근 1분 값으로 바로 정하고 1분마다
   한 단계씩 올린다(PORING_LOADSHED_PLAY_AVG_MIN / _PLAY_UP_MIN) - 시청이 먼저라 5분 기다리지 않는다. 기준은 재생 여부로 두 벌:
   재생 없음 70/75/80/93/96% = 1~5단계 (PORING_LOADSHED_STAGES) - 아무도 안 볼 땐 짐꾼을 93%까지 그대로 둔다,
@@ -417,6 +418,8 @@ def measure() -> dict:
                      "procs": loadcause.parse_ps(ps) if ps else None}
     # 호스트는 village-ctl.sh(강제 명령) 뒤에 있다 - 셸 대신 "probe"만 보낸다
     out["_zeeps"] = parse_probe(_run("zeeps", ["probe"]) or "") if ZEEPS_SSH else None
+    # 호스트 전체에서 CPU를 쓰는 곳 (게스트별·프로세스별) - 부하 원인은 호스트 기준으로 가린다
+    out["_host_top"] = loadcause.parse_host_top(_run("zeeps", ["top"]) or "") if ZEEPS_SSH else None
     out["_playing"], out["_struggle"] = _viewing()
     return out
 
@@ -657,6 +660,13 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     struggling = bool(playing) and data.get("struggle_at", "") >= (now - timedelta(minutes=STRUGGLE_HOLD_MIN)).isoformat()
     done = []
     stamp = now.isoformat(timespec="seconds")
+    # 부하 원인은 호스트 전체 기준 (호스트에 붙을 수 있을 때): 모든 게스트·호스트 자체의 프로세스로 한 번 가려 모든 서버에 쓴다
+    host_top = readings.get("_host_top")
+    host_cause = None
+    if host_top:
+        rows = loadcause.host_procs(host_top, {h: (readings.get(h) or {}).get("procs") for h in HOSTS})
+        host_cause = dict(loadcause.classify(rows, None, playing, struggling), at=stamp, guests=loadcause.guests_line(host_top))
+        data["host"] = {"cause": host_cause, "guests": [list(g) for g in host_top["guests"][:8]], "cores": host_top.get("cores"), "at": stamp}
     for host in HOSTS:
         r = readings.get(host) or {}
         st = hosts.setdefault(host, {})
@@ -674,7 +684,9 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         if r.get("running") is not None:   # 매분 도는 컨테이너 목록 - facilities.quick이 사람이 끄고 켠 것도 바로 잡는다
             st["running"], st["running_at"] = sorted(r["running"]), stamp
         st["playing"] = playing
-        if r.get("procs") is not None or r.get("running") is not None:   # 왜 바쁜지 (웹툰 내려받기 / 영상 입고 / 재생 / 보안 점검)
+        if host_cause is not None:        # 왜 바쁜지 (웹툰 내려받기 / 영상 입고 / 재생 / 보안 점검) - 호스트 전체 기준
+            st["cause"] = dict(host_cause)
+        elif r.get("procs") is not None or r.get("running") is not None:   # 호스트에 못 붙으면 그 서버 안에서만
             st["cause"] = dict(loadcause.classify(r.get("procs"), r.get("running"), playing, struggling), at=stamp)
         if probe is None:          # 못 쟀으면 단계는 그대로, 아무것도 안 한다
             continue
@@ -685,7 +697,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             st["stage"], st["stage_at"] = new, stamp
             done.append({"host": host, "do": "stage", "name": "서버 경보", "from": cur, "to": new, "why": why,
                          "cpu": st["last_cpu"], "alert": new >= TOP or st["last_cpu"] > ALERT,
-                         "cause": cause.get("cause", ""), "cause_top": cause.get("top", "")})
+                         "cause": cause.get("cause", ""), "cause_top": cause.get("top", ""), "guests": cause.get("guests", "")})
             print(f"[서버 조절] {host} 서버 경보 {cur} -> {new}단계 - {why}" + (f" · 원인 {cause['label']} {cause.get('top', '')}" if cause.get("cause") else ""))
         st["struggling"] = struggling
         # 조치에 쓰는 원인은 STRUGGLE_HOLD_MIN분 동안 붙들어 둔다 (분마다 원인이 오락가락해도 늦췄다 풀었다 하지 않게)
@@ -760,7 +772,8 @@ def _story(a: dict) -> tuple[str, str, str]:
         if up:
             extra = loadcause.story(a.get("cause", ""), a.get("cause_top", ""))   # 원인에 따라 할 일이 다르다
             text = (f"{j(ACTOR, '이')} 서버 경보를 {a['to']}단계({name})로 올렸다 ({a['why']})."
-                    + (extra or " 영상과 책 열람은 그대로 지키고, 짐 나르는 일과 정비부터 쉬게 한다."))
+                    + (extra or " 영상과 책 열람은 그대로 지키고, 짐 나르는 일과 정비부터 쉬게 한다.")
+                    + (f" (호스트에서 CPU를 많이 쓰는 곳: {a['guests']})" if a.get("guests") else ""))
         else:
             text = f"{j(ACTOR, '이')} 서버 경보를 {a['to']}단계({name})로 내렸다 ({a['why']}). 쉬던 일이 차례로 돌아온다."
         c = loadcause.CAUSES.get(a.get("cause", "")) if up else None
