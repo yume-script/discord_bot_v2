@@ -71,3 +71,46 @@ def test_plan_slows_the_cause_one_stage_early(monkeypatch):
     assert [(a["do"], a["name"]) for a in back] == [("unthrottle", "bookoasis_assistant.service")]
     monkeypatch.setattr(loadshed, "CAUSE_ACT", False)
     assert loadshed.plan(host, early, {}, {}, now, playing=True, struggling=False, cause="webtoon") == []
+
+
+TOP = """cores 8
+guest vm:110:win10 320.5
+guest ct:105:plex01 150.0
+guest ct:102:etc 20.0
+guest host:-:zeeps 60.0
+proc vm:110:win10 kvm 320.5
+proc ct:105:plex01 Plex_Transcoder 140.0
+proc host:-:zeeps clamscan 55.0
+proc ct:102:etc python3 20.0
+"""
+
+
+def test_host_top_is_the_basis():
+    t = loadcause.parse_host_top(TOP)
+    assert t["cores"] == 8 and t["guests"][0] == ("win10", "vm", 320.5) and (55.0, "zeeps clamscan") in t["procs"]
+    assert loadcause.parse_host_top("village-ctl: 허용되지 않은 명령: top") is None
+    assert loadcause.guests_line(t) == "win10 40% · plex01 19% · zeeps 8%"
+    # 들여다보는 서버(plex01)는 그 안의 ps(명령줄)로, 나머지 게스트·호스트는 호스트가 본 이름으로
+    inside = {"plex01": [(140.0, "/usr/lib/plexmediaserver/Plex Transcoder -i x")], "etc": None}
+    rows = loadcause.host_procs(t, inside)
+    assert (140.0, "/usr/lib/plexmediaserver/Plex Transcoder -i x") in rows and (140.0, "plex01 Plex_Transcoder") not in rows
+    assert (55.0, "zeeps clamscan") in rows and (20.0, "etc python3") in rows       # etc는 ps를 못 받았으니 호스트가 본 것
+    assert loadcause.host_procs(None, inside) is None
+
+
+def test_step_uses_host_cause_for_every_server(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from poring_food import loadshed
+    monkeypatch.setattr(loadshed, "LOADSHED_PATH", str(tmp_path / "loadshed.json"))
+    top = loadcause.parse_host_top("cores 4\nguest host:-:zeeps 300.0\nproc host:-:zeeps clamscan 300.0\nguest ct:102:etc 5.0\n")
+    readings = {"etc": {"probe": {"index": 40.0, "cpu": 40.0, "busy": 40.0, "mem": 30.0, "psi": {}}, "running": {},
+                        "procs": [(5.0, "python3 app.py")]},
+                "plex01": {"probe": {"index": 40.0, "cpu": 40.0, "busy": 40.0, "mem": 30.0, "psi": {}}, "running": {},
+                           "procs": [(3.0, "sshd")]},
+                "_host_top": top, "_playing": 0, "_struggle": False}
+    loadshed.step(datetime(2026, 11, 12, 20, 0), measurer=lambda: readings, throttler=lambda h, a: {}, docker=lambda *a: True,
+                  stage_writer=lambda n: [])
+    data = loadshed._load()
+    assert data["host"]["cause"]["cause"] == "scan" and data["host"]["cause"]["guests"] == "zeeps 75%"
+    assert data["hosts"]["etc"]["cause"]["cause"] == "scan" and data["hosts"]["plex01"]["cause"]["cause"] == "scan"

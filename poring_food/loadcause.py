@@ -8,7 +8,9 @@
   scan      보안 점검 (ClamAV 바이러스 검사)
   other     그 밖 / 알 수 없음
 
-가리는 법: 서버에서 CPU를 많이 쓰는 프로세스(`ps`)와 컨테이너(`docker stats`)의 이름을 낱말로 묶어 종류별로 더한다.
+가리는 법: 호스트(zeeps) 전체 기준 - 호스트가 본 모든 게스트(CT/VM)·호스트 자체의 프로세스(host_procs, 우리가 들여다보는
+서버는 그 안의 ps)를 쓴다. 호스트에 못 붙으면 각 서버의 프로세스(`ps`)와 컨테이너(`docker stats`)로.
+이름을 낱말로 묶어 종류별로 더한다 (호스트가 본 프로세스는 "게스트이름 프로세스이름").
 가장 큰 종류가 MIN_CPU(한 코어의 40%) 이상이고 둘째보다 뚜렷이 크면 그것이 원인. 재생 중인데 뚜렷한 원인이 없으면 재생.
 낱말은 .env로 바꾼다 (PORING_LOADCAUSE_WEBTOON 등, 쉼표로). 순수 함수라 테스트하기 쉽다.
 """
@@ -114,6 +116,48 @@ def classify(procs: list[tuple[float, str]] | None, containers: dict[str, float]
     elif cause == "playback" and playing:
         top = f"재생 {playing}건"
     return {"cause": cause, "label": CAUSES[cause]["label"], "top": top, "shares": {k: round(v, 1) for k, v in shares.items()}}
+
+
+def parse_host_top(out: str) -> dict | None:
+    """호스트 village-ctl.sh top 출력 -> {"cores", "guests": [(이름, 종류, CPU%)], "procs": [(CPU%, "게스트 프로세스")]}.
+    CPU%는 코어 1개=100 (ps와 같은 단위)."""
+    cores, guests, procs = None, [], []
+    for line in (out or "").splitlines():
+        parts = line.split()
+        try:
+            if parts[:1] == ["cores"] and len(parts) == 2:
+                cores = int(parts[1])
+            elif parts[:1] == ["guest"] and len(parts) == 3:
+                kind, _gid, name = (parts[1].split(":", 2) + ["", ""])[:3]
+                guests.append((name, kind, float(parts[2])))
+            elif parts[:1] == ["proc"] and len(parts) >= 4:
+                name = (parts[1].split(":", 2) + ["", ""])[2]
+                procs.append((float(parts[-1]), f"{name} {' '.join(parts[2:-1])}"))
+        except (ValueError, IndexError):
+            continue
+    if cores is None and not guests:
+        return None
+    guests.sort(key=lambda g: g[2], reverse=True)
+    return {"cores": cores or 1, "guests": guests, "procs": procs}
+
+
+def host_procs(host_top: dict | None, inside: dict[str, list] | None) -> list[tuple[float, str]] | None:
+    """호스트 전체 기준 원인 가리기용 프로세스 목록. 우리가 들여다보는 서버(etc, plex01 - inside)는 그 안의 ps(명령줄이 있어
+    더 정확)를 쓰고, 나머지 게스트와 호스트 자체는 호스트가 본 프로세스 이름(게스트 이름을 앞에 붙여)으로 더한다."""
+    if not host_top:
+        return None
+    inside = {k: v for k, v in (inside or {}).items() if v is not None}
+    rows = [row for procs in inside.values() for row in procs]
+    rows += [(cpu, text) for cpu, text in host_top.get("procs") or [] if text.split(" ", 1)[0] not in inside]
+    return rows
+
+
+def guests_line(host_top: dict | None, n: int = 3) -> str:
+    """'win10 40% · plex01 19%' 꼴 (머신 전체 대비 %) - 많이 쓰는 게스트 n개 (5% 미만은 뺀다)"""
+    if not host_top:
+        return ""
+    cores = host_top.get("cores") or 1
+    return " · ".join(f"{name} {cpu / cores:.0f}%" for name, _kind, cpu in host_top.get("guests", [])[:n] if cpu / cores >= 5)
 
 
 def story(cause: str, top: str = "") -> str:

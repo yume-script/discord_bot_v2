@@ -263,7 +263,10 @@ python app.py
     1) `village-gate.sh`(가이드 6.3)와 `village-ctl.sh` 설치, 2) ClamAV·정비 타이머에 드롭인(`/etc/systemd/system/<unit>.d/10-village.conf` - 10-이라 봇의 런타임 제한이 이보다 나중에 적용,
     원본 유닛은 그대로): `ExecCondition=village-gate.sh <최대 단계>`(risk-scan 1, deep-scan/freshclam/feed-update/malware-watch 2,
     apt-daily 1, pve-daily-update/dpkg-db-backup 2) + 상시 상한(스캔은 CPUWeight 10·CPUQuota 60%·MemoryHigh 1500M·MemoryMax 2200M·
-    RuntimeMaxSec). 봇 공개키는 `command="/usr/local/sbin/village-ctl.sh",no-pty,...`로 묶어 `probe`/`stage N`/`status`만 된다.
+    RuntimeMaxSec). 봇 공개키는 `command="/usr/local/sbin/village-ctl.sh",no-pty,...`로 묶어 `probe`/`top`/`stage N`/`status`만 된다.
+    `top`은 호스트 전체에서 CPU를 쓰는 곳(게스트 CT/VM별 합계 + 상위 프로세스 이름, 1초 측정, 읽기만)을 낸다 -
+    서버 조절의 부하 원인 가리기와 디스코드 AI의 `get_host_load`(서버 상태 MCP)가 이걸로 **호스트 기준**으로 이야기한다.
+    이 기능을 쓰려면 호스트에서 `bash install.sh`를 한 번 더 실행해 village-ctl.sh를 새로 깔아야 한다 (안 하면 예전처럼 각 서버 안에서만 본다).
     etc `.env`에 `PORING_LOADSHED_ZEEPS_SSH=root@<zeeps>`를 넣으면 매분 호스트 부하도 재고(`probe`) 지금 단계를 보낸다(`stage N`):
     1단계~ 방역관 CPUQuota 25%·CPUWeight 5, 2단계~ 돌고 있는 정기 스캔(risk/deep) 중단(다음 타이머 때 게이트가 다시 판단),
     0단계면 60%로. 실시간 감시(malware-watch)는 멈추지 않는다. 봇이 멈춰 단계 파일이 10분 넘게 안 바뀌면 게이트가 호스트 PSI로 직접 판단.
