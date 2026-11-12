@@ -67,6 +67,10 @@ deploy/     systemd 유닛 파일
    배포 중에 `scripts/sync_env.py --apply`도 돌아서, `env.example`에 새로 생긴 변수를 `.env`에 기본값으로 채운다
    (기존 값은 그대로, `.env`에만 있던 변수도 맨 아래에 그대로, 원래 파일은 `.env.bak.날짜시각`으로 백업). 끄려면 `SYNC_ENV=0`.
    직접 돌릴 때: `venv/bin/python scripts/sync_env.py`(바뀔 내용만 보기) / `--apply`(적용) / `--check`(새 변수 있으면 종료 코드 1).
+   **안 쓰는 변수 정리**: `venv/bin/python scripts/prune_env.py`가 코드에서 더는 읽지 않는 `.env` 변수(와 겹쳐 적힌 변수의 앞엣것)를
+   이름만 보여 주고, `--apply`면 지운다(`.env.bak.날짜시각` 백업, 그 변수의 설명 주석도 같이). 남길 것은 `--keep 이름,이름`.
+   코드·설정 파일(*.py, *.sh, *.yaml …)에 이름이 나오는지로 가리고(테스트·문서·env.example만에 나오면 안 쓰는 것),
+   라이브러리가 스스로 읽는 변수(프록시, 시간대, LLM 키 등)는 남긴다. 지운 뒤 봇을 다시 시작한다.
 
 ## 시작하기
 ```bash
