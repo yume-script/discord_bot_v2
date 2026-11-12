@@ -11,6 +11,9 @@
                       apt-get install --only-upgrade plexmediaserver (서명 확인은 apt가 한다). 새벽 시간대에만.
                       저장소 설정은 plex01에서 한 번 직접: 예전 목록(plexmediaserver.list)을 지우고
                       curl -LsSf https://repo.plex.tv/scripts/setupRepo.sh | sudo bash  (묻고 답하는 스크립트라 봇이 대신 못 한다)
+  디스코드 봇(이 봇 자신) 이 서버(etc)의 봇 폴더   scripts/git_pull_deploy.sh (git pull + 의존성 + .env 동기화 + 서비스 다시 시작)
+                      시청·독서와 상관없어 재생 중이든 몇 시든 한다. 자기를 다시 켜야 하므로 배포 스크립트를 따로 띄워 놓고
+                      먼저 알린 뒤 꺼진다. 10분이 지나도 그대로 돌고 있으면(다시 켜지지 않았으면) 실패로 알린다.
 경로는 .env PORING_UPDATE_<KEY>_DIR로 바꾼다.
 
 흐름 (봇이 30분마다 step):
@@ -91,6 +94,14 @@ APPS = {
              "health": "sleep 10; systemctl is-active -q plexmediaserver",
              "hours": _hours("PORING_UPDATE_PLEX_HOURS", "4-8")},
 }
+# 이 봇 자신: 이 서버(etc)에서 돈다. 재생·시간대와 상관없이 (anytime), 로컬 수정이 있으면 하지 않는다
+APPS["discord_bot"] = {
+    "label": "디스코드 봇(discord_bot_v2)", "facility": "편집국 대표실 안내 창구", "company": worldcfg.BOOK,
+    "system": "chair", "affects": [], "kind": "self", "local": True, "anytime": True, "where": "etc",
+    "dir": os.getenv("PORING_UPDATE_DISCORD_BOT_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "run": "scripts/git_pull_deploy.sh", "notes": "", "health": "true", "hours": None,
+}
+SELF_WAIT_MIN = 10      # 배포를 띄운 뒤 이만큼 지나도 봇이 그대로면 실패로 본다
 REPO_SETUP = "plex01에서 한 번: sudo rm /etc/apt/sources.list.d/plexmediaserver.list; curl -LsSf https://repo.plex.tv/scripts/setupRepo.sh | sudo bash"
 # plex01에서 돌리는 확인 프로그램 (작은따옴표 없이 쓴다 - 셸에서 작은따옴표로 감싼다).
 # Plex 저장소만 새로 받고(apt-get update), 깔린 버전과 설치 후보를 본다. 변경 내용은 Plex 내려받기 목록에서 (못 받아도 됨)
@@ -155,6 +166,18 @@ def _save(st: dict) -> None:
 
 
 # ===================================================================== 확인 (원격)
+def _exec(app: dict, script: str, timeout: int) -> tuple[int, str]:
+    """그 앱이 있는 곳에서 실행: 이 서버(local)면 바로, 아니면 plex01로"""
+    if not app.get("local"):
+        return waitfree._remote(script, timeout)
+    import subprocess
+    try:
+        p = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return -1, f"명령 실패: {e!r}"[:200]
+    return p.returncode, (p.stdout + (("\n" + p.stderr.strip()[-300:]) if p.returncode and p.stderr.strip() else ""))
+
+
 def _cd(app: dict) -> str:
     d = app["dir"]
     return "cd " + (d.replace("~", "$HOME", 1) if d.startswith("~") else shlex.quote(d))
@@ -207,7 +230,7 @@ def check(key: str) -> dict | None:
               "echo VERSION $(head -c 200 VERSION 2>/dev/null | head -1); "
               "echo NEW_VERSION $(git show '@{u}':VERSION 2>/dev/null | head -1); "
               "echo @@log; git log --format='- %s' -n 15 'HEAD..@{u}' 2>/dev/null; " + notes)
-    rc, out = waitfree._remote(script, 90)
+    rc, out = _exec(app, script, 90)
     if rc != 0:
         print(f"[시설 정비] {key} 확인 실패: {out.strip()[:160]}")
         return None
@@ -230,6 +253,8 @@ def guard(key: str, now: datetime, info: dict, playing: int | None = -1, force: 
     app = APPS[key]
     if info.get("dirty") and not app.get("dirty_ok"):
         return f"로컬에서 고친 파일이 {info['dirty']}개 있어요 - 덮어쓰지 않게 손으로 업데이트해 주세요"
+    if app.get("anytime"):          # 시청·독서와 상관없는 것 (이 봇 자신) - 재생 중이든 몇 단계든 몇 시든
+        return None
     if playing == -1:
         playing = loadshed._viewing()[0]
     if playing:
@@ -248,6 +273,13 @@ def guard(key: str, now: datetime, info: dict, playing: int | None = -1, force: 
 # ===================================================================== 실행
 def run_update(key: str, info: dict) -> tuple[bool, str]:
     app = APPS[key]
+    if app.get("kind") == "self":
+        # 자기 자신: 배포 스크립트가 끝에 이 봇을 다시 켠다. 따로 띄워 놓고(잠깐 뒤 시작) 알릴 시간을 번다
+        log = f"/tmp/poring_update_{key}.log"
+        script = (f"{_cd(app)} && [ -x {shlex.quote(app['run'])} ] && "
+                  f"(setsid nohup sh -c 'sleep 20; exec {app['run']}' > {log} 2>&1 < /dev/null &) && echo started")
+        rc, out = _exec(app, script, 30)
+        return rc == 0 and "started" in out, (out.strip() or "배포 스크립트를 띄우지 못했습니다")[-400:]
     if app.get("kind") == "apt":
         pkg, log = shlex.quote(app["package"]), f"/tmp/poring_update_{key}.log"
         # 서명 확인은 apt가 한다. 설정 파일은 지금 것을 그대로 두고, 패키지가 서비스를 다시 켠다
@@ -299,6 +331,18 @@ def step(now: datetime | None = None, checker=None, decide=None, runner=None, pl
         if only and key != only:
             continue
         a = st.setdefault(key, {})
+        rs = a.get("restart")
+        if rs:      # 지난번에 자기 자신의 배포를 띄웠다: 다른 프로세스로 돌아왔으면 성공, 한참 지나도 그대로면 실패
+            if rs.get("pid") != os.getpid():
+                a.pop("restart", None)
+            elif rs.get("at", "") <= (now - timedelta(minutes=SELF_WAIT_MIN)).isoformat():
+                a.pop("restart", None)
+                events.append({"key": key, "who": rs.get("who") or _who(app["system"]), "kind": "failed", "story": "",
+                               "title": f"{app['facility']} 정비 실패",
+                               "text": f"⚠️ {app['label']} 업데이트 뒤 다시 켜지지 않았어요 ({rs.get('from')} → {rs.get('to')}) - "
+                                       f"`/tmp/poring_update_{key}.log`를 확인해 주세요"})
+            else:
+                continue
         if not only and a.get("checked_at", "") > (now - timedelta(minutes=CHECK_MIN - 1)).isoformat():
             continue
         a["checked_at"] = now.isoformat(timespec="minutes")
@@ -334,7 +378,13 @@ def step(now: datetime | None = None, checker=None, decide=None, runner=None, pl
         a["history"] = a["history"][-9:] + [{"at": now.isoformat(timespec="minutes"), "ok": ok,
                                              "from": _short(info["head"]), "to": _short(info["up"]), "who": who}]
         ver = info.get("new_version") or _short(info["up"])
-        if ok:
+        if ok and app.get("kind") == "self":
+            a["restart"] = {"pid": os.getpid(), "at": now.isoformat(timespec="minutes"), "who": who,
+                            "from": _short(info["head"]), "to": _short(info["up"])}
+            events.append({"key": key, "who": who, "kind": "updated", "title": f"{app['facility']} 정비",
+                           "story": pend["story"], "text": f"{app['label']} {info.get('version') or _short(info['head'])} → {ver} "
+                           f"받아서 다시 켜는 중 - 잠시 뒤 돌아옵니다 ({pend['reason']})"})
+        elif ok:
             events.append({"key": key, "who": who, "kind": "updated", "title": f"{app['facility']} 정비 완료",
                            "story": pend["story"], "text": f"{app['label']} {info.get('version') or _short(info['head'])} → {ver} "
                            f"업데이트하고 다시 켬 ({pend['reason']})"})
@@ -359,7 +409,8 @@ def notify(events: list[dict], now: datetime | None = None, post=None) -> None:
     mark = {"updated": "✅", "failed": "⚠️", "deferred": "⏸️"}
     for e in events:
         story = f"\n{e['story']}" if e.get("story") else ""
-        post(f"-# {NAME} · {now:%H:%M} · plex01 `{e['key']}` {mark.get(e['kind'], '')}\n**{e['who']}**: {e['text']}{story}")
+        where = (APPS.get(e["key"]) or {}).get("where", "plex01")
+        post(f"-# {NAME} · {now:%H:%M} · {where} `{e['key']}` {mark.get(e['kind'], '')}\n**{e['who']}**: {e['text']}{story}")
 
 
 def reflect(events: list[dict], react=None) -> None:
@@ -382,7 +433,7 @@ def reflect(events: list[dict], react=None) -> None:
 # ===================================================================== 도구
 def status_text() -> str:
     st = _state()
-    lines = ["■ 앱 업데이트 (plex01)"]
+    lines = ["■ 앱 업데이트 (plex01 · 봇은 etc)"]
     for key, app in APPS.items():
         a = st.get(key) or {}
         info = check(key)

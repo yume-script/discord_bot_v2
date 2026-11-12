@@ -164,3 +164,37 @@ def test_plex_update_goes_through_apt(monkeypatch, tmp_path):
     failed = updater.step(T0 + timedelta(days=2), playing=0, checker={"plex": dict(info, up="1.43.6.1-ccccccccc")}.get,
                           decide=lambda f: {"update": True}, runner=lambda k, i: (False, "E: broken"))
     assert failed[0]["kind"] == "failed" and "apt-get install plexmediaserver=1.43.4.10000-aaaaaaaaa" in failed[0]["text"]
+
+
+def test_bot_updates_itself_anytime_and_checks_it_came_back(monkeypatch, tmp_path):
+    """이 봇 자신: 재생 중·낮·높은 단계여도 한다. 배포를 따로 띄우고, 다시 켜졌는지는 다음 번에 본다"""
+    import os
+    from datetime import timedelta
+    app = updater.APPS["discord_bot"]
+    assert app["kind"] == "self" and app["local"] and app["anytime"] and app["run"] == "scripts/git_pull_deploy.sh"
+    assert os.path.isfile(os.path.join(app["dir"], app["run"]))                         # 기본 경로 = 이 저장소
+    _env(monkeypatch, tmp_path, stage=5, playing=3)
+    assert updater.guard("discord_bot", NOON, _info(), playing=3) is None                # 재생 3개 · 5단계 · 낮이어도
+    assert "로컬" in updater.guard("discord_bot", NOON, _info(dirty=2), playing=0)      # 로컬 수정이 있으면 안 한다
+    # 실행 명령: 이 서버에서, 따로 띄워서 (봇이 꺼져도 배포는 이어진다)
+    scripts = []
+    monkeypatch.setattr(updater, "_exec", lambda a, script, timeout: (scripts.append((a.get("local"), script)), (0, "started"))[1])
+    assert updater.run_update("discord_bot", _info()) == (True, "started")
+    assert scripts[0][0] is True and "setsid nohup" in scripts[0][1] and "scripts/git_pull_deploy.sh" in scripts[0][1]
+    # 흐름: 새 버전 -> 판단 -> 바로 실행 -> '다시 켜는 중' 알림
+    go = dict(checker={"discord_bot": _info()}.get, decide=lambda f: {"update": True, "reason": "수정뿐", "story": "안내 창구를 손봤다."},
+              runner=lambda k, i: (True, "started"), playing=3)
+    ev = updater.step(NOON, **go)
+    assert [e["kind"] for e in ev] == ["updated"] and "다시 켜는 중" in ev[0]["text"]
+    posts = []
+    updater.notify(ev, NOON, post=posts.append)
+    assert "etc `discord_bot`" in posts[0]
+    # 같은 프로세스로 5분 뒤: 아직 기다린다 / 10분 넘게 그대로면 실패 알림
+    assert updater.step(NOON + timedelta(minutes=5), **go) == []
+    late = updater.step(NOON + timedelta(minutes=12), checker={"discord_bot": _info(head="b" * 40, up="b" * 40)}.get, playing=0)
+    assert [e["kind"] for e in late] == ["failed"] and "다시 켜지지 않았어요" in late[0]["text"]
+    # 다시 켜진 경우(다른 프로세스): 조용히 지운다
+    updater.step(NOON + timedelta(hours=2), **go)
+    monkeypatch.setattr(updater.os, "getpid", lambda: 999999)
+    assert updater.step(NOON + timedelta(hours=3), checker={"discord_bot": _info(head="b" * 40, up="b" * 40)}.get) == []
+    assert "restart" not in updater._state()["discord_bot"]

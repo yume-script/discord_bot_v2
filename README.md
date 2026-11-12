@@ -307,7 +307,9 @@ python app.py
     Plex Media Server(apt로 깐 `plexmediaserver`만 - Plex의 새 apt 저장소 `https://repo.plex.tv/deb/`(`/etc/apt/sources.list.d/plex.list`)만
     `apt-get update` 하고 설치 후보가 깔린 것보다 높으면 `apt-get install --only-upgrade`, 04~08시(`PORING_UPDATE_PLEX_HOURS`)에만.
     저장소는 plex01에서 한 번 직접 바꿔 둔다: `sudo rm /etc/apt/sources.list.d/plexmediaserver.list` 후
-    `curl -LsSf https://repo.plex.tv/scripts/setupRepo.sh | sudo bash` (묻고 답하는 스크립트라 봇이 대신 못 함). 도커 Plex는 대상이 아니다). 새 버전을 처음 보면 그 시설 기관 담당 인물이 LLM으로
+    `curl -LsSf https://repo.plex.tv/scripts/setupRepo.sh | sudo bash` (묻고 답하는 스크립트라 봇이 대신 못 함). 도커 Plex는 대상이 아니다),
+    그리고 **이 봇 자신**(etc의 봇 폴더 - `scripts/git_pull_deploy.sh`를 따로 띄워 받아서 스스로 다시 켠다. 시청·독서와 상관없어 재생 중이든
+    몇 시든 하고, 로컬 수정이 있으면 하지 않는다. 10분 안에 다시 켜지지 않으면 ⚠️로 알림. 경로는 `PORING_UPDATE_DISCORD_BOT_DIR`). 새 버전을 처음 보면 그 시설 기관 담당 인물이 LLM으로
     받을지 정하고(.env/설정 추가·수동 마이그레이션·호환 깨짐이 적혀 있으면 미루고 알림) 이야기 한두 문장을 쓴다. 실행은 재생 없음 ·
     plex01 2단계 이하 · 로컬 수정 없음(북오아시스 제외 - update.sh가 처리) · 북오아시스는 04~08시일 때만. 끝나면 서비스/컨테이너가
     살아 있는지 확인하고 채널에 ✅/⚠️(되돌릴 커밋) + 거리 사건(관련 인물 바로 반응). 도구 `get_app_versions` / `update_app`(관리자).
