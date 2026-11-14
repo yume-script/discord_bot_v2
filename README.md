@@ -229,7 +229,8 @@ python app.py
   `PORING_ASSISTANT_MCP_TOKEN`이 있어야 켜진다.
 - **부하의 원인 가리기** (`poring_food/loadcause.py`): 서버 조절이 매분 CPU를 많이 쓰는 프로세스(`ps`)·컨테이너 이름을 낱말로 묶어
   왜 바쁜지를 나눈다 - 📚 웹툰·원고 내려받기(bookoasis_assistant) / 📥 Plex 영상 내려받기·입고(flaskfarm·rclone·라이브러리 스캔) /
-  🎬 영상 재생(Plex 변환·YM_PLAYER) / 🛡️ 보안 점검(ClamAV). 경보를 올릴 때 글에 원인과 그에 맞는 대처가 붙고, 그 원인을 맡은 담당자
+  📤 텔레그램 자동 올리기 인코딩(YM_PLAYER·짐꾼의 ffmpeg - 명령줄의 `-progress pipe:1`로 재생 변환과 가림, 가장 낮은 우선순위라
+  재생을 막지 않음) / 🎬 영상 재생(Plex 변환·YM_PLAYER) / 🛡️ 보안 점검(ClamAV). 경보를 올릴 때 글에 원인과 그에 맞는 대처가 붙고, 그 원인을 맡은 담당자
   (웹툰 = 원고 운반·서가, 입고 = 배급·업로드, 재생 = 시청 담당)가 바로 반응한다. 재생 중이면 원인을 만든 쪽을 한 단계 일찍(3단계부터),
   버벅임을 기다리지 않고 늦춘다(웹툰 → 원고 운반 봇, 입고 → 업로드 대역폭). 재생이 원인이면 재생은 건드리지 않는다.
   원인은 10분 동안 붙들어 깜빡이지 않게 하고, `PORING_LOADSHED_CAUSE_ACT=0`이면 이른 조치만 끈다.
@@ -308,7 +309,8 @@ python app.py
     경로가 다르면 etc `.env`에 `PORING_BOOKOASIS_ASSISTANT_DIR`(기본 /opt/bookoasis_assistant)·`PORING_BOOKOASIS_ASSISTANT_UNIT`.
   - **앱 자동 업데이트** (`poring_food/updater.py`, 🛠️ 시설 정비): 30분마다 plex01에서 `git fetch`로 새 버전을 본다 -
     북오아시스(`/root/docker/BookOasis_stable`, `./update.sh`, 새 CHANGELOG 줄), YM_PLAYER(`/mnt/ym_player`, `git pull --ff-only` +
-    `systemctl restart ym_player`), 짐꾼(`/mnt/bookoasis_assistant`, 같은 방식), 3D 서재(`/mnt/bookoasis_3d`, `git pull` + `venv/bin/pip install -r requirements.txt` +
+    `.venv/bin/pip install -r requirements.txt` + `systemctl restart ym_player`), 짐꾼(`/mnt/bookoasis_assistant`, 같은 방식 - pip는 `venv/bin/pip`,
+    2.53.0부터 텔레그램 자동 올리기가 aiohttp·telethon을 써서 pip 없이 다시 켜면 그 모듈이 꺼진 채로 돈다), 3D 서재(`/mnt/bookoasis_3d`, `git pull` + `venv/bin/pip install -r requirements.txt` +
     `systemctl restart bookoasis_3d`, 새 CHANGELOG 줄 - 경로는 `PORING_UPDATE_BOOKOASIS_3D_DIR`),
     Plex Media Server(apt로 깐 `plexmediaserver`만 - Plex의 새 apt 저장소 `https://repo.plex.tv/deb/`(`/etc/apt/sources.list.d/plex.list`)만
     `apt-get update` 하고 설치 후보가 깔린 것보다 높으면 `apt-get install --only-upgrade`, 04~08시(`PORING_UPDATE_PLEX_HOURS`)에만.

@@ -174,3 +174,13 @@ def test_council_reports_then_chair_orders(monkeypatch, tmp_path):
     assert loadshed.hold_council(up, now, council=lambda *a: {"decision": {}, "chair": "애순이"}) is None
     assert loadshed.directive("plex01", now) == {} and loadshed.council_event([up], now + timedelta(minutes=5)) is None
     assert loadshed.hold_council(up, now, council=lambda *a: 1 / 0) is None                                    # 회의가 터져도 조용히
+
+
+def test_upload_encoding_is_not_playback():
+    """텔레그램 자동 올리기 인코딩(ffmpeg -progress pipe:1)은 재생이 아니라 따로 (재생 변환 ffmpeg는 그대로 재생)"""
+    enc = "ionice -c 3 /usr/bin/ffmpeg -v error -y -nostats -progress pipe:1 -i /mnt/media/영화.mkv -map 0:v:0 -c:v libx264"
+    assert loadcause.kind_of(enc) == "encode"
+    assert loadcause.kind_of("/usr/bin/ffmpeg -ss 0 -i pipe:0 -c:v libx264 -f mp4 -movflags frag_keyframe+empty_moov pipe:1") == "playback"
+    r = loadcause.classify([(380.0, enc), (30.0, "Plex Transcoder -i x")], None, 1)
+    assert r["cause"] == "encode" and r["label"] == "텔레그램 자동 올리기 인코딩"
+    assert set(loadcause.stewards_of("encode")) == {"ym_player", "assistant"}
