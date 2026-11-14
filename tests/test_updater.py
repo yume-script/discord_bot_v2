@@ -198,3 +198,11 @@ def test_bot_updates_itself_anytime_and_checks_it_came_back(monkeypatch, tmp_pat
     monkeypatch.setattr(updater.os, "getpid", lambda: 999999)
     assert updater.step(NOON + timedelta(hours=3), checker={"discord_bot": _info(head="b" * 40, up="b" * 40)}.get) == []
     assert "restart" not in updater._state()["discord_bot"]
+
+
+def test_assistant_and_ym_player_install_new_packages():
+    """짐꾼(2.53.0~ 텔레그램 자동 올리기: aiohttp·telethon)과 YM_PLAYER도 업데이트할 때 pip로 새 패키지를 설치한다 (venv가 없으면 건너뜀)"""
+    for key, pip in (("bookoasis_assistant", "venv/bin/pip"), ("ym_player", ".venv/bin/pip")):
+        run = updater.APPS[key]["run"]
+        assert run.startswith("git pull --ff-only") and f"{pip} install -q -r requirements.txt" in run and f"[ ! -x {pip} ] ||" in run
+        assert run.endswith(f"systemctl restart {key}")

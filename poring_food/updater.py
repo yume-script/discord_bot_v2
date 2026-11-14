@@ -2,8 +2,8 @@
 
 대상 (plex01, 봇은 loadshed와 같은 ssh로 접속):
   북오아시스          ~/docker/BookOasis_stable  ./update.sh            (leeyj/BookOasis_stable - CHANGELOG.md)
-  YM_PLAYER           /mnt/ym_player             git pull + systemctl restart ym_player
-  짐꾼(bookoasis_assistant) /mnt/bookoasis_assistant git pull + systemctl restart bookoasis_assistant
+  YM_PLAYER           /mnt/ym_player             git pull + pip install -r requirements.txt + systemctl restart ym_player
+  짐꾼(bookoasis_assistant) /mnt/bookoasis_assistant git pull + pip install -r requirements.txt + systemctl restart bookoasis_assistant
   3D 서재(bookoasis_3d) /mnt/bookoasis_3d         git pull + pip install -r requirements.txt + systemctl restart bookoasis_3d
   Plex Media Server   (git 저장소가 아니다 - apt로 깐 plexmediaserver)
                       Plex의 새 apt 저장소(https://repo.plex.tv/deb/ public main, /etc/apt/sources.list.d/plex.list)를 쓴다.
@@ -68,13 +68,17 @@ APPS = {
     "ym_player": {"label": "YM_PLAYER", "facility": "영상팀 영사 모니터", "company": worldcfg.CINEMA,
                   "system": "ym_player", "affects": ["plex"],
                   "dir": os.getenv("PORING_UPDATE_YM_PLAYER_DIR", "/mnt/ym_player"),
-                  "run": "git pull --ff-only -q && systemctl restart ym_player", "notes": "",
+                  # 새 패키지가 생길 수 있어 pip도 같이 (.venv가 없으면 건너뜀)
+                  "run": ("git pull --ff-only -q && { [ ! -x .venv/bin/pip ] || .venv/bin/pip install -q -r requirements.txt; } "
+                          "&& systemctl restart ym_player"), "notes": "",
                   "health": "sleep 5; systemctl is-active -q ym_player",
                   "hours": _hours("PORING_UPDATE_YM_PLAYER_HOURS", "")},
     "bookoasis_assistant": {"label": "짐꾼(bookoasis_assistant)", "facility": "편집국 원고 운반 자동화 봇",
                             "company": worldcfg.BOOK, "system": "assistant", "affects": ["bookoasis"],
                             "dir": os.getenv("PORING_UPDATE_BOOKOASIS_ASSISTANT_DIR", waitfree.DIR),
-                            "run": "git pull --ff-only -q && systemctl restart bookoasis_assistant", "notes": "",
+                            # 2.53.0부터 텔레그램 자동 올리기가 aiohttp·telethon을 쓴다 - pip 없이 다시 켜면 그 모듈만 꺼진 채로 돈다
+                            "run": ("git pull --ff-only -q && { [ ! -x venv/bin/pip ] || venv/bin/pip install -q -r requirements.txt; } "
+                                    "&& systemctl restart bookoasis_assistant"), "notes": "",
                             "health": "sleep 5; systemctl is-active -q bookoasis_assistant",
                             "hours": _hours("PORING_UPDATE_BOOKOASIS_ASSISTANT_HOURS", "")},
     # 3D 서재: 영상 재생·책 읽기 경로가 아니라 시간대 제한 없음. 새 의존성이 생길 수 있어 pip도 같이 (venv가 없으면 건너뜀)

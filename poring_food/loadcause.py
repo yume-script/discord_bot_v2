@@ -4,6 +4,8 @@
 원인 (CAUSES):
   webtoon   웹툰·원고 내려받기 (bookoasis_assistant의 웹툰 다운로더·드라이브 감시)
   download  Plex 영상 내려받기·입고 (flaskfarm plex_mate/GDS, rclone 올리기·옮기기, 내려받기 프로그램, Plex 라이브러리 스캔)
+  encode    텔레그램 자동 올리기 인코딩 (YM_PLAYER·짐꾼의 Plex·rclone → 텔레그램 채널 - ffmpeg로 720p mp4 만들기. 가장 낮은 우선순위라
+            재생을 막지 않고, 재생용 변환이 돌면 스스로 멈춘다). 재생 중 ffmpeg와는 명령줄의 `-progress pipe:1`로 가린다
   playback  영상 재생 (Plex 변환, YM_PLAYER/SHYNI 중계 - 보는 사람이 많다)
   scan      보안 점검 (ClamAV 바이러스 검사)
   other     그 밖 / 알 수 없음
@@ -27,6 +29,9 @@ def _words(env: str, default: str) -> tuple[str, ...]:
 
 
 KEYWORDS = {
+    # 자동 올리기 인코딩만 ffmpeg에 "-progress pipe:1"을 붙인다 (YM_PLAYER plex_to_tg.py, 짐꾼 tgup/ 같은 코드). 재생 변환에는 없다.
+    # 호스트 top처럼 프로세스 이름만 보이면 가릴 수 없어 그냥 ffmpeg(재생)로 센다
+    "encode": _words("PORING_LOADCAUSE_ENCODE", "-progress pipe:1,plex_to_tg_tmp"),
     "webtoon": _words("PORING_LOADCAUSE_WEBTOON", "bookoasis_assistant,gdrive_watch,webtoon,wtm,gdw"),
     "playback": _words("PORING_LOADCAUSE_PLAYBACK", "plex transcoder,transcoder,ym_player,ym-player,ymplayer,shyni,ffmpeg,tautulli"),
     "download": _words("PORING_LOADCAUSE_DOWNLOAD",
@@ -34,7 +39,8 @@ KEYWORDS = {
                        "plex media scanner,media scanner,gds"),
     "scan": _words("PORING_LOADCAUSE_SCAN", "clamscan,clamd,clamav,freshclam"),
 }
-ORDER = ("webtoon", "playback", "download", "scan")   # 낱말이 겹치면 앞의 것 (plex transcoder는 재생, plex media scanner는 입고)
+ORDER = ("encode", "webtoon", "playback", "download", "scan")   # 낱말이 겹치면 앞의 것 (plex transcoder는 재생, plex media scanner는 입고,
+#                                                                올리기 인코딩 ffmpeg는 재생보다 먼저)
 
 # 이야기(출판사 세계)와 조치 안내. steward = stewards.SYSTEMS의 키 (그 원인을 맡은 사람들이 바로 반응한다)
 CAUSES = {
@@ -46,6 +52,10 @@ CAUSES = {
                  "story": "원인은 영상팀 새 영상 입고(내려받기·옮기기·서가 정리)가 몰린 것",
                  "act": "올리는 속도를 낮추고 입고를 차례로 나눈다. 재생은 그대로 지킨다.",
                  "stewards": ("ff", "upload")},
+    "encode": {"label": "텔레그램 자동 올리기 인코딩", "mark": "📤",
+               "story": "원인은 영상팀·편집국의 텔레그램 자동 올리기(새 영상을 720p로 다시 만드는 일)",
+               "act": "인코딩은 이미 가장 낮은 우선순위라 시청을 밀어내지 않는다. 오래가면 올리기 시간대를 새벽으로 옮기거나 그래픽 카드 인코더를 쓴다.",
+               "stewards": ("ym_player", "assistant")},
     "playback": {"label": "영상 재생(시청)", "mark": "🎬",
                  "story": "원인은 시청이 몰린 것",
                  "act": "재생은 건드리지 않는다. 대신 내려받기·정비 같은 다른 일을 뒤로 미룬다.",
