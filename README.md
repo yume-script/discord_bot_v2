@@ -261,9 +261,14 @@ python app.py
     4단계~ rclone 업로드만 `5M:off` 제한(`PORING_LOADSHED_RCLONE_RC`가 있을 때). 5단계나 95% 초과면 채널에 ⚠️. 복구는 조치의 역순.
   - **시청 현황**: 대화로 "지금 몇 명 보고 있어?"라고 물으면 아메하나/애순이가 `get_watching_now` 도구로 답한다(누구나).
     `/시청현황`(관리자)도 같은 내용 - 지금 재생 중인 수만 (Plex 종류별 + YM_PLAYER 텔레그램/IPTV 중계, 제목·계정 없음)과 지금 단계.
-  - **재생 여부**: Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER `/api/activity`(텔레그램/IPTV·라디오 중계 스트림 수, 숫자만).
+  - **재생 여부**: Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER `/api/activity`(텔레그램/IPTV·라디오 중계·팟캐스트 스트림 수, 숫자만).
     YM_PLAYER는 `scripts/patches/ym_player-activity.patch`를 적용하고 `MP_ACTIVITY_TOKEN`을 정한 뒤, etc `.env`에
     `PORING_YMPLAYER_URL=http://<plex01>:8899` / `PORING_YMPLAYER_TOKEN=<같은 값>`. 원본 주소로 바로 트는 IPTV는 안 보인다.
+  - **서비스 응답 확인** (`poring_food/uptime.py`, `PORING_UPTIME`, 기본 켬): 부하나 컨테이너 상태와 따로, 사용자가 쓰는 곳이
+    **지금 응답하는지** 매분 직접 묻는다 - YM_PLAYER(`PORING_YMPLAYER_URL` `/api/auth/state`), Plex(`PLEX_URL` `/identity`),
+    북오아시스(`PORING_BOOKOASIS_URL`), 북오아시스 어시스턴트(`PORING_ASSISTANT_URL` `/healthz`), 그 밖(`PORING_UPTIME_EXTRA="IPTV=http://…"`).
+    3번 연속(약 3분) 응답이 없거나 5xx면 채널(🛰️ 모니터링)과 관리자 카톡방에 ⛔, 계속이면 3시간마다 다시, 돌아오면 ✅(몇 분 멈췄는지).
+    5분째 5초 넘게 걸리면 🐢 한 번. 주소가 없는 서비스는 확인하지 않는다. `/서비스상태`(관리자)로 지금 결과(응답 시간)를 본다.
   - **부하 대책 회의** (`PORING_LOADSHED_COUNCIL`, 기본 켬): 경보가 2단계(`PORING_LOADSHED_COUNCIL_STAGE`) 이상으로 오르면 30분에 한 번,
     담당자들이 자기 시설이 부하에 얼마나 원인인지 숫자로 **보고**하고(서버 담당 권지아 - 호스트 전체에서 CPU를 쓰는 곳, 원인을 맡은 담당,
     시청 담당 소라) 대표 **애순이가 지시**한다: 원인을 만든 쪽(웹툰 내려받기 → 원고 운반 봇, 영상 입고 → 업로드)을 지금 늦출지, 지켜볼지.

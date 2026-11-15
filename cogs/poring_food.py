@@ -76,6 +76,7 @@ class PoringFood(commands.Cog):
             self.plex_watch.start()
             self.book_watch.start()
             self.load_guard.start()
+            self.uptime_watch.start()
             self.gdw_queue_watch.start()
             self.waitfree_pilot.start()
             self.app_updater.start()
@@ -96,6 +97,7 @@ class PoringFood(commands.Cog):
         self.plex_watch.cancel()
         self.book_watch.cancel()
         self.load_guard.cancel()
+        self.uptime_watch.cancel()
         self.gdw_queue_watch.cancel()
         self.waitfree_pilot.cancel()
         self.app_updater.cancel()
@@ -243,6 +245,20 @@ class PoringFood(commands.Cog):
             ev = None
         if ev and not getattr(self, "_load_council_task", None):
             self._load_council_task = asyncio.create_task(self._load_council(ev))
+
+    @tasks.loop(seconds=60)
+    async def uptime_watch(self) -> None:
+        """서비스 응답 확인(poring_food/uptime.py), 매분: YM_PLAYER·Plex·북오아시스·어시스턴트가 지금 응답하는지.
+        서버 조절과 따로 돈다 (부하 측정이 느려지거나 꺼져 있어도 응답 확인은 계속)."""
+        from poring_food import uptime
+        if not uptime.ENABLED:
+            return
+        try:
+            msgs = await asyncio.to_thread(uptime.step)
+            if msgs:
+                await asyncio.to_thread(uptime.notify, msgs)
+        except Exception:  # noqa: BLE001
+            log.exception("포링푸드 서비스 응답 확인 실패")
 
     async def _load_council(self, ev: dict) -> None:
         try:
@@ -773,6 +789,15 @@ class PoringFood(commands.Cog):
         from poring_food import loadshed
         text = await asyncio.to_thread(loadshed.watching_text)
         await interaction.followup.send(text[:1990], ephemeral=True)
+
+    @app_commands.command(name="서비스상태", description="[관리자] YM_PLAYER·Plex·북오아시스가 지금 응답하는지 (매분 확인한 결과)")
+    async def uptime_view(self, interaction: Interaction):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
+            return
+        from poring_food import uptime
+        text = await asyncio.to_thread(uptime.status_text)
+        await interaction.response.send_message(text[:1990], ephemeral=True)
 
     @app_commands.command(name="포링푸드명단", description="[관리자] 지금 스스로 사는 인물들의 소속/자리/맡은 일/지금 하는 일을 봅니다")
     @app_commands.describe(소속="편집국 / 영상팀 / 거리 (비우면 전부)")
