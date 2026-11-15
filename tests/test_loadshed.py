@@ -308,8 +308,21 @@ def test_watching_counts_only_no_titles(monkeypatch):
     assert "비밀 제목" not in text and "단계 기준값(재생 중): 1~5단계 = 65/70/75/85/90%" in text
     none = loadshed.watching_text(T0, {"plex": None, "plex_kinds": {}, "ym": None, "total": None})
     assert "못 받았어요" in none
-    assert loadshed.ymplayer_activity(lambda: {"by": {"telegram": "3"}}) == {"plex": 0, "telegram": 3, "live": 0,
+    assert loadshed.ymplayer_activity(lambda: {"by": {"telegram": "3"}}) == {"plex": 0, "telegram": 3, "live": 0, "podcast": 0,
                                                                             "stalls": 0, "retries": 0}
+
+
+def test_ymplayer_podcast_counts_as_playing(monkeypatch):
+    """YM_PLAYER가 중계하는 팟캐스트 듣기도 재생 (끊김/재연결도 같이 센다)"""
+    monkeypatch.setattr(loadshed, "YMPLAYER_URL", "http://ym:8899")
+    monkeypatch.setattr(loadshed, "YMPLAYER_TOKEN", "t")
+    body = {"by": {"plex": 0, "telegram": 0, "live": 0, "podcast": 2}, "stalls": {"podcast": 1}, "retries": {"podcast": 1}}
+    assert loadshed.ymplayer_playing(lambda: body) == 2
+    act = loadshed.ymplayer_activity(lambda: body)
+    assert act["podcast"] == 2 and act["stalls"] == 1 and act["retries"] == 1
+    w = loadshed.watching([], act)
+    assert w["total"] == 2
+    assert "팟캐스트 2" in loadshed.watching_text(T0, w)
 
 
 def test_chat_can_ask_watching_now(monkeypatch):
