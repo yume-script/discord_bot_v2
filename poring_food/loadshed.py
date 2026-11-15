@@ -22,7 +22,7 @@
   한 단계씩 올린다(PORING_LOADSHED_PLAY_AVG_MIN / _PLAY_UP_MIN) - 시청이 먼저라 5분 기다리지 않는다. 기준은 재생 여부로 두 벌:
   재생 없음 70/75/80/93/96% = 1~5단계 (PORING_LOADSHED_STAGES) - 아무도 안 볼 땐 짐꾼을 93%까지 그대로 둔다,
   재생 중   65/70/75/85/90% = 1~5단계 (PORING_LOADSHED_STAGES_PLAY) - 볼 때는 시청이 먼저라 더 일찍 양보.
-  재생 여부는 Plex 세션 + YM_PLAYER /api/activity(텔레그램/IPTV·라디오 중계, PORING_YMPLAYER_URL/_TOKEN)로 본다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
+  재생 여부는 Plex 세션 + YM_PLAYER /api/activity(텔레그램/IPTV·라디오 중계/팟캐스트, PORING_YMPLAYER_URL/_TOKEN)로 본다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
 - 한 번에 한 단계씩 올리고(5분 간격, 재생 중 1분), 평균이 5단계 기준(96%, 재생 중 90%) 이상이면 바로 5단계.
 - 내릴 때는 10분 평균이 지금 단계 기준보다 3%p 낮아야 한 단계 내린다 (히스테리시스).
 
@@ -297,8 +297,17 @@ YMPLAYER_URL = os.getenv("PORING_YMPLAYER_URL", "").strip().rstrip("/")   # 예:
 YMPLAYER_TOKEN = os.getenv("PORING_YMPLAYER_TOKEN", "").strip()            # ym_player의 MP_ACTIVITY_TOKEN
 
 
+YM_KINDS = ("plex", "telegram", "live", "podcast")
+
+
+def ym_streams(act: dict | None) -> int:
+    """YM_PLAYER 재생 중 Plex 세션으로는 안 잡히는 것: 텔레그램 + IPTV·라디오 + 팟캐스트 (Plex는 Plex 세션으로 센다)"""
+    act = act or {}
+    return act.get("telegram", 0) + act.get("live", 0) + act.get("podcast", 0)
+
+
 def ymplayer_activity(get=None) -> dict | None:
-    """YM_PLAYER /api/activity -> {"plex", "telegram", "live"(재생 수), "stalls", "retries"(최근 5분 끊김/재연결 합계)} (숫자만).
+    """YM_PLAYER /api/activity -> {"plex", "telegram", "live", "podcast"(재생 수), "stalls", "retries"(최근 5분 끊김/재연결 합계)} (숫자만).
     안 켰거나 못 받으면 None."""
     if not (YMPLAYER_URL and YMPLAYER_TOKEN):
         return None
@@ -312,21 +321,22 @@ def ymplayer_activity(get=None) -> dict | None:
         by = (body or {}).get("by") if isinstance(body, dict) else None
         if not isinstance(by, dict):
             return None
-        out = {k: int(by.get(k, 0) or 0) for k in ("plex", "telegram", "live")}
-        # ym_player 1.1.52~: 최근 window초(5분) 동안 끊김(stalls)/재연결(retries) 횟수 - 종류별 {plex, telegram, live}
+        # podcast: YM_PLAYER가 중계하는 팟캐스트 듣기 (예전 ym_player는 이 키가 없어 0)
+        out = {k: int(by.get(k, 0) or 0) for k in YM_KINDS}
+        # ym_player 1.1.52~: 최근 window초(5분) 동안 끊김(stalls)/재연결(retries) 횟수 - 종류별 {plex, telegram, live, podcast}
         for key in ("stalls", "retries"):
             got = body.get(key) if isinstance(body.get(key), dict) else {}
-            out[key] = sum(int(got.get(k, 0) or 0) for k in ("plex", "telegram", "live"))
+            out[key] = sum(int(got.get(k, 0) or 0) for k in YM_KINDS)
         return out
     except Exception:  # noqa: BLE001
         return None
 
 
 def ymplayer_playing(get=None) -> int | None:
-    """YM_PLAYER가 지금 중계 중인 텔레그램/IPTV·라디오 스트림 수. 안 켰거나 못 받으면 None.
-    Plex 재생은 Plex 세션으로도 잡히니 여기선 텔레그램/라이브만 더한다 (두 번 세지 않게)."""
+    """YM_PLAYER가 지금 중계 중인 텔레그램/IPTV·라디오/팟캐스트 스트림 수. 안 켰거나 못 받으면 None.
+    Plex 재생은 Plex 세션으로도 잡히니 여기선 그 밖의 것만 더한다 (두 번 세지 않게)."""
     by = ymplayer_activity(get)
-    return None if by is None else by["telegram"] + by["live"]
+    return None if by is None else ym_streams(by)
 
 
 _PLEX_KIND = {"movie": "영화", "episode": "드라마/시리즈", "track": "음악", "clip": "영상"}
@@ -350,7 +360,7 @@ def watching(plex_sessions=None, ym=None) -> dict:
     plex = len(plex_sessions) if plex_sessions is not None else None
     from . import plex_api
     struggle = sum(1 for x in plex_sessions or [] if plex_api.struggling(x))
-    total = None if plex is None and ym is None else (plex or 0) + ((ym or {}).get("telegram", 0) + (ym or {}).get("live", 0))
+    total = None if plex is None and ym is None else (plex or 0) + ym_streams(ym)
     return {"plex": plex, "plex_kinds": kinds, "ym": ym, "total": total, "struggle": struggle}
 
 
@@ -378,6 +388,7 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
     if w["ym"] is not None:
         bad = w["ym"].get("stalls", 0) + w["ym"].get("retries", 0)
         lines.append(f"• YM_PLAYER: 텔레그램 {w['ym']['telegram']} · IPTV/라디오 중계 {w['ym']['live']}"
+                     + (f" · 팟캐스트 {w['ym']['podcast']}" if w["ym"].get("podcast") else "")
                      + (f" · ⚠️ 최근 5분 끊김 {w['ym'].get('stalls', 0)} / 재연결 {w['ym'].get('retries', 0)}" if bad else ""))
     st, load = stage(now), max_cpu(now)
     lines.append(f"-# 서버 경보 {st}단계" + (f" (지금 부하 지수 {load:g}%)" if load is not None else "")
@@ -402,7 +413,7 @@ def _viewing() -> tuple[int | None, int | None]:
     except Exception:  # noqa: BLE001
         plex = None
     act = ymplayer_activity()
-    ym = None if act is None else act["telegram"] + act["live"]
+    ym = None if act is None else ym_streams(act)
     if act is not None and (act.get("stalls") or act.get("retries")):   # YM_PLAYER 재생기가 알린 끊김/재연결 (최근 5분)
         struggle = (struggle or 0) + act.get("stalls", 0) + act.get("retries", 0)
     if plex is None and ym is None:
