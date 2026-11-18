@@ -50,3 +50,43 @@ def test_rotation_keeps_quotas_and_fixed(fake_llm, monkeypatch):
     names = {a["name"] for a in after}
     assert {"애순이", "소라", "윤채아", "이나연", "구영철"} <= names
     assert rotation.tick(agents._base_agents(), agents.MAX_AGENTS) == []  # 같은 날 두 번은 안 바꾼다
+
+
+def test_newcomers_get_modern_korean_names(fake_llm):
+    """애니메이션 인물이 이사 와도 이야기에는 지금의 한국 이름으로 (작품 속 이름은 motif에만)"""
+    from poring_food import newcomers
+    fake_llm(lambda system, user: {"drama": "전생했더니 슬라임이었던 건에 대하여", "people": [
+        {"name": "베르도라", "rank": "시설 수리 기사", "outer_persona": "호탕함", "inner_truth": "외로움", "key_behavior": "큰소리"},
+        {"name": "한지우", "motif": "디아블로", "rank": "비서", "outer_persona": "깍듯함", "inner_truth": "충성", "key_behavior": "미소"}]})
+    res = newcomers.move_in(set())
+    names = [r["name"] for r in res["added"]]
+    assert "베르도라" not in names and "한지우" in names
+    assert all(newcomers.korean_name(n) for n in names)
+    assert {r["motif"] for r in res["added"]} == {"베르도라", "디아블로"}
+
+
+def test_v4_renames_old_newcomers_and_fantasy_words():
+    import json
+    import os
+    from poring_food import newcomers, rename_migration
+    from poring_food.config import STATE_DIR
+    with open(newcomers.NEWCOMERS_PATH, "w", encoding="utf-8") as f:
+        json.dump({"residents": [{"name": "베르도라", "rank": "기사"}, {"name": "위즈", "rank": "가게 주인"}],
+                   "moved_out": [{"name": "카이진"}]}, f, ensure_ascii=False)
+    with open(os.path.join(STATE_DIR, "threads.json"), "w", encoding="utf-8") as f:
+        json.dump([{"topic": "위즈을(를) 둘러싼 일: 별빛 환영극장에 상회 광고판, 마탑 개입", "who": "위즈덤 클럽"}], f, ensure_ascii=False)
+    with open(os.path.join(STATE_DIR, "chronicle.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps({"text": "베르도라와 디아블로가 거리의 새로운 인물로 등장했다. 카이진의 대장간"}, ensure_ascii=False) + "\n")
+    rename_migration._migrate_v4()
+    res = newcomers._load()
+    new_names = [r["name"] for r in res["residents"]] + [r["name"] for r in res["moved_out"]]
+    assert all(newcomers.korean_name(n) for n in new_names)
+    assert [r["motif"] for r in res["residents"]] == ["베르도라", "위즈"]
+    threads = open(os.path.join(STATE_DIR, "threads.json"), encoding="utf-8").read()
+    assert "위즈을" not in threads and new_names[1] + "을" in threads
+    assert "위즈덤 클럽" in threads                       # 다른 낱말 속 글자는 그대로
+    assert "ZEEPS 영상콘텐츠팀 시사회장" in threads and "마탑" not in threads and "상가 광고판" in threads
+    chron = open(os.path.join(STATE_DIR, "chronicle.jsonl"), encoding="utf-8").read()
+    assert "베르도라" not in chron and new_names[0] in chron and "디아블로" in chron   # 이사 기록이 없는 이름은 그대로
+    rename_migration._migrate_v4()                         # 한 번만
+    assert os.path.exists(rename_migration.MARKER_V4)
