@@ -224,8 +224,13 @@ def reading(post: dict, data: dict | None = None) -> dict | None:
         return None
     if metric == "cpu" and "cpu" in fac:
         v = fac["cpu"]
-        return {"value": v, "text": f"지금 서버 부하 {v:g}%",
-                "alert": "서버 과부하 - 메인 서버가 뜨겁게 달아오름" if v >= CPU_OVERLOAD else ""}
+        idle = _nobody_watching()
+        if idle:   # 보는 사람(재생)이 없으면 CPU를 다 써서 입고·인코딩을 빨리 끝내는 게 맞다 - 과부하가 아니다
+            return {"value": v, "idle": True, "alert": "",
+                    "text": f"지금 서버 부하 {v:g}% (보는 사람 없음 - "
+                            + ("CPU를 입고·인코딩에 몰아 쓰는 중, 정상)" if v >= CPU_OVERLOAD else "한가함)")}
+        return {"value": v, "idle": False, "text": f"지금 서버 부하 {v:g}%" + (" (보는 사람 있음)" if idle is False else ""),
+                "alert": "서버 과부하 - 시청 중인데 메인 서버가 뜨겁게 달아오름" if v >= CPU_OVERLOAD else ""}
     if metric == "disk" and "disk" in fac:
         v = fac["disk"]
         return {"value": v, "text": f"지금 물류창고 적재율 {v:g}% (낮을수록 여유)",
@@ -330,6 +335,16 @@ def _desk_reading(desk: dict) -> dict | None:
     return {"value": handled, "score": score, "vip": vip, "backlog": backlog, "text": text, "alert": alert}
 
 
+def _nobody_watching() -> bool | None:
+    """True: 아무도 안 봄(재생 0) / False: 보는 중 / None: 모름 (서버 조절이 매분 잰 재생 수)"""
+    try:
+        from . import loadshed
+        n = loadshed.watchers()
+    except Exception:  # noqa: BLE001
+        return None
+    return None if n is None else n == 0
+
+
 def _hist_mean(data: dict, post_id: str, today: str) -> float | None:
     """수준 지표의 지난 기록 평균 (최근 7일, 오늘 제외)."""
     vals = []
@@ -353,8 +368,12 @@ def _score(post: dict, rec: dict, hist: float | None) -> int:
     if kind == "level":
         mean = rec["sum"] / rec["n"]
         s = mean / hist * 100 if hist else (100 if mean > 0 else 50)
-        if post["metric"] == "cpu" and mean >= CPU_OVERLOAD:
-            s -= (mean - CPU_OVERLOAD) * 5  # 과부하는 실적이 아니라 사고
+        if post["metric"] == "cpu":
+            # 과부하는 실적이 아니라 사고 - 단 보는 사람이 있을 때만 (아무도 안 볼 때 CPU를 다 쓰는 건 일을 빨리 끝내는 것)
+            over = rec.get("over_play")
+            if over is None:   # 예전 기록 (재생 여부를 안 남김)
+                over = max(0.0, mean - CPU_OVERLOAD) * rec["n"]
+            s -= over / rec["n"] * 5
         return int(max(0, min(SCORE_CAP, s)))
     if kind == "cost":  # 평소보다 적게 쓸수록 높다 (하루 마지막 기록이 그날 점수)
         avg = rec.get("avg")
@@ -392,6 +411,8 @@ def record(now: datetime | None = None, desk_staff: dict | None = None) -> None:
                    company=post["company"])
         if post["kind"] in ("count", "cost"):
             rec.update(avg=x.get("avg"), saturated=x.get("saturated", False))
+        if post["metric"] == "cpu":   # 보는 사람이 있을 때 넘친 만큼만 감점용으로 모은다
+            rec["over_play"] = rec.get("over_play", 0.0) + (0.0 if x.get("idle") else max(0.0, v - CPU_OVERLOAD))
         rec["score"] = x["score"] if post["kind"] in ("desk", "arcade") else _score(post, rec, _hist_mean(data, post["id"], today))
         rows[post["id"]] = rec
     cutoff = (now - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")

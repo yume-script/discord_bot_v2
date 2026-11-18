@@ -270,3 +270,53 @@ def build_prompt_block(report: dict) -> str:
         "1~2문장 정도 자연스럽게 섞어라(귀찮아하거나, 읽어보고 싶어하거나). 제목과 숫자는 주어진 "
         "그대로만 쓰고 없는 책 제목이나 수치를 지어내지 마라.\n"
     )
+
+
+# ===================================================================== 지금 읽는 사람 (서버 부하 조절용)
+# BookOasis MCP의 get_active_users (최근 N분 안에 읽기·듣기·보기 진행을 저장한 사용자 수, 숫자만).
+# 서버 조절(loadshed)이 매분 '사람이 쓰고 있는지'를 볼 때 영상 재생 수와 함께 쓴다.
+# 한 번 묻는 데 SSH + docker exec가 들어 몇 초 걸리므로 READERS_EVERY_SEC마다만 묻고 그 사이엔 기억한 값을 쓴다.
+# 그 도구가 없는 BookOasis(아직 안 넣음)거나 못 받으면 None - 그땐 '아무도 안 읽음'으로 단정하지 않는다.
+READERS_EVERY_SEC = int(os.getenv("BOOKOASIS_READERS_EVERY_SEC", "120"))
+READERS_WINDOW_MIN = int(os.getenv("BOOKOASIS_READERS_WINDOW_MIN", "10"))
+READERS_TIMEOUT_SEC = int(os.getenv("BOOKOASIS_READERS_TIMEOUT_SEC", "25"))
+READERS_FAIL_BACKOFF_SEC = 600      # 못 받았으면(도구 없음·연결 실패) 10분 뒤에 다시
+READERS_MAX_AGE_SEC = 600           # 이보다 오래된 값은 모르는 것으로
+_readers = {"at": 0.0, "tried": 0.0, "value": None}
+
+
+async def _readers_async() -> dict | None:
+    from ai.mcp_manager import server_session
+    async with server_session(BOOKOASIS_MCP_SERVER) as session:
+        names = {t.name for t in (await session.list_tools()).tools}
+        if "get_active_users" not in names:
+            return None
+        res = await session.call_tool("get_active_users", {"minutes": READERS_WINDOW_MIN})
+        if getattr(res, "isError", False):
+            return None
+        return _parse_tool_result(res)
+
+
+def active_readers(now: float | None = None, fetch=None) -> dict | None:
+    """[스레드에서] {"reading"(책·웹툰·TTS), "active"(오디오북·영상 포함 전체), "by_kind"} 또는 None(모름)."""
+    import time
+    now = time.time() if now is None else now
+    if not BOOKOASIS_ENABLED:
+        return None
+    fresh = _readers["value"] is not None and now - _readers["at"] < READERS_EVERY_SEC
+    backing_off = _readers["value"] is None and now - _readers["tried"] < READERS_FAIL_BACKOFF_SEC and _readers["tried"]
+    if not fresh and not backing_off:
+        _readers["tried"] = now
+        try:
+            got = fetch() if fetch else runtime.run_on_bot_loop(_readers_async(), timeout=READERS_TIMEOUT_SEC)
+        except Exception as e:  # noqa: BLE001
+            print(f"[북오아시스] 지금 읽는 사람 수를 못 받음: {_root_cause(e)}")
+            got = None
+        if isinstance(got, dict) and "active_users" in got:
+            _readers.update(at=now, value={"reading": int(got.get("reading") or 0), "active": int(got.get("active_users") or 0),
+                                           "by_kind": got.get("by_kind") or {}})
+        elif _readers["value"] is not None and now - _readers["at"] >= READERS_MAX_AGE_SEC:
+            _readers["value"] = None
+    if _readers["value"] is not None and now - _readers["at"] < READERS_MAX_AGE_SEC:
+        return dict(_readers["value"])
+    return None
