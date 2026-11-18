@@ -97,7 +97,9 @@ def gather(now: datetime | None = None) -> dict:
     now = now or now_kst()
     fac = dict(signals.live_value("facility_numbers") or {})
     both = loadshed.max_cpu(now)    # 봇 서버(etc)와 Plex 서버(plex01) 중 높은 쪽
-    if both is not None and (fac.get("cpu") is None or both > fac["cpu"]):
+    if loadshed.watchers(now) == 0 and both is not None:
+        fac["cpu"] = both               # 아무도 안 봄: CPU를 다 쓰는 건 일하는 중이지 위험이 아니다 (메모리·I/O만 본 지수)
+    elif both is not None and (fac.get("cpu") is None or both > fac["cpu"]):
         fac["cpu"] = both
     towers = len([n for n in (facilities._load().get("down_since") or {}) if n in facilities.FACILITIES])
     return {"cpu": fac.get("cpu"), "down": int(fac.get("down") or 0), "uptime_days": fac.get("uptime_days"),

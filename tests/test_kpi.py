@@ -164,3 +164,17 @@ def test_facility_numbers():
     out = mcp_signals.facility_numbers(status, services)
     assert out["cpu"] == 42.5 and out["disk"] == 81 and out["down"] == 1 and int(out["uptime_days"]) == 3
     assert mcp_signals.facility_numbers({}, None) == {}
+
+
+def test_cpu_post_no_alert_or_penalty_when_nobody_watches(monkeypatch):
+    post = next(p for p in kpi.POSTS if p["metric"] == "cpu")
+    monkeypatch.setattr(kpi.signals, "live_value", lambda k: {"cpu": 100.0})
+    monkeypatch.setattr(kpi, "_nobody_watching", lambda: True)
+    x = kpi.reading(post)
+    assert not x["alert"] and "보는 사람 없음" in x["text"] and x["idle"]
+    rec = {"sum": 100.0, "n": 1, "last": 100.0, "over_play": 0.0}
+    assert kpi._score(post, rec, 50.0) == 200                 # 다 써서 일함 - 깎지 않는다
+    monkeypatch.setattr(kpi, "_nobody_watching", lambda: False)
+    x = kpi.reading(post)
+    assert x["alert"] and not x["idle"]
+    assert kpi._score(post, {"sum": 100.0, "n": 1, "last": 100.0, "over_play": 20.0}, 100.0) == 0   # 시청 중 과부하는 사고

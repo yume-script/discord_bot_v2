@@ -3,9 +3,11 @@
 
 목표 위계 (절대 바뀌지 않는다):
  1) 영상 재생(Plex/YM_PLAYER/SHYNI)과 책·웹툰 열람(북오아시스)이 끊기거나 느려지지 않는다 - 절대 목표.
- 2) 부하 지수를 95% 아래로 - 1번을 지키는 안전선.
- 3) 자료(웹툰/책)를 최대한 많이 DB에 올린다 - 1·2번이 허락하는 만큼만. 그래서 짐꾼(bookoasis_assistant)은 끄지 않고
-    4단계(재생 없음 93%, 재생 중 85%)부터 늦추기만 한다(진행 중인 회차는 끝까지 올라가게).
+ 2) 보는 사람이 있을 때만: 부하 지수를 95% 아래로 - 1번을 지키는 안전선.
+ 3) 자료(웹툰/책)를 최대한 많이 DB에 올리고 영상 인코딩·입고를 최대한 빨리 끝낸다 - 1·2번이 허락하는 만큼.
+    아무도 안 볼 때(재생 0)는 CPU 100%도 정상이다: 지수에서 CPU를 빼고 메모리·I/O 압박만 본다(idle_index) -
+    그래서 CPU만 바쁜 동안은 경보·늦추기·회의가 없다. 재생이 시작되면 그 분부터 재생 중 기준(CPU 포함)으로 바로 돌아간다.
+    재생 중에도 짐꾼(bookoasis_assistant)은 끄지 않고 4단계(85%)부터 늦추기만 한다(진행 중인 회차는 끝까지 올라가게).
 
 안전장치:
 - PROTECTED(티어 S 시청 경로 + 금고/통신망)는 설정에 적혀 있어도 절대 안 건드린다 - 도구 자체를 안 만든다.
@@ -450,6 +452,22 @@ def psi_alarm(psi: dict | None) -> bool:
     return (psi.get("cpu") or 0) > 10 or (psi.get("io") or 0) > 10 or (psi.get("memory") or 0) > 1
 
 
+def idle_index(probe: dict | None) -> float | None:
+    """아무도 안 볼 때(재생 0)의 지수 = max(메모리, I/O 압박) - CPU는 뺀다.
+    보는 사람이 없으면 CPU를 100% 써서라도 책 입고·영상 인코딩을 빨리 끝내는 게 목표라 CPU는 경보 거리가 아니다.
+    메모리가 차거나 디스크가 막히는 것은 그래도 위험하니 그대로 본다."""
+    if not probe:
+        return None
+    vals = [v for v in (probe.get("mem"), (probe.get("psi") or {}).get("io")) if v is not None]
+    return round(max(vals), 1) if vals else 0.0
+
+
+def psi_alarm_idle(psi: dict | None) -> bool:
+    """재생 없을 때의 지연 경보 - CPU 압박(PSI cpu)은 빼고 I/O·메모리만"""
+    psi = psi or {}
+    return (psi.get("io") or 0) > 10 or (psi.get("memory") or 0) > 1
+
+
 def levels(playing: bool) -> list[float]:
     return STAGES_PLAY if playing else STAGES
 
@@ -692,6 +710,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     since_raw = (now - timedelta(minutes=5)).isoformat(timespec="seconds")
     zeeps = smooth(readings.get("_zeeps") or None, data.setdefault("zeeps", {}), stamp0, since_raw)
     playing = readings.get("_playing")
+    idle = playing == 0   # 재생이 없다고 확인됨 (모르면 None - 그땐 예전처럼 CPU도 본다)
     if readings.get("_struggle"):
         data["struggle_at"] = stamp0
     struggling = bool(playing) and data.get("struggle_at", "") >= (now - timedelta(minutes=STRUGGLE_HOLD_MIN)).isoformat()
@@ -711,13 +730,17 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         if probe is None and r.get("cpu") is not None:      # 예전 모양 (cpu만) - 지수로 그대로 쓴다
             probe = {"index": r["cpu"], "cpu": r["cpu"], "psi": {}}
         if probe is not None:
-            index = max(probe["index"], (zeeps or {}).get("index") or 0)
-            alarm = psi_alarm(probe.get("psi")) or psi_alarm((zeeps or {}).get("psi"))
+            if idle:   # 아무도 안 봄: CPU는 일(입고·인코딩)에 다 써도 된다 - 메모리·I/O만 본다
+                index = max(idle_index(probe) or 0, idle_index(zeeps) or 0)
+                alarm = psi_alarm_idle(probe.get("psi")) or psi_alarm_idle((zeeps or {}).get("psi"))
+            else:
+                index = max(probe["index"], (zeeps or {}).get("index") or 0)
+                alarm = psi_alarm(probe.get("psi")) or psi_alarm((zeeps or {}).get("psi"))
             # 예전 버전 기록([시각, 전체 CPU(nice 포함)])은 지수가 아니라서 버린다 - 안 버리면 배포 직후 옛 값으로 단계가 튄다
             kept = [x for x in (st.get("samples") or []) if len(x) >= 3]
             st["samples"] = kept[-(KEEP_SAMPLES - 1):] + [[stamp, index, alarm]]
             st["last_cpu"], st["at"] = index, stamp
-            st["detail"] = {k: probe.get(k) for k in ("cpu", "busy", "mem")} | {"psi": probe.get("psi") or {}}
+            st["detail"] = {k: probe.get(k) for k in ("cpu", "busy", "mem")} | {"psi": probe.get("psi") or {}, "idle": idle}
         if r.get("running") is not None:   # 매분 도는 컨테이너 목록 - facilities.quick이 사람이 끄고 켠 것도 바로 잡는다
             st["running"], st["running_at"] = sorted(r["running"]), stamp
         st["playing"] = playing
@@ -830,7 +853,9 @@ def council_event(done: list[dict], now: datetime | None = None) -> dict | None:
 
 COUNCIL_SPEC = """담당자들의 보고를 듣고 대표로서 지시한다. 고를 수 있는 것은 하나다: 부하의 원인을 만든 쪽(웹툰 내려받기면 원고 운반 봇,
 영상 입고면 클라우드 업로드)을 지금 늦출지, 지켜볼지. 재생·책 열람은 어떤 경우에도 건드리지 않는다.
-- 지금 보는 사람이 있고 원인이 뚜렷하면 늦춘다. 서버가 95%에 가까우면 보는 사람이 없어도 늦춘다.
+- 지금 보는 사람이 있고 원인이 뚜렷하면 늦춘다.
+- 보는 사람이 없으면 CPU가 100%여도 늦추지 않는다 - 그 시간엔 입고·인코딩을 최대한 빨리 끝내는 게 목표다.
+  보는 사람이 없을 때 늦추는 것은 메모리가 거의 찼거나 디스크 I/O가 막혀(I/O 압박) 서버가 위험할 때뿐이다.
 - 원인이 재생 자체이거나, 원인을 모르거나, 곧 내려갈 것 같으면 지켜본다 (자료 등록을 괜히 막지 않는다).
 JSON으로만: {"slow": true/false, "reason": "한 문장", "say": "내 말투로 지시하는 1~2문장 - 누구에게 무엇을 하라고"}"""
 
@@ -1004,8 +1029,17 @@ def record_hour(data: dict, now: datetime, index: float, playing: int | None) ->
         del h[k]
 
 
+def watchers(now: datetime | None = None, fresh_min: int = 15) -> int | None:
+    """최근 측정 때 재생 중이던 수 (0이면 아무도 안 봄). 모르거나 오래됐으면 None - 그땐 '아무도 안 봄'으로 단정하지 않는다."""
+    now = now or now_kst()
+    since = (now - timedelta(minutes=fresh_min)).isoformat()
+    vals = [st.get("playing") for st in (_load().get("hosts") or {}).values() if st.get("at", "") >= since]
+    vals = [v for v in vals if v is not None]
+    return max(vals) if vals else None
+
+
 def max_cpu(now: datetime | None = None, fresh_min: int = 15) -> float | None:
-    """두 서버 중 높은 쪽의 최근 CPU % (raids 서버 부하용). 오래됐으면 None."""
+    """두 서버 중 높은 쪽의 최근 부하 지수 (raids 서버 부하용 - 아무도 안 볼 땐 CPU를 뺀 메모리·I/O). 오래됐으면 None."""
     now = now or now_kst()
     since = (now - timedelta(minutes=fresh_min)).isoformat()
     vals = [st["last_cpu"] for st in (_load().get("hosts") or {}).values()
@@ -1023,7 +1057,7 @@ def stage(now: datetime | None = None, fresh_min: int = 15) -> int:
 def summary(now: datetime | None = None) -> str:
     now = now or now_kst()
     data = _load()
-    lines = [f"💠 **서버 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박), 5분 평균 재생 없음 {'/'.join(f'{t:g}' for t in STAGES)}% · "
+    lines = [f"💠 **서버 조절** (지수 = max(CPU nice 제외, 메모리, I/O 압박) - 재생 없을 땐 CPU는 빼고 메모리·I/O만, 5분 평균 재생 없음 {'/'.join(f'{t:g}' for t in STAGES)}% · "
              f"재생 중 {'/'.join(f'{t:g}' for t in STAGES_PLAY)}% = 1~{TOP}단계) - 시청 경로(북오아시스·Plex·Tautulli·YM_PLAYER·SHYNI·flaskfarm)는 절대 안 건드림"
              + (" (시험 모드)" if DRY_RUN else "")]
     word = {"stop": "내림", "start": "올림", "throttle": "늦춤", "unthrottle": "되돌림", "stage": "단계"}
@@ -1035,6 +1069,7 @@ def summary(now: datetime | None = None) -> str:
         lines.append(f"• {host}: {int(st.get('stage', 0))}단계({STAGE_NAMES.get(int(st.get('stage', 0)), '')}) · 지수 "
                      + (f"{idx:g}%" if idx is not None else "모름")
                      + (f" (CPU {det.get('busy')}% · 메모리 {det.get('mem')}% · I/O {(det.get('psi') or {}).get('io')})" if det else "")
+                     + (" · 보는 사람 없음 - CPU는 입고·인코딩에 다 써도 정상" if det.get("idle") else "")
                      + (f" · 재생 {st['playing']}" + (" (버벅임 있음)" if st.get("struggling") else "") if st.get("playing") else "")
                      + (f" · 원인 {st['cause']['label']}" + (f"({st['cause']['top']})" if st['cause'].get('top') else "")
                         if (st.get("cause") or {}).get("cause") not in (None, "", "other") else "")
