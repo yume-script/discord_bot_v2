@@ -43,7 +43,7 @@ RENDER_HOUR = int(os.getenv("PORING_DECOR_RENDER_HOUR", "20"))
 CELL = 34
 TITLE = "사옥 설비 배치"
 
-# 구역 (판 전체 좌표 x0, y0, x1, y1 - 끝 포함). 지금은 사옥 앞만 열려 있다. 트래픽은 서쪽 큰길(회선 입구)에서 길을 따라 들어온다.
+# 구역 (판 전체 좌표 x0, y0, x1, y1 - 끝 포함). 지금은 사옥 앞만 열려 있다.
 DISTRICTS = {
     "oasis": {"name": "오아시스 거리 사옥 앞", "rect": (22, 14, 41, 25), "open": True},
     "upper": {"name": "북쪽 골목", "rect": (22, 2, 41, 13), "open": False},
@@ -51,22 +51,45 @@ DISTRICTS = {
     "river": {"name": "남쪽 강가", "rect": (22, 26, 41, 39), "open": False},
     "west": {"name": "서쪽 큰길", "rect": (0, 14, 21, 25), "open": False},
 }
+# BookOasis 3D 서재(bookoasis_3d)의 거리와 같은 배치 - 위가 서재 뒤쪽, 아래가 서재 앞(앞마당 → 강 → 다리 → 캠핑장).
+#   가운데 서재 건물, 양옆 보도와 세로 차도, 길 건너 왼쪽(서쪽) 건물에 사무실(ZEEPS 편집국·영상콘텐츠팀),
+#   길 건너 오른쪽(동쪽)에 카페·갤러리·재즈 청음실. 서재 앞마당 아래로 강이 흐르고 가운데 다리 건너 캠핑장.
+#   3D 서재에 없는 이 거리의 가게(주점·약국·공방·시장·번영회·관리실)는 길 건너 나머지 건물 자리에 둔다.
+# x: 22~23 서쪽 건물 | 24 보도 | 25~26 서쪽 차도 | 27 보도 | 28~35 서재 | 36 보도 | 37~38 동쪽 차도 | 39 보도 | 40~41 동쪽 건물
+# y: 14~18 서재 | 19~22 앞마당·보도 | 23 강(31~32는 다리) | 24~25 강 건너 캠핑장
+LAYOUT = 2   # 판 배치 판 (바뀌면 놓여 있던 설비를 새 배치의 같은 장소 근처로 옮긴다)
 # 랜드마크 (기관/건물 - 설비를 놓을 수 없는 칸). (x0, y0, x1, y1)
 LANDMARKS = {
-    "서쪽 출입구": (22, 17, 23, 18),
-    "ZEEPS 편집국": (24, 15, 26, 16),
-    "ZEEPS 영상콘텐츠팀": (28, 15, 31, 16),
-    "카페 오후세시": (28, 17, 29, 17),
-    "관리실": (34, 15, 35, 16),
-    "솥뚜껑 주점": (38, 15, 39, 16),
-    "수리 공방": (23, 22, 24, 23),
-    "약국": (27, 22, 28, 23),
-    "메인 서버": (30, 21, 31, 21),
-    "시장 입구": (33, 22, 34, 23),
-    "번영회 사무실": (37, 22, 39, 23),
+    "서쪽 출입구": (25, 14, 26, 14),          # 서쪽 차도 북쪽 끝 - 회선(트래픽)이 들어오는 곳
+    "관리실": (22, 14, 23, 14),
+    "메인 서버": (22, 15, 23, 15),
+    "ZEEPS 편집국": (22, 16, 23, 17),         # 3D 서재: 길 건너 왼쪽 사무실 건물 (편집국 책상)
+    "ZEEPS 영상콘텐츠팀": (22, 18, 23, 19),   # 같은 사무실 건물 (영상팀 책상)
+    "솥뚜껑 주점": (22, 20, 23, 20),
+    "번영회 사무실": (22, 21, 23, 22),
+    "BookOasis 3D 서재": (28, 14, 35, 18),   # 가운데 서점 건물 (신간이 배달되는 곳)
+    "서재 앞마당": (30, 20, 33, 20),
+    "카페 오후세시": (40, 14, 41, 15),        # 3D 서재: 길 건너 오른쪽 카페 건물
+    "갤러리": (40, 16, 41, 17),
+    "재즈 청음실": (40, 18, 41, 19),
+    "약국": (40, 20, 41, 20),
+    "수리 공방": (40, 21, 41, 21),
+    "시장 입구": (40, 22, 41, 22),
+    "강가 캠핑장": (33, 24, 36, 25),          # 강 건너 (다리로 건넌다)
 }
-# 거리 길 (가운데 가로길 = 트래픽이 들어오는 길 - 설비는 길가에만, 길 위엔 못 놓음)
-ROAD_Y = (19, 20)
+ROAD_X = (25, 26, 37, 38)    # 세로 차도 두 줄 (트래픽은 서쪽 출입구에서 차도를 따라 들어온다 - 설비는 길가에만)
+RIVER_Y = 23
+BRIDGE_X = (31, 32)
+ROAD_Y = (14, 22)            # 차도가 이어지는 줄 범위 (그 밖은 강·캠핑장)
+
+
+def _is_road(x, y) -> bool:
+    return (x in ROAD_X and ROAD_Y[0] <= y <= ROAD_Y[1]) or (y == RIVER_Y and x in BRIDGE_X)
+
+
+def _is_water(x, y) -> bool:
+    return y == RIVER_Y and x not in BRIDGE_X and DISTRICTS["oasis"]["rect"][0] <= x <= DISTRICTS["oasis"]["rect"][2]
+
 
 ITEMS = {  # key: (이름, 비용, 하루 닳는 정도, 그림 색, 한 글자)
     "방화벽": ("방화벽", 40000, 4, "#B07D4F", "벽"),
@@ -114,6 +137,9 @@ def _save(data: dict) -> None:
     os.replace(tmp, DECOR_PATH)
 
 
+_OLD_NAMES = {"거리 길": "서재 앞마당"}   # 예전 판의 장소 이름 -> 새 판
+
+
 def _state() -> dict:
     data = _load()
     data.setdefault("fund", START_FUND)
@@ -121,6 +147,17 @@ def _state() -> dict:
     data.setdefault("log", [])
     data.setdefault("acts", {})
     data.setdefault("open", [k for k, v in DISTRICTS.items() if v["open"]])
+    if data.get("layout") != LAYOUT:   # 판 배치가 바뀜 - 놓여 있던 설비를 같은 장소 근처의 빈칸으로 옮긴다
+        items, data["items"] = data["items"], []
+        for it in items:
+            near = _OLD_NAMES.get(it.get("near", ""), it.get("near", ""))
+            near = near if near in LANDMARKS else ""
+            spot = _free_near(data, near)
+            if spot:
+                data["items"].append(dict(it, x=spot[0], y=spot[1], near=near or _near_name(*spot)))
+        data["layout"] = LAYOUT
+        if items:
+            _save(data)
     return data
 
 
@@ -149,18 +186,18 @@ def _open_cells(data: dict) -> list[tuple[int, int]]:
 
 
 def _blocked(x, y) -> bool:
-    return y in ROAD_Y or any(_in(r, x, y) for r in LANDMARKS.values())
+    return _is_road(x, y) or _is_water(x, y) or any(_in(r, x, y) for r in LANDMARKS.values())
 
 
 def _free_near(data: dict, near: str) -> tuple[int, int] | None:
-    """랜드마크(없으면 거리 길 한가운데) 바로 옆의 가장 가까운 빈칸."""
+    """랜드마크(없으면 서재 앞마당) 바로 옆의 가장 가까운 빈칸."""
     taken = {(i["x"], i["y"]) for i in data["items"]}
     r = LANDMARKS.get(near)
     if r:
         cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
-    else:
-        x0, y0, x1, y1 = DISTRICTS["oasis"]["rect"]
-        cx, cy = (x0 + x1) / 2, ROAD_Y[0] - 1
+    else:   # 장소를 안 정했으면 서재 앞마당 (거리 한가운데)
+        r = LANDMARKS["서재 앞마당"]
+        cx, cy = (r[0] + r[2]) / 2, (r[1] + r[3]) / 2
     cands = [c for c in _open_cells(data) if c not in taken and not _blocked(*c)]
     if not cands:
         return None
@@ -229,7 +266,7 @@ def prompt_rule(name: str, now: datetime | None = None) -> str:
     if "remove" in role["do"]:
         can.append("치우기(remove): 마음에 안 들거나 망가진 것")
     return (f"- {TITLE}({role['why']}): {' / '.join(can)}. 설비 기금 {data['fund']:,}원. "
-            f"지금 거리에 놓인 설비: {have}. 트래픽은 서쪽 큰길(회선 입구)에서 거리 길을 따라 들어온다. "
+            f"지금 거리에 놓인 설비: {have}. 트래픽은 서쪽 출입구(회선 입구)에서 서재 양옆 차도를 따라 들어온다. "
             f"자리는 장소 이름(어디 근처)만 고르면 된다 - {', '.join(LANDMARKS)}. "
             "할 만할 때만 decor에 쓰고 대부분은 null (하루 한 번).\n")
 
@@ -308,7 +345,7 @@ def act(name: str, d: dict, now: datetime | None = None) -> dict | None:
 
 
 def damage(count: int, amount: int, rnd, now: datetime | None = None) -> list[str]:
-    """[장애 비상] 시설 count개의 상태를 amount만큼 깎는다 (서쪽 출입구/거리 길에 가까운 것부터 잘 맞는다).
+    """[장애 비상] 시설 count개의 상태를 amount만큼 깎는다 (서쪽 출입구·차도에 가까운 것부터 잘 맞는다).
     반환: 부서진 것 ["어디 근처 무엇"]."""
     now = now or now_kst()
     data = _state()
@@ -316,7 +353,8 @@ def damage(count: int, amount: int, rnd, now: datetime | None = None) -> list[st
     if not alive or count <= 0:
         return []
     gate = LANDMARKS["서쪽 출입구"]
-    alive.sort(key=lambda i: (abs(i["x"] - gate[0]) + min(abs(i["y"] - y) for y in ROAD_Y)) + rnd.random() * 6)
+    alive.sort(key=lambda i: (abs(i["x"] - gate[0]) + abs(i["y"] - gate[1]) + min(abs(i["x"] - x) for x in ROAD_X))
+               + rnd.random() * 6)
     hit = []
     for it in alive[:count]:
         it["cond"] = max(0, it["cond"] - amount)
@@ -347,25 +385,29 @@ def prompt_block(now: datetime | None = None) -> str:
 
 
 # ===================================================================== 그림
-# 사람이 있는 곳(상태의 location 글) -> 판의 랜드마크. 앞에 있는 게 먼저. "거리 길"은 길 위.
+# 사람이 있는 곳(상태의 location 글) -> 판의 랜드마크. 앞에 있는 게 먼저 (3D 서재 lib3d_where와 같은 낱말).
 PLACE_KEYS = [
     ("카페 오후세시", ("오후세시", "카페")),
-    ("ZEEPS 영상콘텐츠팀", ("영상팀", "상영관", "영사실", "매표")),
+    ("ZEEPS 영상콘텐츠팀", ("영상팀", "영상콘텐츠", "상영관", "영사실", "매표", "촬영")),
     ("ZEEPS 편집국", ("편집국", "서가", "성인 서고", "수선실")),
+    ("BookOasis 3D 서재", ("3D 서재", "서재", "서점", "도서관", "북오아시스")),
+    ("갤러리", ("갤러리", "전시")),
+    ("재즈 청음실", ("청음실", "재즈", "레코드")),
+    ("강가 캠핑장", ("캠핑", "강가", "강변", "모닥불")),
     ("서쪽 출입구", ("출입구",)),
     ("관리실", ("시설관리팀", "초소", "서버실", "망루", "모니터링", "창고")),
     ("메인 서버", ("서버",)),
     ("솥뚜껑 주점", ("솥뚜껑 주점", "주점", "구인구직 센터", "길드")),
-    ("수리 공방", ("수리 공방",)),
+    ("수리 공방", ("수리 공방", "공방")),
     ("약국", ("약국", "의원", "병원")),
     ("시장 입구", ("시장", "반찬가게", "생선가게", "어물전")),
     ("번영회 사무실", ("번영회 사무실",)),
-    ("거리 길", ("골목", "거리 길", "광장", "오아시스 거리")),
+    ("서재 앞마당", ("앞마당", "골목", "거리 길", "광장", "오아시스 거리")),
 ]
 
 
 def place_of(location: str) -> str:
-    """상태의 장소 글 -> 판 위 자리 (랜드마크 이름 / "거리 길" / "" = 판 밖: 집, 공원 등)."""
+    """상태의 장소 글 -> 판 위 자리 (랜드마크 이름 / "" = 판 밖: 집, 공원 등)."""
     loc = location or ""
     return next((name for name, keys in PLACE_KEYS if any(k in loc for k in keys)), "")
 
@@ -420,7 +462,7 @@ def render(now: datetime | None = None, people: dict | None = None) -> str | Non
         return X, Y, X + CELL - 2, Y + CELL - 2
 
     for (cx, cy) in _open_cells(data):
-        fill = "#3A3C42" if cy in ROAD_Y else townmap.PANEL
+        fill = "#3A3C42" if _is_road(cx, cy) else "#2F5D7C" if _is_water(cx, cy) else townmap.PANEL
         dr.rectangle(box(cx, cy), fill=fill)
     for name, r in LANDMARKS.items():
         if not any(_in(DISTRICTS[k]["rect"], r[0], r[1]) for k in data["open"]):
@@ -435,7 +477,7 @@ def render(now: datetime | None = None, people: dict | None = None) -> str | Non
         dr.text((X0 + 9, Y0 + 7), ITEMS[it["item"]][4], font=f_c, fill="#1E1F22")
         if it["cond"] < BAD:
             dr.line((X0 + 3, Y1 - 4, X1 - 3, Y0 + 4), fill="#EB5757", width=2)
-    # 지금 있는 사람: 랜드마크/거리 길에 인원 배지, 오른쪽에 누가 어디
+    # 지금 있는 사람: 랜드마크에 인원 배지, 오른쪽에 누가 어디
     if people:
         def badge(X, Y, n):
             label = f"{n}명"
@@ -446,12 +488,7 @@ def render(now: datetime | None = None, people: dict | None = None) -> str | Non
             n = len(p["agents"]) + p["others"]
             if not n:
                 continue
-            if where == "거리 길":
-                xs_ = [c[0] for c in _open_cells(data)]
-                gx = (min(xs_) + max(xs_)) // 2
-                X1 = box(gx, ROAD_Y[0])[2]
-                Y1 = box(gx, ROAD_Y[-1])[3]
-            elif where in LANDMARKS:
+            if where in LANDMARKS:
                 r = LANDMARKS[where]
                 X1, Y1 = box(r[2], r[3])[2], box(r[2], r[3])[3]
                 if r[1] == r[3]:  # 한 줄짜리 랜드마크는 이름을 가리지 않게 바깥 오른쪽에
