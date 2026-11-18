@@ -48,6 +48,30 @@ DISCORD_LIMIT = 2000
 AGENT_WEBHOOK_NAME = "포링푸드 에이전트"
 
 
+def sweep_images(max_age: float = 3600) -> int:
+    """포링푸드 /그림·/개미소리 작업 파일(state/images) 중 한 시간 넘은 것 지우기 - 보내다 봇이 꺼지면 남는다. 지운 수"""
+    import os
+    import time
+    from poring_food.config import STATE_DIR
+    folder = os.path.join(STATE_DIR, "images")
+    n = 0
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    for name in names:
+        p = os.path.join(folder, name)
+        try:
+            if os.path.isfile(p) and time.time() - os.path.getmtime(p) > max_age:
+                os.remove(p)
+                n += 1
+        except OSError:
+            pass
+    if n:
+        log.info("포링푸드: 지난번에 남은 그림 파일 %d개를 지웠습니다", n)
+    return n
+
+
 class PoringFood(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -62,6 +86,7 @@ class PoringFood(commands.Cog):
         self._lib3d_last_poll = 0.0
 
     async def cog_load(self) -> None:
+        await asyncio.to_thread(sweep_images)   # 지난번에 올리다 남은 그림·개미소리 파일
         sender = self._send_discord if settings.PORING_DISCORD_CHANNEL_ID else None
         runtime.bind(asyncio.get_running_loop(), sender)
         if settings.PORING_AGENT_CHANNEL_ID:
@@ -550,7 +575,15 @@ class PoringFood(commands.Cog):
             path = os.path.join(folder, f"{it['kind']}_{int(time.time())}_{abs(hash(name)) % 10000}.{ext}")
             with open(path, "wb") as f:
                 f.write(data)
-            await self._send_file_as_agent(name, path, it.get("caption") or it.get("text", ""), it.get("channel_id", 0))
+            try:
+                await self._send_file_as_agent(name, path, it.get("caption") or it.get("text", ""), it.get("channel_id", 0))
+            finally:
+                try:
+                    os.remove(path)   # 디스코드에 올렸으면 서버에 둘 필요 없다 (쌓이지 않게)
+                except OSError:
+                    pass
+                from core import memtrim
+                await asyncio.to_thread(memtrim.release)   # 그림 데이터를 쥐고 있지 않게
             log.info("포링푸드 %s 올림: %s", "그림" if it["kind"] == "draw" else "개미소리", name)
         except Exception:  # noqa: BLE001 - 그림 하나 실패해도 봇은 계속
             log.exception("포링푸드 %s 실패 (%s)", it["kind"], name)

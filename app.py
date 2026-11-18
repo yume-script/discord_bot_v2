@@ -49,6 +49,8 @@ class AesunBot(commands.Bot):
         log.info("MCP tools loaded: %s", [t.name for t in tools])
 
         image_gen_pool.start()
+        from core import memtrim
+        self._memtrim_task = asyncio.create_task(memtrim.loop())   # 10분마다 쓰고 난 메모리를 OS에 (스왑 줄이기)
 
         # 슬래시 명령어 실행 중 예외가 나면 기본 핸들러가 조용히 삼킬 수 있어서
         # 트리 전역 에러 핸들러를 직접 붙인다.
