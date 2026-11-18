@@ -582,6 +582,8 @@ class PoringFood(commands.Cog):
                     os.remove(path)   # 디스코드에 올렸으면 서버에 둘 필요 없다 (쌓이지 않게)
                 except OSError:
                     pass
+                from core import memtrim
+                await asyncio.to_thread(memtrim.release)   # 그림 데이터를 쥐고 있지 않게
             log.info("포링푸드 %s 올림: %s", "그림" if it["kind"] == "draw" else "개미소리", name)
         except Exception:  # noqa: BLE001 - 그림 하나 실패해도 봇은 계속
             log.exception("포링푸드 %s 실패 (%s)", it["kind"], name)
