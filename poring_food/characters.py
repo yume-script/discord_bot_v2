@@ -96,7 +96,7 @@ def load_roster() -> list[dict]:
         roster.append({
             "id": _make_id(newcomers.COMPANY, m["name"]), "name": m["name"], "rank": m.get("rank", ""),
             "job": m.get("job") or m.get("rank", ""), "prefix": "",
-            "dept": f"{newcomers.DEPT} ({m.get('drama', '')})", "company": newcomers.COMPANY,
+            "dept": newcomers.DEPT,   # (작품 제목은 이야기에 내보내지 않는다) "company": newcomers.COMPANY,
             "outer_persona": m.get("outer_persona", ""), "inner_truth": m.get("inner_truth", ""),
             "key_behavior": m.get("key_behavior", ""),
         })

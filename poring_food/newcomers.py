@@ -35,6 +35,31 @@ MOVE_IN_FROM_HOUR = 6
 MAX_TOWN_NPC = int(os.getenv("PORING_MAX_TOWN_NPC", "60"))
 TIMEOUT_SEC = 90
 _NAME = re.compile(r"^[가-힣]{2,4}$")
+# 이사 온 이웃은 지금의 한국 사람 이름으로 산다 (작품 속 이름은 motif에만 - 이야기에는 나오지 않는다)
+SURNAMES = ("김", "이", "박", "최", "정", "강", "조", "윤", "장", "임", "한", "오", "서", "신", "권", "황", "안", "송", "전", "홍",
+            "유", "고", "문", "양", "손", "배", "백", "허", "남", "심", "노", "하", "곽", "성", "차", "주", "우", "구", "민", "진",
+            "나", "지", "엄", "채", "원", "천", "방", "공", "현", "함", "변", "염", "여", "추", "도", "소", "석", "선", "설", "마",
+            "길", "연", "위", "표", "명", "기", "반", "왕", "금", "옥", "육", "인", "맹", "제", "모", "탁", "국", "어", "은", "편")
+GIVEN = ("지우", "서연", "민준", "하은", "도윤", "예린", "현우", "수아", "준서", "다은", "시우", "유진", "건우", "채원", "지훈",
+         "소윤", "승민", "가은", "태윤", "나연", "재희", "은솔", "민재", "하린", "윤호", "서진", "경민", "아린", "동현", "수빈",
+         "정우", "예서", "성훈", "지안", "우진", "보람", "한결", "세아", "주원", "다온")
+
+
+def korean_name(name: str) -> bool:
+    """지금의 한국 사람 이름처럼 보이는지 (성 + 이름 1~2자)"""
+    return bool(_NAME.match(name or "")) and len(name) in (2, 3, 4) and name[0] in SURNAMES and len(name) >= 3
+
+
+def make_name(seed: str, taken: set) -> str:
+    """seed(작품 속 이름)로 정해지는 한국 이름 하나 - 이미 있는 이름은 피한다"""
+    import hashlib
+    h = int(hashlib.sha1(seed.encode("utf-8")).hexdigest()[:8], 16)
+    for i in range(len(SURNAMES) * len(GIVEN)):
+        k = (h + i * 7919) % (len(SURNAMES) * len(GIVEN))
+        name = SURNAMES[k % len(SURNAMES)] + GIVEN[k // len(SURNAMES)]
+        if name not in taken:
+            return name
+    return ""
 
 
 def _load() -> dict:
@@ -93,10 +118,13 @@ def move_in(existing: set[str], drama: str = "", now=None) -> dict:
         + f"\n[이미 쓴 작품] {', '.join(used) or '없음'}"
         + f"\n[이미 있는 이름 - 겹치면 안 됨] {', '.join(sorted(taken))[:3000]}\n\n"
         "이 작품에서 거리 이웃으로 어울리는 인물 3~5명을 골라라. 가족이나 친구 사이면 함께 이사 와도 좋다.\n"
-        "- 작품 속 인물 이름 그대로(한국어 정발 표기). 실존 인물과 같은 이름, 위 목록에 있는 이름은 빼라.\n"
+        "- name은 지금의 한국 사람 이름(성+이름, 예: 한지우, 서도윤)으로 새로 지어라. 작품 속 이름·외국식 이름·판타지 이름은 "
+        "name에 쓰지 말고 motif에 원래 인물 이름을 적어라. 실존 인물과 같은 이름, 위 목록에 있는 이름은 빼라.\n"
+        "- rank·outer_persona·inner_truth에도 작품 속 지명·종족·마법·몬스터 낱말(마탑·대장간·성벽·마을·길드·용 등)을 쓰지 말고 "
+        "이 거리의 현대 말로.\n"
         "- 실존 인물/정치/혐오 소재 금지.\n"
         "반드시 JSON으로만 응답:\n"
-        '{"drama": "작품 제목", "people": [{"name": "이름", "rank": "거리에서의 현대 직업/처지(짧게)", '
+        '{"drama": "작품 제목", "people": [{"name": "한국 이름", "motif": "작품 속 원래 인물 이름", "rank": "거리에서의 현대 직업/처지(짧게)", '
         '"outer_persona": "겉으로 보이는 모습 한 줄", "inner_truth": "속마음/사연 한 줄", '
         '"key_behavior": "자주 하는 행동 2~3개 쉼표로"}]}',
         temperature=0.6, timeout=TIMEOUT_SEC, tag="새 이웃")
@@ -108,11 +136,17 @@ def move_in(existing: set[str], drama: str = "", now=None) -> dict:
         if not isinstance(p, dict):
             continue
         name = str(p.get("name") or "").strip()
-        if not _NAME.match(name) or name in taken:
+        motif = str(p.get("motif") or "").strip()[:20]
+        if korean_name(name) and name in taken:      # 이미 있거나 예전에 있던 사람 - 빼고
             continue
+        if not korean_name(name):                    # 작품 속 이름이 그대로 왔으면 한국 이름을 지어 준다
+            motif = motif or name
+            name = make_name(motif or str(len(taken)), taken)
+            if not name:
+                continue
         taken.add(name)
         added.append({
-            "name": name, "rank": str(p.get("rank") or "주민").strip()[:20],
+            "name": name, "motif": motif, "rank": str(p.get("rank") or "주민").strip()[:20],
             "outer_persona": str(p.get("outer_persona") or "").strip()[:150],
             "inner_truth": str(p.get("inner_truth") or "").strip()[:150],
             "key_behavior": str(p.get("key_behavior") or "").strip()[:100],

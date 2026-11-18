@@ -51,6 +51,7 @@ def _replacements() -> list[tuple[str, str]]:
 def migrate() -> None:
     _migrate_v2()
     _migrate_v3()
+    _migrate_v4()
 
 
 # ===================================================================== v3: 동네 사람들 -> 드라마 인물
@@ -142,3 +143,93 @@ def _migrate_v2() -> None:
     with open(MARKER, "w", encoding="utf-8") as f:
         f.write("ok\n")
     print(f"[이름 변경] 실행 기록 {changed}개 파일의 옛 인물 이름을 새 이름으로 바꿈")
+
+
+# ===================================================================== v4: 새 이웃(애니메이션 인물) -> 지금의 한국 이름
+# 새 이웃은 작품 속 이름(베르도라·디아블로·위즈·카이진 …)으로 이사 와 요약·진행 중인 일에 그 이름이 나왔다. 현대 출판사
+# 이야기에 맞게 한국 이름으로 바꾸고(원래 이름은 motif로 남김), 기록 속 이름도 옮긴다. 진행 중인 일·줄거리·프로젝트에
+# 남은 예전 판타지 지명(마탑·환영극장·대장간·성벽·마을·상회·오아시스 도서관)도 지금 거리의 말로 바꾼다.
+MARKER_V4 = os.path.join(STATE_DIR, ".names_v4_migrated")
+FANTASY_WORDS = [   # 긴 것부터
+    ("별빛 환영극장", "ZEEPS 영상콘텐츠팀 시사회장"), ("오아시스 도서관", "BookOasis 3D 서재"), ("오아시스 마을", "오아시스 거리"),
+    ("환영극장", "시사회장"), ("마탑", "본사 기획실"), ("대장간", "수리 공방"), ("성벽", "서버실 방화벽"),
+    ("마을 회관", "번영회 사무실"), ("마을", "거리"), ("상회", "상가"),
+]
+STORY_FILES = ("threads.json", "story_arcs.json", "projects.json", "villains.json", "newcomers.json")
+
+
+def _sub_names(text: str, mapping: dict) -> str:
+    import re
+    for old in sorted(mapping, key=len, reverse=True):
+        # 다른 낱말 속 글자는 건드리지 않게: 앞은 한글이 아니고, 뒤는 한글이 아니거나 조사·호칭 ("위즈가"는 바꾸고 "위즈덤"은 그대로)
+        text = re.sub(r"(?<![가-힣])" + re.escape(old) + r"(?=[^가-힣]|[이가을를은는의와과도에랑한께님씨만까부보처로야아]|$)",
+                      mapping[old], text)
+    return text
+
+
+def _taken_names() -> set:
+    try:
+        from . import characters
+        return {m.get("name") for m in characters.load_roster() if m.get("name")}
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _migrate_v4() -> None:
+    import json
+    if os.path.exists(MARKER_V4) or not os.path.isdir(STATE_DIR):
+        return
+    from . import newcomers
+    mapping = {}
+    path = newcomers.NEWCOMERS_PATH
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    people = (data.get("residents") or []) + (data.get("moved_out") or [])
+    taken = _taken_names() | {p.get("name") for p in people}
+    for p in people:
+        old = p.get("name") or ""
+        if not old or p.get("motif") or newcomers.korean_name(old):
+            continue
+        new = newcomers.make_name(old, taken)
+        if not new:
+            continue
+        taken.add(new)
+        mapping[old] = new
+    changed = 0
+    files = (glob.glob(os.path.join(STATE_DIR, "*.json")) + glob.glob(os.path.join(STATE_DIR, "*.jsonl"))
+             + glob.glob(os.path.join(STATE_DIR, "archive", "*.jsonl")))
+    for fp in files:
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        new = _sub_names(text, mapping) if mapping else text
+        if os.path.basename(fp) in STORY_FILES:
+            for old_w, new_w in FANTASY_WORDS:
+                new = new.replace(old_w, new_w)
+        if new != text:
+            with open(fp + ".tmp", "w", encoding="utf-8") as f:
+                f.write(new)
+            os.replace(fp + ".tmp", fp)
+            changed += 1
+    if mapping:   # 새 이웃 기록에 원래 이름을 motif로
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            inv = {v: k for k, v in mapping.items()}
+            for p in (data.get("residents") or []) + (data.get("moved_out") or []):
+                if p.get("name") in inv and not p.get("motif"):
+                    p["motif"] = inv[p["name"]]
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(path + ".tmp", path)
+        except (OSError, ValueError):
+            pass
+    with open(MARKER_V4, "w", encoding="utf-8") as f:
+        f.write(json.dumps(mapping, ensure_ascii=False) + "\n")
+    print(f"[이름 변경] 새 이웃 {len(mapping)}명을 한국 이름으로 ({', '.join(f'{a}->{b}' for a, b in mapping.items())}), "
+          f"기록 {changed}개 파일")
