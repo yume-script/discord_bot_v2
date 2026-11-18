@@ -261,6 +261,7 @@ class PoringFood(commands.Cog):
             log.exception("포링푸드 서비스 응답 확인 실패")
 
     async def _load_council(self, ev: dict) -> None:
+        from poring_food import loadshed   # (예전엔 이 import가 없어 회의가 늘 NameError로 실패했다)
         try:
             async with self._lock:   # 회의가 인물 기억/연대기를 쓰므로 회차와 겹치지 않게
                 await asyncio.to_thread(loadshed.hold_council, ev)
