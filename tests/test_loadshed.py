@@ -438,3 +438,33 @@ def test_idle_memory_pressure_still_raises_stage():
              "_playing": 0, "_struggle": 0}
         done += loadshed.step(now, measurer=lambda r=r: r, throttler=lambda h, a: {}, docker=lambda h, do, n: True)
     assert _stage() == 5   # 메모리 97% - 보는 사람이 없어도 위험
+
+
+def test_bookoasis_readers_count_as_people(monkeypatch):
+    """북오아시스에서 책을 읽는 사람도 '사용자 개입' - 영상 재생이 0이어도 CPU를 시청 중 기준으로 본다."""
+    from poring_food import bookoasis
+    monkeypatch.setattr(bookoasis, "_readers", {"at": 0.0, "tried": 0.0, "value": None})
+    calls = []
+
+    def fetch():
+        calls.append(1)
+        return {"active_users": 2, "reading": 1, "by_kind": {"book": 1, "video": 1}}
+    assert bookoasis.active_readers(now=1000.0, fetch=fetch)["active"] == 2
+    assert bookoasis.active_readers(now=1060.0, fetch=fetch)["reading"] == 1 and len(calls) == 1   # 2분 안엔 기억한 값
+    bookoasis.active_readers(now=1200.0, fetch=fetch)
+    assert len(calls) == 2
+    # 도구가 없는 BookOasis(아직 안 넣음) -> 모름, 10분 동안 다시 안 묻는다
+    monkeypatch.setattr(bookoasis, "_readers", {"at": 0.0, "tried": 0.0, "value": None})
+    calls.clear()
+    assert bookoasis.active_readers(now=5000.0, fetch=lambda: calls.append(1)) is None
+    assert bookoasis.active_readers(now=5100.0, fetch=lambda: calls.append(1)) is None and len(calls) == 1
+
+    monkeypatch.setattr(loadshed, "ymplayer_activity", lambda get=None: {"plex": 0, "telegram": 0, "live": 0, "podcast": 0})
+    monkeypatch.setattr(loadshed, "_readers", lambda: 1)
+    import poring_food.plex_api as plex_api
+    monkeypatch.setattr(plex_api, "enabled", lambda: False)
+    from poring_food import metrics
+    monkeypatch.setattr(metrics, "streams", lambda: 0)
+    assert loadshed._viewing()[0] == 1          # 영상 0 + 책 읽는 사람 1
+    monkeypatch.setattr(loadshed, "_readers", lambda: None)
+    assert loadshed._viewing()[0] == 0          # 모르면 더하지 않음 (영상 쪽 0은 그대로)

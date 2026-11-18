@@ -24,7 +24,8 @@
   한 단계씩 올린다(PORING_LOADSHED_PLAY_AVG_MIN / _PLAY_UP_MIN) - 시청이 먼저라 5분 기다리지 않는다. 기준은 재생 여부로 두 벌:
   재생 없음 70/75/80/93/96% = 1~5단계 (PORING_LOADSHED_STAGES) - 아무도 안 볼 땐 짐꾼을 93%까지 그대로 둔다,
   재생 중   65/70/75/85/90% = 1~5단계 (PORING_LOADSHED_STAGES_PLAY) - 볼 때는 시청이 먼저라 더 일찍 양보.
-  재생 여부는 Plex 세션 + YM_PLAYER /api/activity(텔레그램/IPTV·라디오 중계/팟캐스트, PORING_YMPLAYER_URL/_TOKEN)로 본다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
+  재생 여부는 Plex 세션 + YM_PLAYER /api/activity(텔레그램/IPTV·라디오 중계/팟캐스트, PORING_YMPLAYER_URL/_TOKEN)
+  + 북오아시스 지금 쓰는 사람(bookoasis MCP get_active_users - 책·웹툰 읽기·TTS·오디오북·영상, 2분마다)으로 본다. PSI(cpu>10, io>10, memory>1)가 있으면 한 단계 올린다.
 - 한 번에 한 단계씩 올리고(5분 간격, 재생 중 1분), 평균이 5단계 기준(96%, 재생 중 90%) 이상이면 바로 5단계.
 - 내릴 때는 10분 평균이 지금 단계 기준보다 3%p 낮아야 한 단계 내린다 (히스테리시스).
 
@@ -392,6 +393,17 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
         lines.append(f"• YM_PLAYER: 텔레그램 {w['ym']['telegram']} · IPTV/라디오 중계 {w['ym']['live']}"
                      + (f" · 팟캐스트 {w['ym']['podcast']}" if w["ym"].get("podcast") else "")
                      + (f" · ⚠️ 최근 5분 끊김 {w['ym'].get('stalls', 0)} / 재연결 {w['ym'].get('retries', 0)}" if bad else ""))
+    try:
+        from . import bookoasis
+        rd = bookoasis.active_readers()
+    except Exception:  # noqa: BLE001
+        rd = None
+    if rd is not None:
+        kinds = rd.get("by_kind") or {}
+        lines.append(f"• 북오아시스: 지금 쓰는 사람 {rd['active']}명 (책·웹툰 {kinds.get('book', 0)} · TTS {kinds.get('tts', 0)}"
+                     f" · 오디오북 {kinds.get('audiobook', 0)} · 영상 {kinds.get('video', 0)}, 최근 {bookoasis.READERS_WINDOW_MIN}분)")
+    else:
+        lines.append("• 북오아시스: 지금 읽는 사람 수 모름 (BookOasis MCP에 get_active_users가 없거나 연결 안 됨)")
     st, load = stage(now), max_cpu(now)
     lines.append(f"-# 서버 경보 {st}단계" + (f" (지금 부하 지수 {load:g}%)" if load is not None else "")
                  + f" · 단계 기준값({'재생 중' if w['total'] else '재생 없음'}): 1~5단계 = "
@@ -400,7 +412,8 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
 
 
 def _viewing() -> tuple[int | None, int | None]:
-    """(지금 재생 중인 수, 그중 버벅이는 수). 재생 = Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER 텔레그램/IPTV·라디오.
+    """(지금 재생 중인 수, 그중 버벅이는 수). 재생 = Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER 텔레그램/IPTV·라디오
+    + 북오아시스를 쓰는 사람(책·웹툰 읽기, TTS, 오디오북, 영상 - bookoasis MCP get_active_users).
     버벅임 = Plex(버퍼링 중이거나 변환 속도 < 1.0) + YM_PLAYER가 알린 최근 5분 끊김/재연결 횟수 - 모르면 None."""
     plex = struggle = None
     try:
@@ -418,9 +431,20 @@ def _viewing() -> tuple[int | None, int | None]:
     ym = None if act is None else ym_streams(act)
     if act is not None and (act.get("stalls") or act.get("retries")):   # YM_PLAYER 재생기가 알린 끊김/재연결 (최근 5분)
         struggle = (struggle or 0) + act.get("stalls", 0) + act.get("retries", 0)
-    if plex is None and ym is None:
+    books = _readers()   # 북오아시스에서 책·웹툰·오디오북·영상을 보는 사람 (사용자 개입으로 친다)
+    if plex is None and ym is None and books is None:
         return None, struggle
-    return (plex or 0) + (ym or 0), struggle
+    return (plex or 0) + (ym or 0) + (books or 0), struggle
+
+
+def _readers() -> int | None:
+    """북오아시스를 지금 쓰는 사람 수 (bookoasis MCP get_active_users, 2분마다 묻고 기억). 모르면 None"""
+    try:
+        from . import bookoasis
+        got = bookoasis.active_readers()
+    except Exception:  # noqa: BLE001
+        return None
+    return None if got is None else int(got.get("active") or 0)
 
 
 def _playing() -> int | None:
