@@ -86,7 +86,7 @@ POSTS = [
     {"id": "sales", "company": CINEMA, "dept": "시사회·홍보", "first": "문하늘", "kind": "count", "metric": "sales",
      "line": "시청(매표)", "verb": "매표", "unit": "장", "source": "Tautulli 오늘 재생 수"},
     {"id": "streams", "company": CINEMA, "dept": "카페 오후세시", "first": "소라", "kind": "level", "metric": "streams",
-     "line": "지금 관객", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수 (시사회가 차면 1층 카페도 바쁘다)"},
+     "line": "지금 관객", "unit": "명", "source": "Tautulli 지금 시청 중인 스트림 수 (시사회가 차면 카페 오후세시도 바쁘다)"},
     {"id": "facility_cpu", "company": STREET, "dept": "시설관리팀", "first": "권지아", "kind": "level", "metric": "cpu",
      "line": "서버 부하", "unit": "%", "source": "server_status 서버 전체 CPU 사용률"},
     {"id": "facility_disk", "company": STREET, "dept": "시설관리팀", "first": "서경호", "kind": "disk", "metric": "disk",

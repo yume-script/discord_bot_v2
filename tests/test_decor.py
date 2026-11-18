@@ -102,7 +102,7 @@ def test_people_on_board(monkeypatch, tmp_path):
     people = decor.people_from_states(states, {"애순이", "소라", "민재현", "김선영"})
     assert people == {"ZEEPS 편집국": {"agents": ["애순이"], "others": 0},
                       "카페 오후세시": {"agents": ["소라"], "others": 1},
-                      "거리 길": {"agents": ["민재현"], "others": 0}}
+                      "서재 앞마당": {"agents": ["민재현"], "others": 0}}
     from poring_food import townmap
     if not townmap._font_file():
         pytest.skip("글꼴 없음")
@@ -110,3 +110,27 @@ def test_people_on_board(monkeypatch, tmp_path):
     from PIL import Image
     plain = Image.open(decor.render(datetime(2026, 10, 16, 20))).size[0]
     assert Image.open(decor.render(datetime(2026, 10, 16, 20), people)).size[0] > plain   # 오른쪽 "지금 어디에"
+
+
+def test_board_matches_3d_library_and_moves_old_items():
+    """판 배치가 3D 서재 거리와 같다 (가운데 서재, 왼쪽 사무실, 오른쪽 카페·갤러리·청음실, 앞 강·다리·캠핑장),
+    예전 배치(가로 길 하나)에 놓인 설비는 같은 장소 근처의 빈칸으로 옮긴다"""
+    L = decor.LANDMARKS
+    lib, office, cafe = L["BookOasis 3D 서재"], L["ZEEPS 편집국"], L["카페 오후세시"]
+    assert office[2] < lib[0] < lib[2] < cafe[0]                                   # 왼쪽 사무실 | 서재 | 오른쪽 카페
+    assert L["갤러리"][0] > lib[2] and L["재즈 청음실"][0] > lib[2]
+    assert L["강가 캠핑장"][1] > decor.RIVER_Y > L["서재 앞마당"][1] > lib[3]      # 서재 앞마당 -> 강 -> 캠핑장
+    assert decor._is_road(decor.BRIDGE_X[0], decor.RIVER_Y) and decor._is_water(decor.BRIDGE_X[0] - 2, decor.RIVER_Y)
+    assert decor.place_of("3D 서재 1층 라운지") == "BookOasis 3D 서재"
+    assert decor.place_of("강가 캠핑장 모닥불") == "강가 캠핑장" and decor.place_of("재즈 청음실") == "재즈 청음실"
+    # 예전 판에 놓인 설비 (좌표가 새 판의 차도·건물 위) -> 옮김
+    decor._save({"fund": 1000, "items": [{"item": "방화벽", "x": 25, "y": 19, "near": "ZEEPS 편집국", "cond": 80, "by": "권태준"},
+                                         {"item": "조명", "x": 30, "y": 20, "near": "거리 길", "cond": 50, "by": "권지아"}],
+                 "log": [], "acts": {}, "open": ["oasis"]})
+    data = decor._state()
+    assert data["layout"] == decor.LAYOUT and len(data["items"]) == 2
+    for it in data["items"]:
+        assert not decor._blocked(it["x"], it["y"])
+    assert data["items"][0]["near"] == "ZEEPS 편집국" and decor._near_name(data["items"][0]["x"], data["items"][0]["y"]) == "ZEEPS 편집국"
+    assert data["items"][1]["near"] == "서재 앞마당"
+    assert decor._load()["layout"] == decor.LAYOUT
