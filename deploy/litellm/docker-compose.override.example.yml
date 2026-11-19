@@ -5,7 +5,7 @@ services:
     build:
       context: /mnt/discord_bot_v2/deploy/litellm
       args:
-        LITELLM_IMAGE: ghcr.io/berriai/litellm:main-stable   # 지금 쓰는 이미지 태그
+        LITELLM_IMAGE: ghcr.io/berriai/litellm:main-latest   # 지금 쓰는 이미지 태그
     env_file:
       - /mnt/discord_bot_v2/deploy/litellm/mcp.env          # TAUTULLI_API_KEY, PLEX_TOKEN, PUBLIC_DATA_API_SECRET (git에 안 올림)
     volumes:
