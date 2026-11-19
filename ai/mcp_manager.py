@@ -10,8 +10,10 @@ import asyncio
 import logging
 import os
 import re
+import time
 
 import yaml
+from mcp import types
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from config import settings
@@ -236,6 +238,12 @@ def _renamed(tool, new_name: str):
             return None
 
 
+# 게이트웨이 도구 목록 기억 (앞머리 -> (받은 때, 도구들)). LiteLLM은 목록을 줄 때마다 등록된 서버를 모두 띄워 보느라
+# 느리고 가끔 시간 초과로 일부가 빠지므로, 한 번 받은 그 서버의 도구 목록은 잠시 다시 쓴다.
+GATEWAY_TOOLS_TTL_SEC = int(os.getenv("MCP_GATEWAY_TOOLS_TTL_SEC", "600"))
+_gateway_tools_cache: dict[str, tuple[float, list]] = {}
+
+
 class _PrefixedSession:
     """게이트웨이 세션을 원래 서버의 세션처럼: call_tool('get_library_stats') -> 게이트웨이의 'plex-get_library_stats'"""
 
@@ -246,9 +254,14 @@ class _PrefixedSession:
         return await self._s.call_tool(f"{self._p}{name}", arguments, *args, **kwargs)
 
     async def list_tools(self, *args, **kwargs):
+        hit = _gateway_tools_cache.get(self._p)
+        if hit and time.monotonic() - hit[0] < GATEWAY_TOOLS_TTL_SEC and not args and not kwargs:
+            return types.ListToolsResult(tools=list(hit[1]))
         res = await self._s.list_tools(*args, **kwargs)
         try:
             res.tools = [t.model_copy(update={"name": t.name[len(self._p):]}) for t in res.tools if t.name.startswith(self._p)]
+            if res.tools:   # (빈 목록은 그 서버가 시간 초과로 빠진 것일 수 있어 기억하지 않는다)
+                _gateway_tools_cache[self._p] = (time.monotonic(), list(res.tools))
         except Exception:  # noqa: BLE001 - 모양이 다르면 그대로
             pass
         return res
