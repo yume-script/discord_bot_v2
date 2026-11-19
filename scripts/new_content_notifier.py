@@ -20,14 +20,13 @@ from pathlib import Path
 import httpx
 import yaml
 from dotenv import load_dotenv
-from langchain_mcp_adapters.client import MultiServerMCPClient
 
 BASE_DIR = "/mnt/discord_bot_v2"
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-# yaml의 "${VAR}" 시크릿 자리표시자 치환/admin_only 키 제거를 본체와 같은 함수로 처리한다.
+# yaml의 "${VAR}" 시크릿 자리표시자 치환/admin_only 키 제거·LiteLLM 게이트웨이는 본체와 같은 함수로 처리한다.
 sys.path.insert(0, BASE_DIR)
-from ai.mcp_manager import prepare_server_config  # noqa: E402
+from ai.mcp_manager import fetch_server_tools  # noqa: E402
 
 MCP_CONFIG_PATH = os.path.join(BASE_DIR, "config", "mcp_servers.yaml")
 STATE_FILE = Path(BASE_DIR) / "storage" / "new_content_notifier_state.json"
@@ -62,14 +61,10 @@ def _parse_tool_result(raw) -> dict:
 
 
 async def _get_server_tools(server_name: str) -> dict:
+    """서버 하나의 도구 {이름: 도구} - LiteLLM MCP 게이트웨이로 옮긴 서버면 게이트웨이를 거쳐서 (ai/mcp_manager.py)"""
     with open(MCP_CONFIG_PATH, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
-    if server_name not in cfg:
-        return {}
-    server_cfg, _ = prepare_server_config(cfg[server_name])
-    client = MultiServerMCPClient({server_name: server_cfg})
-    tools = await client.get_tools()
-    return {t.name: t for t in tools}
+        cfg = yaml.safe_load(f) or {}
+    return await fetch_server_tools(cfg, server_name)
 
 
 async def check_plex(state: dict) -> list[str]:

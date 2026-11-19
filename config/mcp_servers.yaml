@@ -6,14 +6,6 @@
 # - admin_only: true - 그 서버의 도구를 전부 관리자(ADMIN_DISCORD_IDS)만 실행할 수 있다.
 #   이름만으로는 조회처럼 보여도(read_file, list_containers 등) 민감한 정보에 닿는 서버에 쓴다.
 
-youtube:
-  transport: stdio
-  command: /root/.local/bin/uvx
-  args:
-    - "--from"
-    - "yt-mcp-server"
-    - "youtube-mcp-server"
-
 # /mnt 전체(각 프로젝트의 .env, 백업 포함)를 읽을 수 있어서 관리자 전용
 filesystem:
   admin_only: true
@@ -37,29 +29,6 @@ docker_local:
     - "mcp<2"
     - "mcp-server-docker"
 
-# 컨테이너 목록/로그/환경변수 조회만으로도 내부 정보가 드러나서 관리자 전용
-docker_bookoasis:
-  admin_only: true
-  transport: stdio
-  command: /root/.local/bin/uvx
-  args:
-    - "--with"
-    - "mcp<2"
-    - "mcp-server-docker"
-  env:
-    DOCKER_HOST: "ssh://192.168.0.31"
-
-tautulli:
-  transport: stdio
-  command: /root/.local/bin/uvx
-  args:
-    - "--with"
-    - "mcp<2"
-    - "mcp-tautulli"
-  env:
-    TAUTULLI_URL: "http://192.168.0.31:8181"
-    TAUTULLI_API_KEY: "${TAUTULLI_API_KEY}"
-
 # scripts/server_status_mcp.py 주석대로 mcp 1.30이 확인된 이 봇의 venv로 실행한다
 # (poring_food venv에서는 도구 로드가 확인되지 않았음).
 server_status:
@@ -78,43 +47,6 @@ llm_usage:
   env:
     LITELLM_BASE_URL: "${LITELLM_BASE_URL}"
     LITELLM_API_KEY: "${LITELLM_API_KEY}"
-
-bookoasis:
-  transport: stdio
-  command: ssh
-  args:
-    - "-i"
-    - "/root/.ssh/id_ed25519_bookoasis"
-    - "-o"
-    - "BatchMode=yes"
-    - "root@192.168.0.31"
-    - "docker"
-    - "exec"
-    - "-i"
-    - "bookoasis"
-    - "python3"
-    - "/app/tools/mcp_server.py"
-
-plex:
-  transport: stdio
-  command: /root/.nvm/versions/node/v24.18.0/bin/node
-  args:
-    - "/mnt/plex-mcp-server/build/plex-mcp-server.js"
-  env:
-    PLEX_URL: "http://192.168.0.31:32400"
-    PLEX_TOKEN: "${PLEX_TOKEN}"
-
-korea_weather:
-  transport: stdio
-  command: /root/.local/bin/uvx
-  args:
-    - "--with"
-    - "httpx"
-    - "--with"
-    - "mcp<2"
-    - "korea-weather-mcp@latest"
-  env:
-    PUBLIC_DATA_API_SECRET: "${PUBLIC_DATA_API_SECRET}"
 
 # 모든 카톡방/디스코드 채널의 대화 로그가 한 DB에 있어서 관리자 전용
 sqlite:
@@ -140,3 +72,16 @@ memory:
     HOME: "/root"
     PATH: "/root/.nvm/versions/node/v24.18.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# ── LiteLLM MCP 게이트웨이 (deploy/litellm/README.md) ──
+# LiteLLM이 youtube·tautulli·plex·korea_weather·bookoasis·docker_bookoasis를 대신 띄운다 (위에서 그 6개는 뺐다).
+# 되돌리려면 이 블록을 지우고 6개를 다시 넣는다 (git 기록 참고).
+# 도구 이름은 LiteLLM이 붙인 앞머리("plex-")를 떼고 원래 이름으로 쓰고, admin_only_servers의 도구는 관리자 전용.
+# .env: LITELLM_BASE_URL·LITELLM_API_KEY (봇이 이미 쓰는 값 - 그 키에 MCP 서버를 쓸 권한이 있어야 한다)
+#
+litellm:
+  transport: streamable_http
+  url: "${LITELLM_BASE_URL}/mcp/"
+  headers:
+    x-litellm-api-key: "Bearer ${LITELLM_API_KEY}"
+  gateway_servers: [youtube, tautulli, plex, korea_weather, bookoasis, docker_bookoasis]
+  admin_only_servers: [docker_bookoasis]
