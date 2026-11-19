@@ -288,7 +288,11 @@ _readers = {"at": 0.0, "tried": 0.0, "value": None}
 async def _readers_async() -> dict | None:
     from ai.mcp_manager import server_session
     async with server_session(BOOKOASIS_MCP_SERVER) as session:
-        # (도구 목록은 묻지 않고 바로 부른다 - LiteLLM 게이트웨이에선 목록이 느리고, 없는 도구면 오류로 돌아온다)
+        # 도구가 있는지 먼저 본다 (BookOasis에 아직 안 들어갔을 수 있다 - 없는 도구를 부르면 LiteLLM 게이트웨이는
+        # 연결을 끊어 ReadError가 난다). 게이트웨이 도구 목록은 mcp_manager가 잠시 기억하므로 매번 느리지 않다.
+        names = {t.name for t in (await session.list_tools()).tools}
+        if "get_active_users" not in names:
+            return None
         res = await session.call_tool("get_active_users", {"minutes": READERS_WINDOW_MIN})
         if getattr(res, "isError", False):
             return None
