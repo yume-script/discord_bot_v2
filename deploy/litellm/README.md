@@ -12,7 +12,7 @@ memory, docker_local, server_status, llm_usage)는 밖으로 내보내지 않게
 LiteLLM 컨테이너 안에서 MCP 서버를 띄우므로 포트를 새로 열지 않는다. 대신 LiteLLM 이미지에 node·uv·ssh를 넣는다.
 
 ## 1. LiteLLM 이미지에 도구 넣기
-- `Dockerfile`: 쓰던 LiteLLM 이미지에 없는 것만 더함 - openssh-client, uv(uvx) (main-latest는 Chainguard/Wolfi라 node·npx가 이미 있음, 다시 깔면 openssl 패키지가 부딪힘)
+- `Dockerfile`: 쓰던 LiteLLM 이미지에 없는 것만 더함 - openssh-client, uv(uvx - 공식 uv 이미지에서 복사, 이미지에 pip가 없음) (main-latest는 Chainguard/Wolfi라 node·npx가 이미 있음, 다시 깔면 openssl 패키지가 부딪힘)
 - 시크릿(TAUTULLI_API_KEY 등)은 `mcp.env` 대신 LiteLLM compose의 `environment:`에 직접 넣어도 된다 (그때는 override의 `env_file` 두 줄을 지운다)
 - `docker-compose.override.example.yml`을 LiteLLM compose 옆에 `docker-compose.override.yml`로 두고 이미지 태그·서비스 이름을 맞춘다
   - plex-mcp-server 폴더, bookoasis용 ssh 키·known_hosts를 읽기 전용으로 붙인다
