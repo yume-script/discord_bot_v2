@@ -8,10 +8,15 @@ services:
         LITELLM_IMAGE: ghcr.io/berriai/litellm:main-latest   # 지금 쓰는 이미지 태그
     env_file:
       - /mnt/discord_bot_v2/deploy/litellm/mcp.env          # TAUTULLI_API_KEY, PLEX_TOKEN, PUBLIC_DATA_API_SECRET (git에 안 올림)
+    environment:
+      # LiteLLM은 정해 둔 명령(deno·docker·node·npx·python·uvx)만 MCP stdio로 띄운다 - bookoasis는 ssh로 붙으므로 더한다
+      - LITELLM_MCP_STDIO_EXTRA_COMMANDS=ssh
     volumes:
       - /mnt/plex-mcp-server:/mnt/plex-mcp-server:ro
       - /root/.ssh/id_ed25519_bookoasis:/root/.ssh/id_ed25519_bookoasis:ro
       - /root/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+      # docker_bookoasis(DOCKER_HOST=ssh://)는 파이썬(paramiko)으로 붙어서 기본 이름이 아닌 키를 못 찾는다 - 어느 키인지 알려 준다
+      - /mnt/discord_bot_v2/deploy/litellm/ssh_config:/root/.ssh/config:ro
       - litellm-mcp-cache:/root/.cache                        # uvx·npx가 받은 패키지 (다시 띄울 때 빠르게)
 volumes:
   litellm-mcp-cache:
