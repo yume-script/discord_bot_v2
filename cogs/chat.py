@@ -583,7 +583,7 @@ class Chat(commands.Cog):
         lines = ["⚠️ **관리자 확인 필요** - 아래 작업은 아직 실행되지 않았어요."]
         lines.extend(f"{i}. {c.describe()}" for i, c in enumerate(calls, start=1))
         minutes = pending_actions.CONFIRM_TTL_SEC // 60
-        lines.append(f"실행하려면 {minutes}분 안에 `확인`, 그만두려면 `취소`라고 답해주세요.")
+        lines.append(f"실행하려면 {minutes}분 안에 `확인`, 그만두려면 `취소`라고 답해주세요 (호출어 없이 그 말만 보내면 돼요).")
         await self._send_chunked(message, "\n".join(lines))
 
     async def _run_pending(self, message: Message, scope: str) -> None:
@@ -592,6 +592,8 @@ class Chat(commands.Cog):
         if not calls:
             await message.reply("확인할 작업이 없어요 (시간이 지나 취소됐을 수 있어요).")
             return
+        # 바로 받았다고 알린다 - 봇 자신을 업데이트하면 다 끝나기 전에 다시 켜져 결과를 못 보낼 수 있다
+        await message.reply("확인했어요. 실행할게요: " + ", ".join(f"`{c.tool.name}`" for c in calls))
         results = []
         async with message.channel.typing():
             for call in calls:

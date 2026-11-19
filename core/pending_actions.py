@@ -17,6 +17,7 @@ scope는 "{채널ID}:{관리자 유저ID}" - 다른 사람의 "확인"이나 다
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -79,9 +80,25 @@ def pop(scope: str) -> list[PendingCall]:
     return calls
 
 
+# "확인"만이 아니라 "하나야 확인", "응 확인해줘", "실행해 주세요"처럼 말해도 알아듣는다 (호출어·맞장구·높임 꼬리를 뗀다).
+# 문장 전체가 확인/취소 한 마디일 때만 - "확인 말고 취소" 같은 건 둘 다 아니다(아무것도 안 함).
+_LEAD = re.compile(r"^(?:(?:아메)?하나야?|애순아|애순이|<@!?\d+>|응|ㅇㅇ|네|예|그래|좋아|오케이|ㅇㅋ|ok)[\s,~]*", re.I)
+_TAIL = re.compile(r"(?:\s*(?:해|해요|해줘|해 줘|해주세요|해 주세요|할게|할게요|합니다|해라|ㄱ|ㄱㄱ|고|요))+$")
+
+
+def _norm(text: str) -> str:
+    t = re.sub(r"[.!~?ㅎㅋ\s]+$", "", str(text or "").strip())
+    for _ in range(3):
+        t2 = _LEAD.sub("", t).strip()
+        if t2 == t:
+            break
+        t = t2
+    return _TAIL.sub("", t).strip()
+
+
 def is_confirm(text: str) -> bool:
-    return text.strip().rstrip(".!") in CONFIRM_WORDS
+    return _norm(text) in CONFIRM_WORDS
 
 
 def is_cancel(text: str) -> bool:
-    return text.strip().rstrip(".!") in CANCEL_WORDS
+    return _norm(text) in CANCEL_WORDS
