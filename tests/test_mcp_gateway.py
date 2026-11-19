@@ -112,3 +112,59 @@ def test_fetch_server_tools_through_gateway(monkeypatch):
                        "gateway_servers": ["plex", "bookoasis"]}}
     assert sorted(asyncio.run(mm.fetch_server_tools(cfg, "plex"))) == ["get_library_stats"]
     assert asyncio.run(mm.fetch_server_tools(cfg, "nothing")) == {}
+
+
+def test_session_retries_gateway_after_failed_boot(tmp_path, monkeypatch):
+    """부팅 때 게이트웨이에 못 붙어도 server_session('bookoasis')은 그때 다시 붙고 앞머리를 도구 목록에서 찾는다"""
+    from ai import mcp_manager as mm
+    from config import settings
+    cfg_path = tmp_path / "mcp.yaml"
+    cfg_path.write_text("""
+litellm:
+  transport: streamable_http
+  url: "http://x/mcp/"
+  gateway_servers: [plex, bookoasis]
+""", encoding="utf-8")
+    monkeypatch.setattr(settings, "MCP_SERVERS_CONFIG_PATH", cfg_path)
+    calls = []
+    boot = {"fail": True}
+
+    class Sess(FakeSession):
+        async def list_tools(self):
+            return types.SimpleNamespace(tools=[types.SimpleNamespace(name="plex-get_recently_added"),
+                                                types.SimpleNamespace(name="bookoasis__get_library_stats")])
+
+    class CM(FakeCM):
+        async def __aenter__(self):
+            return Sess(self.log)
+
+    class Client:
+        def __init__(self, cfg):
+            pass
+
+        async def get_tools(self):
+            if boot["fail"]:
+                raise RuntimeError("연결 안 됨")
+            return []
+
+        def session(self, name):
+            return CM(calls)
+    monkeypatch.setattr(mm, "MultiServerMCPClient", Client)
+    assert asyncio.run(mm.init_mcp()) == []
+
+    async def use():
+        async with mm.server_session("bookoasis") as s:
+            await s.call_tool("get_library_stats", {})
+    asyncio.run(use())
+    assert calls == ["bookoasis__get_library_stats"]
+    assert mm._gateway_of["bookoasis"] == ("litellm", "bookoasis__")
+
+
+def test_gateway_url_drops_v1(monkeypatch):
+    """LITELLM_BASE_URL이 .../v1이어도 MCP 주소는 /v1 없이 /mcp/ (LiteLLM은 /v1/mcp/를 307로 돌려보낸다)"""
+    from ai.mcp_manager import prepare_gateway_config
+    monkeypatch.setenv("LITELLM_BASE_URL", "http://localhost:4000/v1")
+    cfg, servers, _ = prepare_gateway_config({"transport": "streamable_http", "url": "${LITELLM_BASE_URL}/mcp/", "gateway_servers": ["plex"]})
+    assert cfg["url"] == "http://localhost:4000/mcp/" and servers == ["plex"]
+    monkeypatch.setenv("LITELLM_BASE_URL", "http://localhost:4000")
+    assert prepare_gateway_config({"url": "${LITELLM_BASE_URL}/mcp/", "gateway_servers": ["plex"]})[0]["url"] == "http://localhost:4000/mcp/"

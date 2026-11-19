@@ -35,6 +35,8 @@ _ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # LiteLLM MCP 게이트웨이: 한 연결로 여러 서버의 도구가 "{서버}-{도구}" 모양으로 온다 (버전에 따라 구분자가 다를 수 있어 여럿 본다)
 _GATEWAY_SEPS = ("-", "__", "_", ".", "/")
 _gateway_of: dict[str, tuple[str, str]] = {}   # 원래 서버 이름 -> (게이트웨이 서버 이름, 도구 이름 앞머리 "plex-")
+# yaml에 적힌 게이트웨이 서버들 (부팅 때 연결에 실패해도 남겨 둔다 - server_session이 나중에 다시 붙는다)
+_gateway_servers_cfg: dict[str, tuple[str, list[str]]] = {}   # 원래 서버 이름 -> (게이트웨이 서버 이름, 그 게이트웨이의 서버 목록)
 
 
 class MissingEnvError(KeyError):
@@ -71,6 +73,9 @@ def prepare_gateway_config(cfg: dict) -> tuple[dict, list[str], set[str]]:
     servers = [str(s) for s in cfg.pop("gateway_servers", None) or []]
     admin = {str(s) for s in cfg.pop("admin_only_servers", None) or []}
     cfg, _admin_all = prepare_server_config(cfg)
+    # LITELLM_BASE_URL은 LLM 요청용이라 흔히 ".../v1"로 끝난다 - LiteLLM MCP는 /v1 없이 /mcp/ (/v1/mcp/는 307로 돌려보냄)
+    if isinstance(cfg.get("url"), str):
+        cfg["url"] = re.sub(r"/v1/+mcp/*$", "/mcp/", cfg["url"].rstrip())
     return cfg, servers, admin
 
 
@@ -143,12 +148,15 @@ async def init_mcp() -> list:
     configs_by_server: dict[str, dict] = {}
 
     gateway_of: dict[str, tuple[str, str]] = {}
+    _gateway_servers_cfg.clear()
     for server_name, raw_cfg in server_config.items():
         gateway_servers, gateway_admin = [], set()
         try:
             if isinstance(raw_cfg, dict) and raw_cfg.get("gateway_servers"):
                 cfg, gateway_servers, gateway_admin = prepare_gateway_config(raw_cfg)
                 admin_only = False
+                for s in gateway_servers:
+                    _gateway_servers_cfg[s] = (server_name, list(gateway_servers))
             else:
                 cfg, admin_only = prepare_server_config(raw_cfg)
         except MissingEnvError as exc:
@@ -250,11 +258,26 @@ class _PrefixedSession:
 
 
 class _GatewaySessionCM:
-    def __init__(self, cm, prefix: str):
-        self._cm, self._p = cm, prefix
+    """prefix를 모르면(부팅 때 게이트웨이에 못 붙음) 세션을 연 뒤 도구 목록에서 그 서버의 앞머리를 찾는다 (없으면 '서버-')"""
+
+    def __init__(self, cm, prefix: str, server: str = "", servers=None, gw_name: str = ""):
+        self._cm, self._p, self._server, self._servers, self._gw_name = cm, prefix, server, servers or [], gw_name
 
     async def __aenter__(self):
-        return _PrefixedSession(await self._cm.__aenter__(), self._p)
+        session = await self._cm.__aenter__()
+        if not self._p:
+            self._p = f"{self._server}-"
+            try:
+                for t in (await session.list_tools()).tools:
+                    hit = split_gateway_name(t.name, self._servers)
+                    if hit and hit[0] == self._server:
+                        self._p = hit[2]
+                        if self._gw_name:   # 다음부터는 바로 (앞머리를 다시 찾지 않게)
+                            _gateway_of.setdefault(self._server, (self._gw_name, self._p))
+                        break
+            except Exception:  # noqa: BLE001 - 목록을 못 받으면 기본 앞머리로
+                log.debug("게이트웨이 도구 목록을 못 받아 기본 앞머리 '%s'로", self._p, exc_info=True)
+        return _PrefixedSession(session, self._p)
 
     async def __aexit__(self, *exc):
         return await self._cm.__aexit__(*exc)
@@ -285,6 +308,11 @@ def server_session(server_name: str):
         gw, prefix = _gateway_of[server_name]
         client = _clients_by_server.get(gw) or MultiServerMCPClient({gw: _configs_by_server[gw]})
         return _GatewaySessionCM(client.session(gw), prefix)
+    if server_name in _gateway_servers_cfg and server_name not in _clients_by_server and _configs_by_server.get(_gateway_servers_cfg[server_name][0]):
+        # 게이트웨이로 옮겼는데 부팅 때 게이트웨이에 못 붙음 - 지금 다시 붙고, 앞머리는 도구 목록에서 찾는다
+        gw, servers = _gateway_servers_cfg[server_name]
+        client = _clients_by_server.get(gw) or MultiServerMCPClient({gw: _configs_by_server[gw]})
+        return _GatewaySessionCM(client.session(gw), "", server_name, servers, gw)
     client = _clients_by_server.get(server_name)
     if client is None:
         cfg = _configs_by_server.get(server_name)
