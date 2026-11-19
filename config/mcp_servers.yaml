@@ -83,5 +83,7 @@ litellm:
   url: "${LITELLM_BASE_URL}/mcp/"
   headers:
     x-litellm-api-key: "Bearer ${LITELLM_API_KEY}"
+    # 이 봇이 쓰는 서버만 (LiteLLM에 다른 MCP 서버도 있으면 도구 목록을 줄 때 그것까지 다 띄워 봐서 느리다)
+    x-mcp-servers: "youtube,tautulli,plex,korea_weather,bookoasis,docker_bookoasis"
   gateway_servers: [youtube, tautulli, plex, korea_weather, bookoasis, docker_bookoasis]
   admin_only_servers: [docker_bookoasis]
