@@ -17,6 +17,7 @@ from discord.ext import commands
 
 from ai.backends.base import ImageGenError
 from ai.image_engine import generate_image
+from ai import rss_feed
 from ai.local_tools import get_exchange_rate, get_nationwide_weather, get_stock_price, get_weather
 from ai.rag_engine import a_query
 from config import settings
@@ -93,6 +94,10 @@ class Chat(commands.Cog):
             return
         # 보조 계정(같은 프로세스의 애순이/소라)이 올린 메시지도 자기 메시지로 본다
         if is_side_account_message(message):
+            return
+
+        # RSS 알림 웹훅(NEW_RSS_FEED.GAS)이 올린 기사는 대답하지 않고 모아만 둔다 (대화에서 찾기·요약용, ai/rss_feed.py)
+        if rss_feed.capture(message):
             return
 
         content = message.content
