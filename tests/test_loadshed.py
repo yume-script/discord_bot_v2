@@ -468,3 +468,15 @@ def test_bookoasis_readers_count_as_people(monkeypatch):
     assert loadshed._viewing()[0] == 1          # 영상 0 + 책 읽는 사람 1
     monkeypatch.setattr(loadshed, "_readers", lambda: None)
     assert loadshed._viewing()[0] == 0          # 모르면 더하지 않음 (영상 쪽 0은 그대로)
+
+
+def test_notify_merges_same_stage_on_guests():
+    """같은 호스트 위 etc·plex01의 똑같은 경보 변화는 한 번만 알린다 (다르면 따로)"""
+    same = {"do": "stage", "name": "서버 경보", "from": 1, "to": 2, "why": "1분 평균 70%", "cause": "", "guests": "plex01 92%"}
+    done = [dict(same, host="etc"), dict(same, host="plex01"), dict(same, host="zeeps", why="1분 평균 40%")]
+    merged = loadshed.merge_same(done)
+    assert [a["host"] for a in merged] == ["etc·plex01", "zeeps"]
+    assert done[0]["host"] == "etc"   # 원본은 그대로
+    posts = []
+    loadshed.notify(done, T0, post=posts.append)
+    assert len(posts) == 2 and "etc·plex01" in posts[0]

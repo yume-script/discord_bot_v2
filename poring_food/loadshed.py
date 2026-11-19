@@ -969,12 +969,28 @@ def _story(a: dict) -> tuple[str, str, str]:
     }[a["do"]]
 
 
+def merge_same(done: list[dict]) -> list[dict]:
+    """같은 내용의 일을 하나로: 같은 Proxmox 호스트(zeeps) 위의 게스트들(etc·plex01)은 부하·원인이 같아서 경보 단계가
+    똑같이 바뀌는 일이 많다 - 서버 이름만 다른 같은 말을 두 번 하지 않게 host를 'etc·plex01'로 묶는다 (순서 유지)."""
+    out, seen = [], {}
+    for a in done:
+        key = repr(sorted((k, str(v)) for k, v in a.items() if k != "host"))
+        if key in seen:
+            hosts = seen[key]["host"].split("·")
+            if a["host"] not in hosts:
+                seen[key]["host"] = "·".join(hosts + [a["host"]])
+            continue
+        seen[key] = dict(a)
+        out.append(seen[key])
+    return out
+
+
 def notify(done: list[dict], now: datetime | None = None, post=None) -> None:
     """[한 즉시, 잠금 없이] 채널에 바로 알린다 - 실제로 무엇을 했는지(서버/대상/동작/이유) + 이야기 한 줄."""
     from . import agents as ag
     now = now or now_kst()
     post = post or (lambda text: ag._post_as(NAME, text))
-    for a in done:
+    for a in merge_same(done):
         text, _, mark = _story(a)
         warn = "\n⚠️ 부하 지수가 높아요 - 시청 경로는 건드리지 않았고, 계속 높으면 직접 확인이 필요해요." if a.get("alert") else ""
         post(f"-# {NAME} · {now:%H:%M} · {a['host']} `{a['name']}` {mark}\n{text}{warn}")
@@ -1009,7 +1025,7 @@ def reflect(done: list[dict], react=None) -> list[str]:
     from . import agents as ag, memory
     react = react or ag.react_now
     reacted = []
-    for a in done:
+    for a in merge_same(done):
         text, title, _ = _story(a)
         try:
             reacted += react(text, title, key_people([a["name"]], cause=a.get("cause", "") if a.get("do") == "stage" and a.get("to", 0) > a.get("from", 0) else ""))
