@@ -1,0 +1,17 @@
+# 지금 쓰는 LiteLLM의 docker-compose.yml 옆에 docker-compose.override.yml로 두거나, 같은 내용을 litellm 서비스에 더한다.
+# (서비스 이름이 litellm이 아니면 맞춰서 바꾼다)
+services:
+  litellm:
+    build:
+      context: /mnt/discord_bot_v2/deploy/litellm
+      args:
+        LITELLM_IMAGE: ghcr.io/berriai/litellm:main-stable   # 지금 쓰는 이미지 태그
+    env_file:
+      - /mnt/discord_bot_v2/deploy/litellm/mcp.env          # TAUTULLI_API_KEY, PLEX_TOKEN, PUBLIC_DATA_API_SECRET (git에 안 올림)
+    volumes:
+      - /mnt/plex-mcp-server:/mnt/plex-mcp-server:ro
+      - /root/.ssh/id_ed25519_bookoasis:/root/.ssh/id_ed25519_bookoasis:ro
+      - /root/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+      - litellm-mcp-cache:/root/.cache                        # uvx·npx가 받은 패키지 (다시 띄울 때 빠르게)
+volumes:
+  litellm-mcp-cache:

@@ -21,3 +21,4 @@ venv/
 
 # 토론 시뮬레이터 기록
 debate/runs/
+deploy/litellm/mcp.env

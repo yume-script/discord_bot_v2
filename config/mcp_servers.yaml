@@ -140,3 +140,17 @@ memory:
     HOME: "/root"
     PATH: "/root/.nvm/versions/node/v24.18.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+
+# ── LiteLLM MCP 게이트웨이 (deploy/litellm/README.md) ──
+# LiteLLM이 youtube·tautulli·plex·korea_weather·bookoasis·docker_bookoasis를 대신 띄우게 옮겼으면:
+#   1) 아래 주석을 풀고  2) 위의 같은 이름 서버 6개를 지운다 (둘 다 있으면 도구가 두 번 잡혀 이름이 겹친다)
+# 도구 이름은 LiteLLM이 붙인 앞머리("plex-")를 떼고 원래 이름으로 쓰고, admin_only_servers의 도구는 관리자 전용.
+# .env: LITELLM_BASE_URL(이미 있음, 예 http://127.0.0.1:4000), LITELLM_MCP_KEY(LiteLLM에서 만든 봇용 가상 키)
+#
+# litellm:
+#   transport: streamable_http
+#   url: "${LITELLM_BASE_URL}/mcp/"
+#   headers:
+#     x-litellm-api-key: "Bearer ${LITELLM_MCP_KEY}"
+#   gateway_servers: [youtube, tautulli, plex, korea_weather, bookoasis, docker_bookoasis]
+#   admin_only_servers: [docker_bookoasis]

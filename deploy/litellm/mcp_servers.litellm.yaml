@@ -1,0 +1,39 @@
+# LiteLLM config.yaml에 붙여 넣을 부분 (model_list 등과 같은 높이). 시크릿은 os.environ/이름 - 값은 mcp.env
+# 봇의 config/mcp_servers.yaml에서 옮긴 6개. 봇 서버의 파일·DB를 보는 서버(filesystem, sqlite, memory, docker_local,
+# server_status, llm_usage)는 봇에 그대로 둔다.
+mcp_servers:
+  youtube:
+    transport: "stdio"
+    command: "uvx"
+    args: ["--from", "yt-mcp-server", "youtube-mcp-server"]
+  tautulli:
+    transport: "stdio"
+    command: "uvx"
+    args: ["--with", "mcp<2", "mcp-tautulli"]
+    env:
+      TAUTULLI_URL: "http://192.168.0.31:8181"
+      TAUTULLI_API_KEY: "os.environ/TAUTULLI_API_KEY"
+  plex:
+    transport: "stdio"
+    command: "node"
+    args: ["/mnt/plex-mcp-server/build/plex-mcp-server.js"]
+    env:
+      PLEX_URL: "http://192.168.0.31:32400"
+      PLEX_TOKEN: "os.environ/PLEX_TOKEN"
+  korea_weather:
+    transport: "stdio"
+    command: "uvx"
+    args: ["--with", "httpx", "--with", "mcp<2", "korea-weather-mcp@latest"]
+    env:
+      PUBLIC_DATA_API_SECRET: "os.environ/PUBLIC_DATA_API_SECRET"
+  bookoasis:
+    transport: "stdio"
+    command: "ssh"
+    args: ["-i", "/root/.ssh/id_ed25519_bookoasis", "-o", "BatchMode=yes", "root@192.168.0.31",
+           "docker", "exec", "-i", "bookoasis", "python3", "/app/tools/mcp_server.py"]
+  docker_bookoasis:
+    transport: "stdio"
+    command: "uvx"
+    args: ["--with", "mcp<2", "mcp-server-docker"]
+    env:
+      DOCKER_HOST: "ssh://192.168.0.31"
