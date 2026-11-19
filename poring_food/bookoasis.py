@@ -288,9 +288,7 @@ _readers = {"at": 0.0, "tried": 0.0, "value": None}
 async def _readers_async() -> dict | None:
     from ai.mcp_manager import server_session
     async with server_session(BOOKOASIS_MCP_SERVER) as session:
-        names = {t.name for t in (await session.list_tools()).tools}
-        if "get_active_users" not in names:
-            return None
+        # (도구 목록은 묻지 않고 바로 부른다 - LiteLLM 게이트웨이에선 목록이 느리고, 없는 도구면 오류로 돌아온다)
         res = await session.call_tool("get_active_users", {"minutes": READERS_WINDOW_MIN})
         if getattr(res, "isError", False):
             return None
@@ -310,7 +308,8 @@ def active_readers(now: float | None = None, fetch=None) -> dict | None:
         try:
             got = fetch() if fetch else runtime.run_on_bot_loop(_readers_async(), timeout=READERS_TIMEOUT_SEC)
         except Exception as e:  # noqa: BLE001
-            print(f"[북오아시스] 지금 읽는 사람 수를 못 받음: {_root_cause(e)}")
+            cause = _root_cause(e)
+            print(f"[북오아시스] 지금 읽는 사람 수를 못 받음: {type(cause).__name__}: {cause}")
             got = None
         if isinstance(got, dict) and "active_users" in got:
             _readers.update(at=now, value={"reading": int(got.get("reading") or 0), "active": int(got.get("active_users") or 0),

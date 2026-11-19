@@ -168,3 +168,25 @@ def test_gateway_url_drops_v1(monkeypatch):
     assert cfg["url"] == "http://localhost:4000/mcp/" and servers == ["plex"]
     monkeypatch.setenv("LITELLM_BASE_URL", "http://localhost:4000")
     assert prepare_gateway_config({"url": "${LITELLM_BASE_URL}/mcp/", "gateway_servers": ["plex"]})[0]["url"] == "http://localhost:4000/mcp/"
+
+
+def test_prefixed_list_tools_cached():
+    import asyncio
+    from mcp import types
+    from ai import mcp_manager as m
+
+    calls = []
+
+    class S:
+        async def list_tools(self):
+            calls.append(1)
+            mk = lambda n: types.Tool(name=n, inputSchema={"type": "object"})  # noqa: E731
+            return types.ListToolsResult(tools=[mk("bookoasis-search_books"), mk("plex-x")])
+
+    m._gateway_tools_cache.clear()
+    s = m._PrefixedSession(S(), "bookoasis-")
+    a = asyncio.run(s.list_tools())
+    b = asyncio.run(s.list_tools())
+    assert [t.name for t in a.tools] == ["search_books"] == [t.name for t in b.tools]
+    assert len(calls) == 1
+    m._gateway_tools_cache.clear()
