@@ -18,6 +18,12 @@ LiteLLM 컨테이너 안에서 MCP 서버를 띄우므로 포트를 새로 열�
   - plex-mcp-server 폴더, bookoasis용 ssh 키·known_hosts를 읽기 전용으로 붙인다
 - `mcp.env.example` -> `mcp.env`로 복사해 값을 채운다 (봇 .env의 TAUTULLI_API_KEY, PLEX_TOKEN, PUBLIC_DATA_API_SECRET)
 
+- ssh로 붙는 두 서버 때문에 두 가지가 더 필요하다 (override 예시에 들어 있음)
+  - `LITELLM_MCP_STDIO_EXTRA_COMMANDS=ssh`: LiteLLM은 deno·docker·node·npx·python·uvx만 MCP stdio로 띄운다 - bookoasis(`ssh …`)가 `'ssh' is not in the allowlist`로 막힘
+  - `ssh_config` -> `/root/.ssh/config`: docker_bookoasis는 paramiko로 붙어 기본 이름이 아닌 키(`id_ed25519_bookoasis`)를 못 찾음 (`No authentication methods available`)
+  - 192.168.0.31이 서버의 `/root/.ssh/known_hosts`에 있어야 한다 (`ssh-keyscan 192.168.0.31 >> /root/.ssh/known_hosts`)
+  - 환경변수·볼륨을 바꾼 뒤에는 `docker restart`가 아니라 `docker compose up -d`로 컨테이너를 새로 만든다
+
 ## 2. LiteLLM 설정
 - `mcp_servers.litellm.yaml`의 `mcp_servers:` 부분을 LiteLLM `config.yaml`에 붙여 넣는다
 - `docker compose build litellm && docker compose up -d litellm`
@@ -29,7 +35,8 @@ LiteLLM 컨테이너 안에서 MCP 서버를 띄우므로 포트를 새로 열�
 ## 3. 봇 전환
 1. 봇 `.env`의 `LITELLM_BASE_URL`·`LITELLM_API_KEY`를 그대로 쓴다 (따로 넣을 것 없음)
 2. `config/mcp_servers.yaml` 맨 아래 `litellm:` 주석을 풀고, 위의 같은 이름 서버 6개를 지운다
-3. `systemctl restart discord_bot_v2` - 로그에 `LiteLLM MCP 게이트웨이로 붙은 서버: [...]`
+3. 봇 `.env`에 `MCP_CONNECT_TIMEOUT_SEC=120` (LiteLLM이 도구 목록을 줄 때 6개 서버를 다 띄워 봐서 처음엔 30초를 넘기기 쉽다)
+4. `systemctl restart discord_bot_v2` - 로그에 `LiteLLM MCP 게이트웨이로 붙은 서버: [...]`
 
 되돌리기: 2번을 원래대로 (yaml만 바꾸고 재시작).
 
