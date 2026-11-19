@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from ai.llm_client import build_chat_model, message_text
 from ai.local_tools import LOCAL_TOOLS
+from ai.rss_feed import RSS_FEED_TOOLS
 from ai.mcp_manager import get_tools
 from poring_food.tools import PORING_FOOD_TOOLS
 from ai.prompts import build_system_prompt
@@ -79,7 +80,7 @@ async def a_query(
     """
     # 포링푸드 도구는 봇 안의 함수다(예전엔 poring_food MCP 서버였음). 혹시 MCP 쪽에 같은 이름의
     # 도구가 남아 있으면(예전 yaml) 이름이 겹쳐 LLM이 호출 자체를 거부하므로 로컬 쪽을 우선한다.
-    local_tools = [*LOCAL_TOOLS, *PORING_FOOD_TOOLS]
+    local_tools = [*LOCAL_TOOLS, *RSS_FEED_TOOLS, *PORING_FOOD_TOOLS]
     local_names = {t.name for t in local_tools}
     tools = [*local_tools, *(t for t in get_tools() if t.name not in local_names)]
     tools_by_name = {t.name: t for t in tools}
