@@ -101,3 +101,33 @@ def test_falls_back_to_default_model(monkeypatch, tmp_path):
         assert res["changes"] == ["wtm_set_settings: PARALLEL_TITLES 2 → 3"]
         assert res["model"].startswith("기본 모델") and "실패" in res["model"]
         assert "기본 모델" in posts[0] and "기본 모델" in ba.recent_text()
+
+
+def test_review_changes_nothing(monkeypatch, tmp_path):
+    """점검(대화의 '계획 괜찮아?'): 쓰기는 BOA에 안 보내고 모두 제안으로, 채널·기록에도 안 남김"""
+    monkeypatch.setattr(ba, "STATE_PATH", str(tmp_path / "boa_agent.json"))
+    calls, posts = [], []
+    res = ba.run(call=lambda n, a: calls.append(n) or {}, model=FakeModel(), stage=0, watching="", post=posts.append, review=True)
+    assert res["review"] and res["changes"] == [] and len(res["proposals"]) == 2
+    assert "wtm_set_settings" not in calls and "tgup_set_settings" not in calls
+    assert posts == [] and ba.due()    # 기록하지 않음 - 정기 판단은 그대로
+
+
+def test_check_tool_needs_no_confirm():
+    from core.tool_policy import is_server_affecting
+    assert not is_server_affecting("check_download_plan")
+
+
+def test_compact_keeps_valid_json():
+    """긴 wtm_status(로그·기록·대기열)를 잘라도 JSON이 끊기지 않고, 로그는 최근 것을 남긴다"""
+    big = {"job": {"running": True, "message": "x" * 1000},
+           "log_tail": [f"[11-20 13:{i:02d}] 로그 {i}" for i in range(60)],
+           "kakao_queue": [{"title": f"작품{i}", "at": i} for i in range(300)],
+           "history": [{"title": f"회차{i}"} for i in range(500)]}
+    out = ba.compact(big, limit=3000)
+    data = json.loads(out)                                          # 끊긴 JSON이 아님
+    assert len(out) <= 3000
+    assert data["log_tail"][-2].endswith("로그 59") and "최근" in data["log_tail"][-1]
+    assert data["kakao_queue"][0]["title"] == "작품0" and "전체 300개" in data["kakao_queue"][-1]
+    assert data["job"]["message"].endswith("…")
+    assert "데이터 오류 아님" in ba.compact("가" * 6000, limit=100)

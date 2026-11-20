@@ -837,6 +837,38 @@ class PoringFood(commands.Cog):
         text = await asyncio.to_thread(loadshed.watching_text)
         await interaction.followup.send(text[:1990], ephemeral=True)
 
+    async def _send_long(self, interaction: Interaction, text: str, ephemeral: bool = False) -> None:
+        """2000자 넘으면 나눠서 (defer 뒤 followup)"""
+        chunks = [text[i:i + 1900] for i in range(0, len(text), 1900)] or ["(내용 없음)"]
+        for c in chunks:
+            await interaction.followup.send(c, ephemeral=ephemeral)
+
+    @app_commands.command(name="에이전트", description="다운로드 에이전트가 최근에 무엇을 보고 무엇을 바꿨는지 (지금판단: 관리자만 지금 바로 한 번 판단)")
+    @app_commands.describe(지금판단="켜면 지금 바로 한 번 판단합니다 (관리자만, 1~2분 걸림)")
+    async def boa_agent_view(self, interaction: Interaction, 지금판단: bool = False):
+        from poring_food import boa_agent
+        if 지금판단 and not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 지금 판단은 관리자만 할 수 있어요.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        if 지금판단:
+            if not boa_agent.enabled():
+                await interaction.followup.send("다운로드 에이전트가 꺼져 있어요 (BOA_AGENT·PORING_ASSISTANT_URL·PORING_ASSISTANT_MCP_TOKEN).")
+                return
+            try:
+                await asyncio.to_thread(boa_agent.run)
+            except Exception as e:  # noqa: BLE001
+                log.exception("다운로드 에이전트 (지금 판단) 실패")
+                await interaction.followup.send(f"판단 실패: {type(e).__name__}: {str(e)[:300]}")
+                return
+        await self._send_long(interaction, await asyncio.to_thread(boa_agent.recent_text, 3 if 지금판단 else 5))
+
+    @app_commands.command(name="올리기", description="텔레그램 자동 올리기 대기열 (올리는 중·대기열·자막 기다림·속도 제한·최근 기록)")
+    async def tg_upload_view(self, interaction: Interaction):
+        from poring_food import tg_upload
+        await interaction.response.defer()
+        await self._send_long(interaction, await asyncio.to_thread(lambda: tg_upload.text(tg_upload.fetch())))
+
     @app_commands.command(name="서비스상태", description="[관리자] YM_PLAYER·Plex·북오아시스가 지금 응답하는지 (매분 확인한 결과)")
     async def uptime_view(self, interaction: Interaction):
         if not is_admin(interaction.user.id):
