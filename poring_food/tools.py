@@ -431,6 +431,16 @@ def get_telegram_upload_queue() -> str:
     return tg_upload.text(tg_upload.fetch())
 
 
+def get_download_agent_log() -> str:
+    """
+    다운로드 에이전트(1시간마다 bookoasis_assistant의 웹툰·웹소설 다운로드와 텔레그램 자동 올리기 일정을 스스로 조정하는 LLM)가
+    최근에 무엇을 보고 무엇을 바꿨는지(전·후 값), 안전 범위 밖이라 제안만 남긴 것을 보여준다. "에이전트 뭐 바꿨어?",
+    "다운로드 계획 어떻게 돼?", "왜 동시 다운로드 수가 바뀌었어?" 같은 질문에 쓴다. 읽기만 한다.
+    """
+    from . import boa_agent
+    return boa_agent.recent_text()
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -459,5 +469,6 @@ PORING_FOOD_TOOLS = [
         update_app,
         get_town_stewards,
         get_telegram_upload_queue,
+        get_download_agent_log,
     )
 ]
