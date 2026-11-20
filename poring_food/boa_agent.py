@@ -291,7 +291,7 @@ def _change_line(a: dict) -> str:
 
 
 def run(now: datetime | None = None, call=None, model=None, stage: int | None = None, watching: str | None = None,
-        post=None, fallback=None, review: bool = False) -> dict | None:
+        post=None, fallback=None, review: bool = False, note: str = "") -> dict | None:
     """[스레드에서] 한 번 판단하고 (바꿨거나 제안이 있으면) 채널에 알린다. 결과 {summary, changes, proposals} 또는 None(꺼짐)"""
     if not enabled() and call is None:
         return None
@@ -324,6 +324,8 @@ def run(now: datetime | None = None, call=None, model=None, stage: int | None = 
             fallback_name = settings.LITELLM_MODEL
             fallback = build_chat_model(source="다운로드 에이전트", temperature=0.2)
     context = _context(call, stage, watching, state)
+    if note:   # 담당자 회의(ops_talk) 결론 - 이번 판단은 이 지시를 먼저 따른다 (안전 범위는 그대로)
+        context = f"[지시 - 담당자 회의에서 정함, 이것부터 따른다]\n{note}\n\n" + context
 
     def decide(m) -> str:
         bound = m.bind_tools(tools)
