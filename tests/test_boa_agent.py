@@ -76,3 +76,28 @@ def test_quiet_when_nothing_changed(monkeypatch, tmp_path):
     posts = []
     res = ba.run(call=lambda n, a: {}, model=Calm(), stage=0, watching="", post=posts.append)
     assert res["changes"] == [] and posts == []   # 바꾼 것·제안이 없으면 채널에 안 올림
+
+
+def test_falls_back_to_default_model(monkeypatch, tmp_path):
+    """추론 모델(BOA_AGENT_MODEL)이 실패하면(무료 한도·도구 미지원) 그 판단은 기본 모델로, 어느 모델로 했는지 기록"""
+    monkeypatch.setattr(ba, "STATE_PATH", str(tmp_path / "boa_agent.json"))
+
+    class Broken(FakeModel):
+        def invoke(self, messages):
+            raise RuntimeError("429 rate limit (free tier)")
+
+    class Empty(FakeModel):
+        def invoke(self, messages):
+            return AIMessage(content="")   # 추론만 하다 잘림 - 빈 답도 실패로
+
+    for bad in (Broken(), Empty()):
+        calls, posts = [], []
+        good = FakeModel()
+
+        def call(name, args):
+            calls.append(name)
+            return {"changed": {"PARALLEL_TITLES": {"before": 2, "after": 3}}} if name == "wtm_set_settings" else {}
+        res = ba.run(call=call, model=bad, fallback=good, stage=0, watching="", post=posts.append)
+        assert res["changes"] == ["wtm_set_settings: PARALLEL_TITLES 2 → 3"]
+        assert res["model"].startswith("기본 모델") and "실패" in res["model"]
+        assert "기본 모델" in posts[0] and "기본 모델" in ba.recent_text()

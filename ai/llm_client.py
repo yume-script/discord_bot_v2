@@ -9,12 +9,14 @@ from ai import llm_usage
 from config import settings
 
 
-def build_chat_model(*, temperature: float = 0.7, source: str = "봇") -> ChatOpenAI:
+def build_chat_model(*, temperature: float = 0.7, source: str = "봇", model: str | None = None, **kwargs) -> ChatOpenAI:
     # 호출마다 요청 수/토큰을 storage/llm_usage.db에 센다 (ai/llm_usage.py)
+    # model: LiteLLM의 다른 model_name (예: 다운로드 에이전트의 추론 모델) - 비우면 LITELLM_MODEL
     return ChatOpenAI(
         base_url=settings.LITELLM_BASE_URL,
         api_key=settings.LITELLM_API_KEY,
-        model=settings.LITELLM_MODEL,
+        model=model or settings.LITELLM_MODEL,
+        **kwargs,
         temperature=temperature,
         callbacks=[llm_usage.callback(source)],
     )
