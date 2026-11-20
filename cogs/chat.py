@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import re
@@ -160,6 +161,12 @@ class Chat(commands.Cog):
             return
         if content.strip() in ("/그림", "/그림스타일"):
             await self._send_game_result(message, user, "사용법: `/그림 프롬프트` 또는 `/그림스타일 프롬프트 | 스타일명`")
+            return
+
+        # 1-1b. "/올리기" - bookoasis_assistant 텔레그램 자동 올리기 대기열 (poring_food/tg_upload.py, 디스코드만)
+        if not is_kakao and content.strip() in ("/올리기", "/올리기대기열", "/텔레그램올리기"):
+            from poring_food import tg_upload
+            await self._send_chunked(message, await asyncio.to_thread(lambda: tg_upload.text(tg_upload.fetch())))
             return
 
         # 1-2. "/날씨", "/전국날씨", "/환율", "/주식" 텍스트 명령 - 슬래시 명령어(cogs/lookup.py)와

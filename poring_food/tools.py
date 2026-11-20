@@ -420,6 +420,17 @@ def get_town_stewards() -> str:
     return "\n".join(lines)
 
 
+def get_telegram_upload_queue() -> str:
+    """
+    짐꾼(bookoasis_assistant)의 '텔레그램 자동 올리기'가 지금 무엇을 올리고 있는지(계정·단계·진행률), 대기열(순서·제목·채널),
+    자막을 기다리는 것, 다시 시도할 것, 최근에 올렸거나 건너뛴 기록을 보여준다. "텔레그램 올리기 대기열 보여줘",
+    "텔레그램에 뭐 올리고 있어?", "○○ 텔레그램에 올라갔어?", "업로드 몇 개 남았어?" 같은 질문에 쓴다. 읽기만 한다.
+    결과의 목록은 그대로 보여 줘도 된다 (요약할 때도 제목은 지어내지 말 것).
+    """
+    from . import tg_upload
+    return tg_upload.text(tg_upload.fetch())
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -447,5 +458,6 @@ PORING_FOOD_TOOLS = [
         get_app_versions,
         update_app,
         get_town_stewards,
+        get_telegram_upload_queue,
     )
 ]
