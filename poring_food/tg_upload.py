@@ -4,8 +4,11 @@
 읽는 곳: BOA MCP의 tgup_status 도구 (읽기 전용) - 원고 입고 대기열(gdw_queue)과 같은 주소·토큰
   PORING_ASSISTANT_URL, PORING_ASSISTANT_MCP_TOKEN
 쓰는 곳: LLM 도구 get_telegram_upload_queue ("텔레그램 올리기 대기열 보여줘", "○○ 올라갔어?").
+유튜브 보내기: /유튜브 [관리자] - BOA MCP의 tgup_youtube 도구 (쓰기, BOA 2.72.1+) - 링크를 받아 유튜브 규칙의 텔레그램 채널에 올린다.
 """
 from __future__ import annotations
+
+import re
 
 from . import gdw_queue
 from ._log import pf_print as print  # print()를 봇 로그로
@@ -75,3 +78,28 @@ def text(data: dict | None, limit: int = 15) -> str:
                 + (f" - {h['note'][:80]}" if h['result'] != '올림' and h.get('note') else "")
                 + (f" ({_mins(h.get('ago_min'))} 전)" if h.get("ago_min") is not None else "") for h in recent[:5]]
     return "\n".join(out)
+
+
+YT_HINT = re.compile(r"https?://(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)/\S+", re.I)
+
+
+def youtube(urls: str, rule: str = "", again: bool = False, timeout: int = 200) -> str:
+    """유튜브 링크들 -> BOA 텔레그램 자동 올리기의 유튜브 규칙 진행 목록에 (tgup_youtube). 디스코드에 보일 글"""
+    if not gdw_queue.enabled():
+        return "📤 텔레그램 자동 올리기: 연결 안 됨 (PORING_ASSISTANT_URL · PORING_ASSISTANT_MCP_TOKEN)"
+    links = YT_HINT.findall(urls or "")
+    if not links:
+        return "▶️ 유튜브 영상·재생목록 주소를 넣어 주세요 (youtube.com / youtu.be)."
+    try:
+        r = gdw_queue.call_tool("tgup_youtube", {"urls": "\n".join(links), "rule": rule, "again": again}, timeout=timeout)
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "tgup_youtube" in msg and "유튜브 규칙" not in msg:   # BOA가 이 도구를 모름 (예전 버전)
+            msg += " (BOA를 2.72.1 이상으로 업데이트해야 합니다)"
+        return f"⚠️ 유튜브 보내기 실패: {msg}"
+    if not r.get("queued"):
+        return f"▶️ 이미 진행 목록에 있습니다 → {r.get('channel', '')} (진행은 /올리기)"
+    return (f"▶️ 유튜브 {r['queued']}개를 진행 목록에 넣었습니다 → **{r.get('channel', '')}**"
+            + (f" (이미 있던 {r['already_queued']}개 빼고)" if r.get("already_queued") else "")
+            + ("\n⚠️ 이 유튜브 규칙은 꺼져 있습니다 - BOA 규칙에서 켜 주세요." if r.get("enabled") is False else "")
+            + "\n차례가 되면 받아서 올립니다 - 진행은 /올리기")

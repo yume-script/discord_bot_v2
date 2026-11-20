@@ -80,3 +80,22 @@ def test_throttle_lines(monkeypatch):
             "throttle_warnings": ["첫 계정: 텔레그램이 업로드를 늦춤 - 최근 10분 45초 대기 (FLOOD_PREMIUM_WAIT)"]}
     out = tg_upload.text(data)
     assert "🐢 첫 계정: 텔레그램이 업로드를 늦춤" in out and "업로드 속도: 첫 계정 0.8MB/s(평소 9.5)" in out
+
+
+def test_youtube(monkeypatch):
+    monkeypatch.setattr(gdw_queue, "URL", "http://boa")
+    monkeypatch.setattr(gdw_queue, "TOKEN", "t")
+    calls = []
+
+    def fake(name, args=None, timeout=8):
+        calls.append((name, args))
+        if args["rule"] == "bad":
+            raise RuntimeError("유튜브 규칙을 골라 주세요 (rule): a=채널A, b=채널B")
+        return {"queued": 2, "already_queued": 1, "channel": "유튜브 모음", "enabled": True}
+    monkeypatch.setattr(gdw_queue, "call_tool", fake)
+    out = tg_upload.youtube("이거 https://youtu.be/AAAAAAAAAAA 랑 https://www.youtube.com/watch?v=BBBBBBBBBBB&t=3 올려줘")
+    assert calls[0] == ("tgup_youtube", {"urls": "https://youtu.be/AAAAAAAAAAA\nhttps://www.youtube.com/watch?v=BBBBBBBBBBB&t=3",
+                                         "rule": "", "again": False})
+    assert "2개를 진행 목록에 넣었습니다 → **유튜브 모음** (이미 있던 1개 빼고)" in out
+    assert "유튜브 규칙을 골라 주세요" in tg_upload.youtube("https://youtu.be/AAAAAAAAAAA", "bad")
+    assert "주소를 넣어" in tg_upload.youtube("https://example.com")
