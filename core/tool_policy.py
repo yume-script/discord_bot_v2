@@ -56,8 +56,25 @@ _SAFE_OVERRIDE = frozenset({
 })
 
 
-def is_server_affecting(tool_name: str) -> bool:
-    """이 도구가 서버 상태를 바꿀 수 있는지(=관리자만 써야 하는지)."""
+# 조회 도구 이름의 머리 - 이렇게 시작하면 이름에 "upload"·"add_"·"start" 같은 말이 섞여 있어도(보는 대상일 뿐) 조회로 본다.
+# (예: get_telegram_upload_queue, get_recently_added, list_started_jobs) 단, 아래 _STRONG_RISKY가 들어 있으면 그대로 막는다.
+_READ_PREFIXES = ("get_", "list_", "search_", "find_", "show_", "fetch_", "count_", "check_", "view_", "describe_",
+                  "lookup_", "preview_", "inspect_", "read_feed")
+# 머리가 조회여도 막는 말 (get_and_delete_x 같은 이름)
+_STRONG_RISKY = ("delete", "remove", "drop", "kill", "exec", "shell", "command", "purge", "truncate", "reset",
+                 "shutdown", "reboot", "restart", "stop_", "_stop", "write", "create", "grant", "revoke", "transfer")
+
+
+def _read_only_hint(tool) -> bool:
+    """MCP 도구가 스스로 밝힌 읽기 전용 표시 (annotations.readOnlyHint=true, 파괴적 표시 없음).
+    langchain_mcp_adapters가 도구 metadata에 annotations를 그대로 넣어 준다"""
+    meta = getattr(tool, "metadata", None) or {}
+    return bool(meta.get("readOnlyHint")) and not meta.get("destructiveHint")
+
+
+def is_server_affecting(tool_name: str, tool=None) -> bool:
+    """이 도구가 서버 상태를 바꿀 수 있는지(=관리자만 써야 하는지). tool(도구 객체)을 주면 MCP 읽기 전용 표시도 본다.
+    순서: 관리자 전용 서버 > 예외(안전) > 강제 관리자 전용 > 읽기 전용 표시 > 조회 이름 머리 > 위험 동사."""
     # 서버 단위 지정이 이름 규칙보다 우선한다 - 예: filesystem 서버의 read_file은 이름만
     # 보면 안전한 조회지만 /mnt 아래 .env까지 읽을 수 있으므로 서버째로 관리자 전용이다.
     if is_admin_only_tool(tool_name):
@@ -67,4 +84,9 @@ def is_server_affecting(tool_name: str) -> bool:
         return False
     if name in _FORCE_ADMIN_ONLY:
         return True
+    if tool is not None and _read_only_hint(tool):
+        return False
+    base = name.rsplit("-", 1)[-1]   # (LiteLLM 게이트웨이 앞머리 "plex-get_x"는 봇이 떼지만 혹시 남아 있어도)
+    if base.startswith(_READ_PREFIXES) and not any(s in base for s in _STRONG_RISKY):
+        return False
     return any(s in name for s in _RISKY_SUBSTRINGS)

@@ -104,7 +104,7 @@ async def a_query(
             tool_fn = tools_by_name.get(call["name"])
             if tool_fn is None:
                 result_text = f"알 수 없는 도구 호출: {call['name']}"
-            elif is_server_affecting(call["name"]):
+            elif is_server_affecting(call["name"], tool_fn):
                 if not caller_is_admin:
                     result_text = ADMIN_ONLY_TOOL_REPLY
                 elif confirm_scope is None:
