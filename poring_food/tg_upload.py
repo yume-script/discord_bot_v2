@@ -42,12 +42,18 @@ def text(data: dict | None, limit: int = 15) -> str:
         out.append("• ⏸ 지금은 올리는 시간대가 아님 (규칙의 시간대 설정)")
     if data.get("error"):
         out.append(f"• ⚠️ {data['error'][:160]}")
+    for w in data.get("throttle_warnings") or []:   # 텔레그램 업로드 속도 제한 (BOA 2.69.0+)
+        out.append(f"• 🐢 {w[:200]}")
     for d in data.get("offline_drives") or []:
         out.append(f"• ⚠️ 드라이브 끊김: {d['drive']} ({_mins(d.get('since_min'))} 전부터)")
     for r in data.get("running") or []:
         pct = f" {r['percent']:.0f}%" if r.get("percent") is not None else ""
         out.append(f"• ▶ [{r['account']}] {r['title']} - {r['phase']}{pct} · {_mins(round(r.get('elapsed_min') or 0))}째"
                    + (f" → {r['channel']}" if r.get("channel") else ""))
+    speeds = [f"{name} {u['speed']}MB/s" + (f"(평소 {u['baseline']})" if u.get("baseline") else "")
+              for name, a in (data.get("accounts") or {}).items() for u in [a.get("upload") or {}] if u.get("speed") is not None]
+    if speeds:
+        out.append("• 업로드 속도: " + " · ".join(speeds))
     queue = data.get("queue") or []
     if queue:
         out.append("**대기열**")
