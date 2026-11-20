@@ -441,6 +441,17 @@ def get_download_agent_log() -> str:
     return boa_agent.recent_text()
 
 
+def check_download_plan() -> str:
+    """
+    다운로드 에이전트에게 지금 웹툰·웹소설 다운로드와 텔레그램 자동 올리기 계획(일정·동시 수·기다무·대기열)이 적절한지
+    지금 바로 점검시킨다 - 현황·예측·서버 부하를 보고 '적절함/조정 필요'와 까닭, 바꾸자고 할 것을 돌려준다.
+    점검만 하고 아무 설정도 바꾸지 않는다 (1~2분 걸림). "에이전트한테 다운로드 계획 괜찮은지 봐 달라고 해",
+    "지금 웹툰 다운로드 계획 적절해?" 같은 요청에 쓴다. 바꾼 기록은 get_download_agent_log.
+    """
+    from . import boa_agent
+    return boa_agent.review_text()
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -470,5 +481,6 @@ PORING_FOOD_TOOLS = [
         get_town_stewards,
         get_telegram_upload_queue,
         get_download_agent_log,
+        check_download_plan,
     )
 ]

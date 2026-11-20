@@ -52,7 +52,7 @@ def test_local_read_tools_need_no_confirm():
     from core.tool_policy import is_server_affecting
     from poring_food.tools import PORING_FOOD_TOOLS
     for t in [*PORING_FOOD_TOOLS, *LOCAL_TOOLS, *RSS_FEED_TOOLS]:
-        read_only = t.name.startswith(("get_", "preview_", "search_", "read_feed"))
+        read_only = t.name.startswith(("get_", "preview_", "search_", "read_feed", "check_"))
         assert is_server_affecting(t.name) is (not read_only), t.name
 
 

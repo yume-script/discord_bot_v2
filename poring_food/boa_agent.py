@@ -182,10 +182,38 @@ SYSTEM = """너는 집 서버의 '다운로드 에이전트'다. bookoasis_assis
 방법:
 - 먼저 읽기 도구로 지금 상황을 본다 (이미 받은 '지금 상황'에 있는 것은 다시 부르지 않아도 된다).
 - 바꿀 근거(숫자)가 분명할 때만 쓰기 도구로 바꾼다. 아무것도 바꾸지 않는 것도 좋은 판단이다.
+- 마지막 답의 첫 줄에 지금 계획이 적절한지 '적절함' / '조정 필요' 중 하나로 먼저 말한다.
 - 지난 판단을 보고 같은 칸을 왔다 갔다 바꾸지 않는다 (적어도 몇 시간은 지켜본 뒤에).
 - 쓰기 도구가 '거절'을 돌려주면 그것은 안전 범위 밖이라 적용되지 않은 것이다 - 다시 시도하지 말고 마지막 답에 제안으로 적는다.
 - 경로·쿠키·알림·유료 이용권·BL/GL·신간 전부 자동 구독은 바꾸지 않는다 (관리자 몫).
 마지막 답: 한국어로 3~6줄 - 지금 상황 한 줄, 바꾼 것과 까닭(숫자 근거), 바꾸지 않았다면 왜, 제안이 있으면 '제안:'으로."""
+
+
+_TAIL_KEYS = ("log_tail", "log", "history", "recent", "lines")   # 최근 것이 끝에 있는 목록 - 끝쪽을 남긴다
+
+
+def compact(data, limit: int = 5000, items: int = 12, text: int = 240):
+    """LLM에 넘길 도구 결과를 줄인다: 긴 목록은 앞(로그·기록은 끝) items개만 남기고 몇 개 중 몇 개인지 적고, 긴 글은 자른다.
+    예전엔 JSON 글을 3500자에서 그냥 잘라 넘겨 끊긴 JSON을 LLM이 '데이터 오류'로 읽었다"""
+    def shrink(x, key="", n=items):
+        if isinstance(x, dict):
+            return {k: shrink(v, k, n) for k, v in x.items()}
+        if isinstance(x, list):
+            keep = x[-n:] if key in _TAIL_KEYS else x[:n]
+            out = [shrink(v, "", n) for v in keep]
+            if len(x) > n:
+                out.append(f"(… 전체 {len(x)}개 중 {'최근 ' if key in _TAIL_KEYS else '앞 '}{n}개만)")
+            return out
+        if isinstance(x, str) and len(x) > text:
+            return x[:text] + "…"
+        return x
+    if isinstance(data, str):
+        return data if len(data) <= limit else data[:limit] + "\n(… 길어서 잘림 - 데이터 오류 아님)"
+    for n in (items, 6, 3, 1):
+        out = json.dumps(shrink(data, "", n), ensure_ascii=False, default=str)
+        if len(out) <= limit:
+            return out
+    return out[:limit] + " (… 길어서 잘림 - 데이터 오류 아님)"
 
 
 def _context(call, stage: int, watching: str, state: dict) -> str:
@@ -194,7 +222,7 @@ def _context(call, stage: int, watching: str, state: dict) -> str:
     for name, args in (("wtm_status", {}), ("wtm_forecast", {"days": 3}), ("tgup_status", {"limit": 10}), ("tgup_settings", {})):
         try:
             data = call(name, args)
-            parts.append(f"[{name}]\n" + json.dumps(data, ensure_ascii=False, default=str)[:3500])
+            parts.append(f"[{name}]\n" + compact(data))
         except Exception as e:  # noqa: BLE001
             parts.append(f"[{name}] 읽지 못함: {e}")
     hist = state.get("runs") or []
@@ -212,7 +240,7 @@ def _tools(call, stage: int, state: dict, applied: list, proposals: list):
         def run(**kwargs) -> str:
             args = {k: v for k, v in kwargs.items() if v is not None}
             if write:
-                why = guard(name, args, stage, state)
+                why = "점검만 하는 중 (적용 안 함)" if state.get("review") else guard(name, args, stage, state)
                 if why:
                     proposals.append(f"{name} {json.dumps(args, ensure_ascii=False)[:200]} - {why}")
                     return f"거절 (적용 안 함): {why}"
@@ -226,7 +254,7 @@ def _tools(call, stage: int, state: dict, applied: list, proposals: list):
                     state["subs_this_run"] = int(state.get("subs_this_run", 0)) + 1
                 if name == "wtm_run" and args.get("job") != "cancel_job":
                     state.setdefault("last_run", {})[args["job"]] = time.time()
-            return json.dumps(out, ensure_ascii=False, default=str)[:6000]
+            return compact(out, limit=7000)
         from pydantic import create_model
         from typing import Any, Optional
         fields = {"wtm_forecast": {"days": (Optional[int], None)},
@@ -263,7 +291,7 @@ def _change_line(a: dict) -> str:
 
 
 def run(now: datetime | None = None, call=None, model=None, stage: int | None = None, watching: str | None = None,
-        post=None, fallback=None) -> dict | None:
+        post=None, fallback=None, review: bool = False) -> dict | None:
     """[스레드에서] 한 번 판단하고 (바꿨거나 제안이 있으면) 채널에 알린다. 결과 {summary, changes, proposals} 또는 None(꺼짐)"""
     if not enabled() and call is None:
         return None
@@ -280,6 +308,8 @@ def run(now: datetime | None = None, call=None, model=None, stage: int | None = 
                 watching = ""
     state = _load()
     state["subs_this_run"] = 0
+    # review(점검만): 쓰기는 하나도 적용하지 않고 모두 제안으로 - 채널에 올리지 않고 기록도 하지 않는다 (대화에서 "계획 괜찮아?")
+    state["review"] = review
     applied, proposals = [], []
     tools = _tools(call, stage, state, applied, proposals)
     by_name = {t.name: t for t in tools}
@@ -325,6 +355,9 @@ def run(now: datetime | None = None, call=None, model=None, stage: int | None = 
         summary = decide(fallback)
     changes = [_change_line(a) for a in applied]
     state.pop("subs_this_run", None)
+    if state.pop("review", False):
+        print(f"[다운로드 에이전트] 점검 ({used}) 제안 {len(proposals)}개 - {summary.strip()[:120]}")
+        return {"summary": summary, "changes": [], "proposals": proposals, "model": used, "review": True}
     state["runs"] = (state.get("runs") or [])[-(KEEP - 1):] + [
         {"at": now.isoformat(timespec="minutes"), "model": used, "summary": summary.strip()[:800], "changes": changes,
          "proposals": proposals}]
@@ -342,6 +375,18 @@ def run(now: datetime | None = None, call=None, model=None, stage: int | None = 
         post(text[:1900])
     print(f"[다운로드 에이전트] ({used}) 바꾼 것 {len(changes)}개 · 제안 {len(proposals)}개 - {summary.strip()[:120]}")
     return {"summary": summary, "changes": changes, "proposals": proposals, "model": used}
+
+
+def review_text() -> str:
+    """[대화] 지금 계획이 적절한지 점검만 (아무것도 바꾸지 않음) - 에이전트의 판단과 바꾸자고 할 것"""
+    if not enabled():
+        return f"{NAME}: 꺼져 있습니다 (BOA_AGENT·PORING_ASSISTANT_URL·PORING_ASSISTANT_MCP_TOKEN)."
+    r = run(review=True)
+    out = [f"{NAME} 점검 ({r['model']}) - 아무것도 바꾸지 않았습니다", r["summary"].strip()[:1500]]
+    if r["proposals"]:
+        out.append("**바꾸자고 한 것** (적용하려면 관리자가 BOA 화면에서, 또는 다음 정기 판단에서 안전 범위 안이면 에이전트가)")
+        out += [f"• {p.replace(' - 점검만 하는 중 (적용 안 함)', '')}" for p in r["proposals"]]
+    return "\n".join(out)
 
 
 def due(now: datetime | None = None) -> bool:
