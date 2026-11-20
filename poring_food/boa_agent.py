@@ -9,7 +9,9 @@
   (관리자가 BOA 화면에서 직접). 경로·쿠키·알림 칸은 BOA가 처음부터 잠가 둠.
 - 기록: storage/poring_food/boa_agent.json - 최근 판단(요약·바꾼 것·제안)을 다음 판단에 같이 넣어 왔다 갔다 하지 않게.
 
-설정 (.env): BOA_AGENT=0 이면 끔 (기본 켬 - PORING_ASSISTANT_URL·PORING_ASSISTANT_MCP_TOKEN이 있을 때), BOA_AGENT_EVERY_MIN(기본 60)
+설정 (.env): BOA_AGENT=0 이면 끔 (기본 켬 - PORING_ASSISTANT_URL·PORING_ASSISTANT_MCP_TOKEN이 있을 때), BOA_AGENT_EVERY_MIN(기본 60),
+  BOA_AGENT_MODEL: 판단에 쓸 LiteLLM model_name (예: 추론 모델 nemotron-3-chat). 비우면 봇 기본 모델(LITELLM_MODEL).
+  그 모델이 실패하면(무료 한도·도구 호출 미지원·오류) 그 판단은 기본 모델로 다시 한다. BOA_AGENT_MAX_TOKENS(기본 8000)
 """
 from __future__ import annotations
 
@@ -25,6 +27,8 @@ from . import gdw_queue
 
 ENABLED = os.getenv("BOA_AGENT", "1") not in ("0", "false", "False", "")
 EVERY_MIN = max(15, int(os.getenv("BOA_AGENT_EVERY_MIN", "60") or 60))
+MODEL = os.getenv("BOA_AGENT_MODEL", "").strip()
+MAX_TOKENS = max(1024, int(os.getenv("BOA_AGENT_MAX_TOKENS", "8000") or 8000))
 STATE_PATH = os.path.join(STATE_DIR, "boa_agent.json")
 NAME = "🤖 다운로드 에이전트"
 MAX_TURNS = 12
@@ -257,7 +261,7 @@ def _change_line(a: dict) -> str:
 
 
 def run(now: datetime | None = None, call=None, model=None, stage: int | None = None, watching: str | None = None,
-        post=None) -> dict | None:
+        post=None, fallback=None) -> dict | None:
     """[스레드에서] 한 번 판단하고 (바꿨거나 제안이 있으면) 채널에 알린다. 결과 {summary, changes, proposals} 또는 None(꺼짐)"""
     if not enabled() and call is None:
         return None
@@ -277,33 +281,55 @@ def run(now: datetime | None = None, call=None, model=None, stage: int | None = 
     applied, proposals = [], []
     tools = _tools(call, stage, state, applied, proposals)
     by_name = {t.name: t for t in tools}
+    fallback_name = "기본 모델" if fallback is not None else ""
+    model_name = "주어진 모델"
     if model is None:
         from ai.llm_client import build_chat_model
-        model = build_chat_model(source="다운로드 에이전트", temperature=0.2)
-    bound = model.bind_tools(tools)
-    messages = [SystemMessage(content=SYSTEM), HumanMessage(content=_context(call, stage, watching, state))]
-    summary = ""
-    for _ in range(MAX_TURNS):
-        ai = bound.invoke(messages)
-        messages.append(ai)
-        calls = getattr(ai, "tool_calls", None) or []
-        if not calls:
-            summary = ai.content if isinstance(ai.content, str) else str(ai.content)
-            break
-        for c in calls:
-            t = by_name.get(c["name"])
-            out = t.invoke(c.get("args") or {}) if t else f"알 수 없는 도구: {c['name']}"
-            messages.append(ToolMessage(content=str(out), tool_call_id=c["id"]))
-    else:
-        summary = "(판단을 다 마치지 못함 - 도구를 너무 많이 부름)"
+        from config import settings
+        model_name = MODEL or settings.LITELLM_MODEL
+        model = build_chat_model(source="다운로드 에이전트", temperature=0.2, model=MODEL or None, max_tokens=MAX_TOKENS)
+        if MODEL and MODEL != settings.LITELLM_MODEL:
+            fallback_name = settings.LITELLM_MODEL
+            fallback = build_chat_model(source="다운로드 에이전트", temperature=0.2)
+    context = _context(call, stage, watching, state)
+
+    def decide(m) -> str:
+        bound = m.bind_tools(tools)
+        messages = [SystemMessage(content=SYSTEM), HumanMessage(content=context)]
+        for _ in range(MAX_TURNS):
+            ai = bound.invoke(messages)
+            messages.append(ai)
+            calls = getattr(ai, "tool_calls", None) or []
+            if not calls:
+                from ai.llm_client import message_text
+                text = message_text(ai).strip()
+                if not text and not applied:
+                    raise RuntimeError("빈 답 (도구 호출도 없음)")
+                return text
+            for c in calls:
+                t = by_name.get(c["name"])
+                out = t.invoke(c.get("args") or {}) if t else f"알 수 없는 도구: {c['name']}"
+                messages.append(ToolMessage(content=str(out), tool_call_id=c["id"]))
+        return "(판단을 다 마치지 못함 - 도구를 너무 많이 부름)"
+
+    used = model_name
+    try:
+        summary = decide(model)
+    except Exception as e:  # noqa: BLE001 - 추론 모델이 막히면(무료 한도·도구 미지원) 기본 모델로 한 번 더
+        if fallback is None:
+            raise
+        print(f"[다운로드 에이전트] {model_name} 실패 - 기본 모델로 다시: {type(e).__name__}: {str(e)[:160]}")
+        used = f"{fallback_name} ({model_name} 실패: {type(e).__name__})"
+        summary = decide(fallback)
     changes = [_change_line(a) for a in applied]
     state.pop("subs_this_run", None)
     state["runs"] = (state.get("runs") or [])[-(KEEP - 1):] + [
-        {"at": now.isoformat(timespec="minutes"), "summary": summary.strip()[:800], "changes": changes, "proposals": proposals}]
+        {"at": now.isoformat(timespec="minutes"), "model": used, "summary": summary.strip()[:800], "changes": changes,
+         "proposals": proposals}]
     state["last_at"] = now.isoformat(timespec="minutes")
     _save(state)
     if changes or proposals:
-        text = f"-# {NAME} · {now:%H:%M}\n{summary.strip()[:1200]}"
+        text = f"-# {NAME} · {now:%H:%M} · {used}\n{summary.strip()[:1200]}"
         if changes:
             text += "\n**적용함**\n" + "\n".join(f"• {c}" for c in changes)
         if proposals:
@@ -312,8 +338,8 @@ def run(now: datetime | None = None, call=None, model=None, stage: int | None = 
             from . import agents as ag
             post = lambda t: ag._post_as(NAME, t)  # noqa: E731
         post(text[:1900])
-    print(f"[다운로드 에이전트] 바꾼 것 {len(changes)}개 · 제안 {len(proposals)}개 - {summary.strip()[:120]}")
-    return {"summary": summary, "changes": changes, "proposals": proposals}
+    print(f"[다운로드 에이전트] ({used}) 바꾼 것 {len(changes)}개 · 제안 {len(proposals)}개 - {summary.strip()[:120]}")
+    return {"summary": summary, "changes": changes, "proposals": proposals, "model": used}
 
 
 def due(now: datetime | None = None) -> bool:
@@ -335,7 +361,7 @@ def recent_text(n: int = 5) -> str:
         return f"{NAME}: 아직 판단한 적이 없습니다." + ("" if enabled() else " (꺼져 있음 - BOA_AGENT·PORING_ASSISTANT_URL·토큰)")
     out = [f"{NAME} 최근 판단"]
     for r in reversed(runs):
-        out.append(f"**{r['at']}** {r.get('summary', '')[:400]}")
+        out.append(f"**{r['at']}**" + (f" ({r['model']})" if r.get("model") else "") + f" {r.get('summary', '')[:400]}")
         out += [f"  • 적용: {c}" for c in r.get("changes") or []]
         out += [f"  • 제안: {p}" for p in r.get("proposals") or []]
     return "\n".join(out)
