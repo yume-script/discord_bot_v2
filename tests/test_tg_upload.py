@@ -71,3 +71,12 @@ def test_read_tools_by_name_and_hint():
     assert is_server_affecting("sync_library_upload", NS(metadata={"readOnlyHint": True, "destructiveHint": True}))
     assert is_server_affecting("sync_library_upload", NS(metadata={}))
     assert is_server_affecting("read_query", hinted)                          # 강제 관리자 전용이 먼저
+
+
+def test_throttle_lines(monkeypatch):
+    monkeypatch.setattr(gdw_queue, "URL", "http://boa")
+    monkeypatch.setattr(gdw_queue, "TOKEN", "t")
+    data = {**SAMPLE, "accounts": {"첫 계정": {"queued": 3, "upload": {"state": "limited", "speed": 0.8, "baseline": 9.5}}},
+            "throttle_warnings": ["첫 계정: 텔레그램이 업로드를 늦춤 - 최근 10분 45초 대기 (FLOOD_PREMIUM_WAIT)"]}
+    out = tg_upload.text(data)
+    assert "🐢 첫 계정: 텔레그램이 업로드를 늦춤" in out and "업로드 속도: 첫 계정 0.8MB/s(평소 9.5)" in out
