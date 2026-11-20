@@ -896,6 +896,17 @@ class PoringFood(commands.Cog):
         await interaction.response.defer()
         await self._send_long(interaction, await asyncio.to_thread(lambda: tg_upload.text(tg_upload.fetch())))
 
+    @app_commands.command(name="유튜브", description="[관리자] 유튜브 링크를 받아 텔레그램 채널에 올리기 (BOA 텔레그램 자동 올리기의 유튜브 규칙)")
+    @app_commands.describe(링크="유튜브 영상·재생목록 주소 (빈칸으로 여러 개)", 채널="유튜브 규칙이 여러 개면 올릴 채널 이름",
+                           다시올리기="이 채널에 이미 올린 영상도 다시 올리기")
+    async def youtube_send(self, interaction: Interaction, 링크: str, 채널: str = "", 다시올리기: bool = False):
+        if not is_admin(interaction.user.id):
+            await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
+            return
+        from poring_food import tg_upload
+        await interaction.response.defer()
+        await self._send_long(interaction, await asyncio.to_thread(tg_upload.youtube, 링크, 채널.strip(), 다시올리기))
+
     @app_commands.command(name="서비스상태", description="[관리자] YM_PLAYER·Plex·북오아시스가 지금 응답하는지 (매분 확인한 결과)")
     async def uptime_view(self, interaction: Interaction):
         if not is_admin(interaction.user.id):
