@@ -43,3 +43,14 @@ def test_fetch_calls_tgup_status(monkeypatch):
 def test_disabled(monkeypatch):
     monkeypatch.setattr(gdw_queue, "URL", "")
     assert tg_upload.fetch() is None and "연결 안 됨" in tg_upload.text(None)
+
+
+def test_local_read_tools_need_no_confirm():
+    """조회만 하는 로컬 도구(get_·preview_·search_·read_feed)는 관리자 확인 없이 - 바꾸는 도구(set_·update_)만 확인"""
+    from ai.local_tools import LOCAL_TOOLS
+    from ai.rss_feed import RSS_FEED_TOOLS
+    from core.tool_policy import is_server_affecting
+    from poring_food.tools import PORING_FOOD_TOOLS
+    for t in [*PORING_FOOD_TOOLS, *LOCAL_TOOLS, *RSS_FEED_TOOLS]:
+        read_only = t.name.startswith(("get_", "preview_", "search_", "read_feed"))
+        assert is_server_affecting(t.name) is (not read_only), t.name

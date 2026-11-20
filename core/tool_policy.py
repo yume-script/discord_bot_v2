@@ -45,6 +45,8 @@ _FORCE_ADMIN_ONLY = frozenset({
 # run_readonly_query는 BookOasis MCP 서버가 서버 쪽에서 읽기 전용을 강제한다는 전제다 -
 # 그 전제가 깨지면(쓰기 SQL이 통과하면) 여기서 빼야 한다.
 _SAFE_OVERRIDE = frozenset({
+    # bookoasis_assistant 텔레그램 자동 올리기 대기열 조회 (이름의 "upload"는 보는 대상일 뿐, 읽기만 한다 - poring_food/tg_upload.py)
+    "get_telegram_upload_queue",
     "run_readonly_query",
     # 지식그래프 메모리에 "기억해줘"를 쌓는 추가 전용 도구 - 프롬프트가 누구에게나 이 기능을
     # 안내하므로 일반 유저도 쓸 수 있게 연다. 지우는 쪽(delete_*)은 계속 관리자 전용.
