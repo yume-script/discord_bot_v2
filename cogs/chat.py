@@ -169,6 +169,12 @@ class Chat(commands.Cog):
             await self._send_chunked(message, await asyncio.to_thread(lambda: tg_upload.text(tg_upload.fetch())))
             return
 
+        # 1-1c. "/에이전트" - 다운로드 에이전트 최근 판단 (poring_food/boa_agent.py, 디스코드만)
+        if not is_kakao and content.strip() in ("/에이전트", "/다운로드에이전트"):
+            from poring_food import boa_agent
+            await self._send_chunked(message, await asyncio.to_thread(boa_agent.recent_text))
+            return
+
         # 1-2. "/날씨", "/전국날씨", "/환율", "/주식" 텍스트 명령 - 슬래시 명령어(cogs/lookup.py)와
         # 같은 ai/local_tools.py 함수를 호출한다.
         if content.startswith("/전국날씨"):

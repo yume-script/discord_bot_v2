@@ -104,6 +104,7 @@ class PoringFood(commands.Cog):
             self.uptime_watch.start()
             self.gdw_queue_watch.start()
             self.waitfree_pilot.start()
+            self.boa_agent_loop.start()
             self.app_updater.start()
             self.avatar_maker.start()
             self.lib3d_delivery.start()
@@ -125,6 +126,7 @@ class PoringFood(commands.Cog):
         self.uptime_watch.cancel()
         self.gdw_queue_watch.cancel()
         self.waitfree_pilot.cancel()
+        self.boa_agent_loop.cancel()
         self.app_updater.cancel()
         self.avatar_maker.cancel()
         self.lib3d_delivery.cancel()
@@ -294,6 +296,17 @@ class PoringFood(commands.Cog):
             log.exception("포링푸드 부하 대책 회의 실패")
         finally:
             self._load_council_task = None
+
+    @tasks.loop(minutes=10)
+    async def boa_agent_loop(self) -> None:
+        """다운로드 에이전트(poring_food/boa_agent.py): BOA 웹툰 다운로드·텔레그램 올리기 일정을 LLM이 1시간마다 맡는다."""
+        from poring_food import boa_agent
+        if not boa_agent.enabled() or not boa_agent.due():
+            return
+        try:
+            await asyncio.to_thread(boa_agent.run)
+        except Exception:  # noqa: BLE001
+            log.exception("다운로드 에이전트 실패")
 
     @tasks.loop(minutes=30)
     async def waitfree_pilot(self) -> None:
