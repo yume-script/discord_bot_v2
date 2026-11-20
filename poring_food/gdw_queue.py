@@ -40,6 +40,19 @@ def enabled() -> bool:
     return bool(URL and TOKEN)
 
 
+def call_tool(name: str, arguments: dict | None = None, timeout: int = 8):
+    """bookoasis_assistant MCP 도구 하나를 부른다 (읽기 전용 도구만 쓴다). 결과 JSON. 실패하면 RuntimeError"""
+    res = requests.post(URL + "/mcp", timeout=timeout, headers={"Authorization": "Bearer " + TOKEN, "Accept": "application/json"},
+                        json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments or {}}})
+    body = res.json()
+    result = body.get("result") or {}
+    text = next((c.get("text") for c in result.get("content") or [] if c.get("type") == "text"), "") or ""
+    if body.get("error") or result.get("isError"):
+        raise RuntimeError(str((body.get("error") or {}).get("message") or text or "도구 오류")[:200])
+    data = result.get("structuredContent")
+    return data if data is not None else json.loads(text or "{}")
+
+
 def fetch(timeout: int = 8) -> dict | None:
     """gdw_status 그대로 (못 읽으면 None). CACHE_SEC 동안 다시 묻지 않는다."""
     if not enabled():
@@ -47,15 +60,7 @@ def fetch(timeout: int = 8) -> dict | None:
     if _cache["data"] is not None and time.time() - _cache["at"] < CACHE_SEC:
         return _cache["data"]
     try:
-        res = requests.post(URL + "/mcp", timeout=timeout, headers={"Authorization": "Bearer " + TOKEN, "Accept": "application/json"},
-                            json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gdw_status", "arguments": {}}})
-        body = res.json()
-        result = body.get("result") or {}
-        if body.get("error") or result.get("isError"):
-            raise RuntimeError(str((body.get("error") or {}).get("message") or "도구 오류")[:120])
-        data = result.get("structuredContent")
-        if data is None:
-            data = json.loads(next((c.get("text") for c in result.get("content") or [] if c.get("type") == "text"), "") or "{}")
+        data = call_tool("gdw_status", timeout=timeout)
     except Exception as e:  # noqa: BLE001
         print(f"[원고 입고] 대기열을 읽지 못함: {e}")
         return None
