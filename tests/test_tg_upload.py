@@ -43,3 +43,31 @@ def test_fetch_calls_tgup_status(monkeypatch):
 def test_disabled(monkeypatch):
     monkeypatch.setattr(gdw_queue, "URL", "")
     assert tg_upload.fetch() is None and "연결 안 됨" in tg_upload.text(None)
+
+
+def test_local_read_tools_need_no_confirm():
+    """조회만 하는 로컬 도구(get_·preview_·search_·read_feed)는 관리자 확인 없이 - 바꾸는 도구(set_·update_)만 확인"""
+    from ai.local_tools import LOCAL_TOOLS
+    from ai.rss_feed import RSS_FEED_TOOLS
+    from core.tool_policy import is_server_affecting
+    from poring_food.tools import PORING_FOOD_TOOLS
+    for t in [*PORING_FOOD_TOOLS, *LOCAL_TOOLS, *RSS_FEED_TOOLS]:
+        read_only = t.name.startswith(("get_", "preview_", "search_", "read_feed"))
+        assert is_server_affecting(t.name) is (not read_only), t.name
+
+
+def test_read_tools_by_name_and_hint():
+    """조회 이름(get_·list_·search_…)이면 이름에 upload·add_·start가 섞여도 확인 없이, MCP readOnlyHint도 인정.
+    관리자 전용 서버·강제 목록·파괴적인 말(delete 등)은 그대로 확인"""
+    from types import SimpleNamespace as NS
+    from core.tool_policy import is_server_affecting
+    for name in ("get_recently_added", "list_started_jobs", "search_uploads", "get_upload_status", "fetch_post", "check_push_status"):
+        assert not is_server_affecting(name), name
+    for name in ("get_and_delete_cache", "check_and_restart", "list_create_table", "upload_file", "set_waitfree_window",
+                 "read_query", "call_api"):
+        assert is_server_affecting(name), name
+    hinted = NS(metadata={"readOnlyHint": True})
+    assert not is_server_affecting("sync_library_upload", hinted)            # 서버가 읽기 전용이라고 밝힘
+    assert is_server_affecting("sync_library_upload", NS(metadata={"readOnlyHint": True, "destructiveHint": True}))
+    assert is_server_affecting("sync_library_upload", NS(metadata={}))
+    assert is_server_affecting("read_query", hinted)                          # 강제 관리자 전용이 먼저
