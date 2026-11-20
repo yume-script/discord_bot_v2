@@ -30,7 +30,8 @@ from .config import STATE_DIR
 from .llm import llm_json
 
 VILLAINS_PATH = os.path.join(STATE_DIR, "villains.json")
-ENABLED = os.getenv("PORING_VILLAINS", "1") not in ("0", "false", "False", "")
+# 빌런(악역)은 기본으로 끔 - 갈등은 악역 대신 담당자의 판단착오·실수(ops_talk)로. 1이면 예전 악역 연기·수작
+ENABLED = os.getenv("PORING_VILLAINS", "0") not in ("0", "false", "False", "")
 SCHEME_EVERY_DAYS = int(os.getenv("PORING_VILLAIN_EVERY_DAYS", "2"))
 SCHEME_HOUR = 10
 EXPOSE_P = 0.3

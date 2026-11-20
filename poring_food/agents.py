@@ -43,6 +43,10 @@ STATE_PATH = os.path.join(STATE_DIR, "agents_state.json")
 DIALOGUES_PATH = os.path.join(STATE_DIR, "dialogues.jsonl")  # story.py와 같은 파일 (조회 도구가 같이 읽는다)
 
 MAX_AGENTS = int(os.getenv("PORING_AGENT_MAX", "50"))
+# 역할(시스템 담당)이 있는 인물만 에이전트로 (교대·빌런 없이). 0이면 예전처럼 모든 인물 + 교대
+ROLE_ONLY = os.getenv("PORING_ROLE_ONLY", "1") not in ("0", "false", "False", "")
+# 인물들이 정해 둔 시각에 다시 모이는 모임 (서버 관리는 이슈가 생길 때 ops_talk가) - 기본 끔
+SCHEDULED_MEETINGS = os.getenv("PORING_SCHEDULED_MEETINGS", "0") not in ("0", "false", "False", "")
 MAX_INBOX = 20
 MAX_LOG = 24
 MAX_TURNS = int(os.getenv("PORING_AGENT_MAX_TURNS", "6"))                  # 대화 한 번의 최대 발언 수
@@ -186,7 +190,12 @@ def load_agents() -> list[dict]:
         print(f"[경고] 에이전트 목록을 못 읽음: {e}")
         return []
     agents = [a for a in data.get("agents", []) if isinstance(a, dict) and a.get("name")]
-    agents = rotation.apply(agents)  # 하루 한 번 배경 인물과 자리를 바꾼 것 반영
+    if ROLE_ONLY:   # 맡은 역할(시스템 담당)이 있는 인물만 LLM 에이전트로 - 나머지는 말하지도 판단하지도 않는다 (기록은 그대로)
+        from . import stewards
+        keep = stewards.role_names()
+        agents = [a for a in agents if a["name"] in keep]
+    else:
+        agents = rotation.apply(agents)  # 하루 한 번 배경 인물과 자리를 바꾼 것 반영
     from . import avatars
     agents = avatars.apply(agents)   # 만든 초상화가 있으면 그 아바타로
     if len(agents) > MAX_AGENTS:
@@ -2015,7 +2024,10 @@ def _handle_projects(decisions: dict[str, dict], fresh: list[str], by_name: dict
 
 
 def run_due_meetings() -> None:
-    """[매시 회차] 다시 모일 시각이 된 모임을 연다 (한 회차에 하나). 모일 사람이 없으면 한 시간 미룬다."""
+    """[매시 회차] 다시 모일 시각이 된 모임을 연다 (한 회차에 하나). 모일 사람이 없으면 한 시간 미룬다.
+    정해진 시각의 모임은 기본으로 끔 (PORING_SCHEDULED_MEETINGS) - 서버 관리는 이슈가 생길 때 담당자 대화(ops_talk)로"""
+    if not SCHEDULED_MEETINGS:
+        return
     now = now_kst()
     for t in chronicle.due_meetings(now)[:1]:
         res = run_meeting(t["title"])

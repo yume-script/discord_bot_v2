@@ -452,6 +452,16 @@ def check_download_plan() -> str:
     return boa_agent.review_text()
 
 
+def get_ops_talks() -> str:
+    """
+    이슈(텔레그램 업로드 제한·대기열 밀림·입고 밀림·다운로더 오류·기다무 시간대·지난 결정 회고)가 생길 때 담당자들이 모여 나눈
+    서버 관리 대화의 결론, 실제로 한 조치, 잡아낸 판단착오, 회고를 보여준다. "담당자들 무슨 얘기 했어?", "요즘 서버 관리 어떻게 해?",
+    "누가 실수했어?" 같은 질문에 쓴다. 읽기만 한다.
+    """
+    from . import ops_talk
+    return ops_talk.recent_text()
+
+
 def _as_tool(fn) -> StructuredTool:
     """동기 함수를 LangChain 도구로. 실행은 스레드에서 해서 봇 이벤트 루프를 막지 않는다."""
     async def _arun(**kwargs):
@@ -482,5 +492,6 @@ PORING_FOOD_TOOLS = [
         get_telegram_upload_queue,
         get_download_agent_log,
         check_download_plan,
+        get_ops_talks,
     )
 ]

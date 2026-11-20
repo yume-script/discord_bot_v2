@@ -17,6 +17,10 @@ os.environ["LLM_USAGE_DB_PATH"] = os.path.join(_STATE, "llm_usage.db")
 os.environ.setdefault("LITELLM_API_KEY", "test")
 os.environ.setdefault("LITELLM_BASE_URL", "http://llm.invalid")
 os.environ.setdefault("PORING_AGENT_CHANNEL_ID", "0")
+# 예전 세계(모든 인물·교대·빌런·정해진 모임)를 기준으로 쓴 테스트들 - 새 기본(역할 있는 인물만)은 test_ops_talk가 따로 본다
+os.environ.setdefault("PORING_ROLE_ONLY", "0")
+os.environ.setdefault("PORING_VILLAINS", "1")
+os.environ.setdefault("PORING_SCHEDULED_MEETINGS", "1")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json  # noqa: E402

@@ -103,8 +103,12 @@ class PoringFood(commands.Cog):
             self.load_guard.start()
             self.uptime_watch.start()
             self.gdw_queue_watch.start()
-            self.waitfree_pilot.start()
-            self.boa_agent_loop.start()
+            from poring_food import ops_talk
+            if ops_talk.enabled():   # 이슈가 생길 때 대화로 (정해진 시각의 기다무 판단·1시간 다운로드 판단은 끔)
+                self.ops_talk_loop.start()
+            else:
+                self.waitfree_pilot.start()
+                self.boa_agent_loop.start()
             self.app_updater.start()
             self.avatar_maker.start()
             self.lib3d_delivery.start()
@@ -127,6 +131,7 @@ class PoringFood(commands.Cog):
         self.gdw_queue_watch.cancel()
         self.waitfree_pilot.cancel()
         self.boa_agent_loop.cancel()
+        self.ops_talk_loop.cancel()
         self.app_updater.cancel()
         self.avatar_maker.cancel()
         self.lib3d_delivery.cancel()
@@ -296,6 +301,22 @@ class PoringFood(commands.Cog):
             log.exception("포링푸드 부하 대책 회의 실패")
         finally:
             self._load_council_task = None
+
+    @tasks.loop(minutes=2)
+    async def ops_talk_loop(self) -> None:
+        """서버 관리 대화(poring_food/ops_talk.py): 이슈가 생길 때마다 담당자들이 서로의 역할을 추론하며 대화하고 그 결론대로
+        서버를 관리한다 (정해진 시각의 회의는 없음). 다운로드 에이전트·기다무 시간대도 이 대화가 부른다."""
+        from poring_food import ops_talk
+        if not ops_talk.enabled() or getattr(self, "_ops_busy", False):
+            return
+        self._ops_busy = True
+        try:
+            async with self._lock:   # 대화가 인물 기억·연대기를 쓰므로 회차와 겹치지 않게
+                await asyncio.to_thread(ops_talk.step)
+        except Exception:  # noqa: BLE001
+            log.exception("서버 관리 대화 실패")
+        finally:
+            self._ops_busy = False
 
     @tasks.loop(minutes=10)
     async def boa_agent_loop(self) -> None:
@@ -862,6 +883,12 @@ class PoringFood(commands.Cog):
                 await interaction.followup.send(f"판단 실패: {type(e).__name__}: {str(e)[:300]}")
                 return
         await self._send_long(interaction, await asyncio.to_thread(boa_agent.recent_text, 3 if 지금판단 else 5))
+
+    @app_commands.command(name="서버대화", description="이슈가 생길 때 담당자들이 나눈 서버 관리 대화의 결론·조치·판단착오·회고")
+    async def ops_talk_view(self, interaction: Interaction):
+        from poring_food import ops_talk
+        await interaction.response.defer()
+        await self._send_long(interaction, await asyncio.to_thread(ops_talk.recent_text))
 
     @app_commands.command(name="올리기", description="텔레그램 자동 올리기 대기열 (올리는 중·대기열·자막 기다림·속도 제한·최근 기록)")
     async def tg_upload_view(self, interaction: Interaction):

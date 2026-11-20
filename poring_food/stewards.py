@@ -81,6 +81,18 @@ def _overrides() -> dict[str, str]:
     return out
 
 
+def role_names() -> set[str]:
+    """맡은 역할(시스템)이 있는 인물 이름들 - 조정자 포함, PORING_STEWARDS로 바꾼 담당도 (역할 없는 인물은 LLM 에이전트에서 뺀다)"""
+    over = _overrides()
+    return {CHAIR} | {over.get(k) or v["steward"] for k, v in SYSTEMS.items()}
+
+
+def roles_of(name: str) -> list[str]:
+    """그 인물이 맡은 시스템 키들"""
+    over = _overrides()
+    return [k for k, v in SYSTEMS.items() if (over.get(k) or v["steward"]) == name]
+
+
 def steward(key: str, agents: list[dict] | None = None) -> str:
     """지금 그 시스템을 맡은 사람 (담당자가 쉬는 중이면 같은 소속의 다른 인물, 없으면 조정자)."""
     want = _overrides().get(key) or SYSTEMS[key]["steward"]
