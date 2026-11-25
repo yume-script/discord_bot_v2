@@ -38,6 +38,7 @@ _ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _GATEWAY_SEPS = ("-", "__", "_", ".", "/")
 _gateway_of: dict[str, tuple[str, str]] = {}   # 원래 서버 이름 -> (게이트웨이 서버 이름, 도구 이름 앞머리 "plex-")
 # yaml에 적힌 게이트웨이 서버들 (부팅 때 연결에 실패해도 남겨 둔다 - server_session이 나중에 다시 붙는다)
+_main_loop = None   # 봇 이벤트 루프 (init_mcp가 정함) - 계속 열어 둔 세션은 이 루프에서만
 _gateway_servers_cfg: dict[str, tuple[str, list[str]]] = {}   # 원래 서버 이름 -> (게이트웨이 서버 이름, 그 게이트웨이의 서버 목록)
 
 
@@ -121,6 +122,8 @@ async def init_mcp() -> list:
     "{서버이름}_{도구이름}"으로 자동 개명해서 충돌을 피한다. 서버 하나가 실패해도
     그 서버만 건너뛰고 나머지는 정상 연결된다.
     """
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
     global _client, _tools, _admin_only_tools, _tools_by_server, _clients_by_server, _configs_by_server
 
     if not settings.MCP_SERVERS_CONFIG_PATH.exists():
@@ -305,6 +308,97 @@ def get_server_tools(server_name: str) -> list:
     return list(_tools_by_server.get(server_name, []))
 
 
+# ── 계속 열어 두는 세션 (자주 부르는 stdio 서버) ──
+# stdio MCP 서버는 세션을 열 때마다 프로그램을 새로 띄운다 (bookoasis는 매번 SSH + docker exec). 서버 조절처럼 몇 분마다
+# 묻는 곳이 있어 봇이 세션을 하나 열어 두고 다시 쓴다. 끊기거나 도구 호출이 실패(시간 초과·연결 끊김)하면 다음에 다시 연다.
+# 봇 이벤트 루프 안에서만 (다른 루프 - 봇 밖 스크립트 등 - 에서는 예전처럼 그때그때 연다). MCP_PERSISTENT="" 이면 끔.
+PERSISTENT = {s.strip() for s in os.getenv("MCP_PERSISTENT", "bookoasis,plex,tautulli,docker_bookoasis").split(",") if s.strip()}
+PERSISTENT_CALL_TIMEOUT = float(os.getenv("MCP_PERSISTENT_CALL_TIMEOUT", "60"))
+_persist: dict[str, dict] = {}
+
+
+async def _keep_open(server_name: str, holder: dict) -> None:
+    try:
+        client = _clients_by_server.get(server_name) or MultiServerMCPClient({server_name: _configs_by_server[server_name]})
+        async with client.session(server_name) as session:
+            holder["session"] = session
+            holder["ready"].set()
+            await holder["stop"].wait()
+    except Exception as e:  # noqa: BLE001
+        holder["error"] = e
+        log.warning("MCP '%s' 계속 열어 둔 세션이 끊김: %s", server_name, e)
+    finally:
+        holder["session"] = None
+        holder["ready"].set()
+
+
+class _KeptSession:
+    """계속 열어 둔 세션 - 도구 호출이 연결 문제로 실패하면 세션을 닫아 다음에 다시 열게 한다 (도구 자체의 오류는 그대로)"""
+
+    def __init__(self, server_name: str, holder: dict):
+        self._name, self._h = server_name, holder
+
+    def __getattr__(self, item):
+        return getattr(self._h["session"], item)
+
+    async def _guard(self, coro):
+        from mcp.shared.exceptions import McpError
+        try:
+            return await asyncio.wait_for(coro, PERSISTENT_CALL_TIMEOUT)
+        except McpError:
+            raise
+        except Exception:
+            self._h["stop"].set()   # 연결 문제 - 닫고 다음에 새로
+            raise
+
+    async def call_tool(self, *a, **k):
+        return await self._guard(self._h["session"].call_tool(*a, **k))
+
+    async def list_tools(self, *a, **k):
+        return await self._guard(self._h["session"].list_tools(*a, **k))
+
+
+class _KeptSessionCM:
+    def __init__(self, server_name: str):
+        self._name = server_name
+
+    async def __aenter__(self):
+        loop = asyncio.get_running_loop()
+        h = _persist.get(self._name)
+        if not h or h["task"].done() or h["stop"].is_set() or h["loop"] is not loop:
+            h = {"ready": asyncio.Event(), "stop": asyncio.Event(), "session": None, "error": None, "loop": loop}
+            h["task"] = loop.create_task(_keep_open(self._name, h))
+            _persist[self._name] = h
+            log.info("MCP '%s' 세션을 열어 둠 (자주 부르는 서버)", self._name)
+        await asyncio.wait_for(h["ready"].wait(), max(MCP_CONNECT_TIMEOUT_SEC, 30))
+        if h["session"] is None:
+            raise RuntimeError(f"MCP 서버 '{self._name}'에 붙지 못함: {h.get('error')}")
+        return _KeptSession(self._name, h)
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _bot_loop_running() -> bool:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return _main_loop is None or loop is _main_loop
+
+
+async def close_persistent() -> None:
+    """봇을 끌 때: 열어 둔 세션들을 닫는다"""
+    for h in list(_persist.values()):
+        h["stop"].set()
+    for h in list(_persist.values()):
+        try:
+            await asyncio.wait_for(h["task"], 10)
+        except Exception:  # noqa: BLE001
+            pass
+    _persist.clear()
+
+
 def server_session(server_name: str):
     """
     특정 MCP 서버에 세션 하나를 열어서 여러 도구를 연달아 호출할 때 쓴다 (async with).
@@ -317,6 +411,9 @@ def server_session(server_name: str):
     때까지 계속 "연결되어 있지 않음"이었다. 세션은 열 때마다 새로 붙으므로, 설정만 있으면 여기서 다시
     시도한다 (대화용 도구 목록에는 재시작 전까지 안 들어가지만 포링푸드 같은 세션 사용처는 살아난다).
     """
+    if server_name in PERSISTENT and server_name in _configs_by_server and server_name not in _gateway_of \
+            and server_name not in _gateway_servers_cfg and _bot_loop_running():
+        return _KeptSessionCM(server_name)
     if server_name in _gateway_of and server_name not in _clients_by_server:   # LiteLLM 게이트웨이로 옮긴 서버
         gw, prefix = _gateway_of[server_name]
         client = _clients_by_server.get(gw) or MultiServerMCPClient({gw: _configs_by_server[gw]})
