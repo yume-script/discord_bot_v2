@@ -67,6 +67,10 @@ deploy/     systemd 유닛 파일
    배포 중에 `scripts/sync_env.py --apply`도 돌아서, `env.example`에 새로 생긴 변수를 `.env`에 기본값으로 채운다
    (기존 값은 그대로, `.env`에만 있던 변수도 맨 아래에 그대로, 원래 파일은 `.env.bak.날짜시각`으로 백업). 끄려면 `SYNC_ENV=0`.
    직접 돌릴 때: `venv/bin/python scripts/sync_env.py`(바뀔 내용만 보기) / `--apply`(적용) / `--check`(새 변수 있으면 종료 코드 1).
+   **.env 나누기** (`scripts/split_env.py`): 기본(봇·서버 관리) 변수는 `.env`, 포링 이야기(오아시스 거리 인물·장면·취미…) 변수는 `poring.env`로.
+   변수를 읽는 코드를 훑어서 이야기 모듈만 읽는 변수를 `poring.env`로 보낸다 (LLM 모델·서버 조절·응답 확인·채우기·업데이트·다운로드 에이전트처럼
+   서버 관리도 쓰는 것은 `.env`). `venv/bin/python scripts/split_env.py`(무엇이 어디로 가는지만) / `--apply`(나눔, 둘 다 `.bak.날짜시각` 백업).
+   봇은 `.env` 다음에 `poring.env`를 읽고(같은 변수면 `.env` 값), 한 번 나눈 뒤에는 배포 때 `sync_env.py`가 둘 다 맞춘다(새 이야기 변수는 `poring.env`로).
    **안 쓰는 변수 정리**: `venv/bin/python scripts/prune_env.py`가 코드에서 더는 읽지 않는 `.env` 변수(와 겹쳐 적힌 변수의 앞엣것)를
    이름만 보여 주고, `--apply`면 지운다(`.env.bak.날짜시각` 백업, 그 변수의 설명 주석도 같이). 남길 것은 `--keep 이름,이름`.
    코드·설정 파일(*.py, *.sh, *.yaml …)에 이름이 나오는지로 가리고(테스트·문서·env.example만에 나오면 안 쓰는 것),

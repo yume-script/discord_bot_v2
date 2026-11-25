@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
+# 포링 이야기 변수는 따로 (scripts/split_env.py로 나눔) - .env 다음에 읽어서 같은 변수가 둘 다 있으면 .env 값
+load_dotenv(BASE_DIR / "poring.env")
 
 # [수정] .env에서 `KEY=   # 설명`처럼 빈 값 뒤에 주석을 붙이면 python-dotenv가 주석을 값으로 읽는다
 # (그래서 int()에서 봇이 죽고 재시작을 반복했다). "#"로 시작하는 값은 빈 값으로 본다.
