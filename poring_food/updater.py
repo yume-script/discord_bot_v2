@@ -330,6 +330,18 @@ def rollback(key: str, info: dict) -> tuple[bool, str]:
     return rc == 0, out.strip()[-300:]
 
 
+_OPS_SERVICE = {"bookoasis": "북오아시스", "plex": "Plex"}   # (운영자가 로그를 읽는 이름 - 나머지는 키 그대로)
+
+
+def _escalate(kind: str, key: str, text: str) -> None:
+    """규칙으로 못 푼 업데이트 문제 -> LLM 운영자에게 진단을 맡긴다"""
+    try:
+        from . import ops_agent
+        ops_agent.report(kind, _OPS_SERVICE.get(key, key), text)
+    except Exception as e:  # noqa: BLE001
+        print(f"[시설 정비] 운영자에게 넘기지 못함: {e}")
+
+
 def _decide(key: str, info: dict, who: str, decide=None) -> dict:
     app = APPS[key]
     if decide is None and JUDGE != "llm":
@@ -434,7 +446,11 @@ def step(now: datetime | None = None, checker=None, decide=None, runner=None, pl
                            + (f"이전 버전({_short(info['head'])})으로 되돌려 다시 켬. 이 버전은 다시 시도하지 않아요 - 확인 필요."
                               if back else f"되돌리기도 실패 - 바로 확인 필요 ({app['dir']}에서 `git checkout {info['head'][:7]}` 후 다시 시작).")
                            + f"\n```{out[-300:]}```" + ("" if back else f"\n```{bout}```"))})
+            if not back:
+                _escalate("rollback_failed", key, f"{app['label']} {ver} 업데이트 실패, 되돌리기도 실패: {bout[-200:]}")
         else:
+            if not app.get("local"):
+                _escalate("update_failed", key, f"{app['label']} {ver} 업데이트 실패: {out[-200:]}")
             events.append({"key": key, "who": who, "kind": "failed", "title": f"{app['facility']} 정비 실패",
                            "story": "", "text": (f"⚠️ {app['label']} 업데이트 실패 - 확인 필요. "
                            + (f"이전 버전은 {info['head']} (`apt-get install {app['package']}={info['head']}`로 돌아감)"

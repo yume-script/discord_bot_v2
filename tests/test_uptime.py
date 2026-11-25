@@ -14,6 +14,8 @@ SVC = [{"name": "YM_PLAYER", "url": "http://ym:8899/api/auth/state", "what": "�
 def _tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(uptime, "UPTIME_PATH", str(tmp_path / "uptime.json"))
     monkeypatch.setattr(uptime, "AUTORESTART", False)   # (자동 복구는 아래 시험에서만 - 진짜 ssh를 부르지 않게)
+    from poring_food import ops_agent
+    monkeypatch.setattr(ops_agent, "STATE_PATH", str(tmp_path / "ops_agent.json"))
 
 
 def run(minute, ym, plex=(True, 0.1, "")):
@@ -128,3 +130,16 @@ def test_restart_commands_and_failure(monkeypatch):
                             restarter=lambda cmd: (ran.append(cmd), (False, "Unit not found"))[1])
     assert ran == ["systemctl restart ymp2"]                     # Plex는 비워서 자동 복구 안 함
     assert any("⚠️ **YM_PLAYER** 다시 시작하지 못했어요" in m and "Unit not found" in m for m in msgs)
+
+
+def test_cap_and_failure_go_to_operator(monkeypatch):
+    from poring_food import ops_agent
+    monkeypatch.setattr(uptime, "AUTORESTART", True)
+    monkeypatch.setattr(ops_agent, "ENABLED", True)
+    monkeypatch.delenv("PORING_UPTIME_RESTART", raising=False)
+    res = {"http://ym:8899/api/auth/state": (False, 8.0, "x"), "http://plex:32400/identity": (True, 0.1, "")}
+    for m in range(3):
+        uptime.step(T0 + timedelta(minutes=m), prober=lambda url: res[url], tlist=SVC, restarter=lambda c: (False, "Unit not found"))
+    pend = ops_agent._load()["pending"]
+    assert [(p["kind"], p["service"]) for p in pend] == [("restart_failed", "YM_PLAYER")]
+    assert uptime._load()["svc"]["YM_PLAYER"]["down_min"] == 3   # 하루 운영 요약용

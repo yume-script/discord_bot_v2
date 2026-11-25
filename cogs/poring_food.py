@@ -101,6 +101,7 @@ class PoringFood(commands.Cog):
             self.uptime_watch.start()
             self.gdw_queue_watch.start()
             self.fill_loop.start()
+            self.ops_agent_loop.start()
             from poring_food import ops_talk
             if story and ops_talk.enabled():   # 이슈가 생길 때 인물 대화로 (정해진 시각의 기다무 판단·1시간 다운로드 판단은 끔)
                 self.ops_talk_loop.start()
@@ -135,6 +136,7 @@ class PoringFood(commands.Cog):
         self.uptime_watch.cancel()
         self.gdw_queue_watch.cancel()
         self.fill_loop.cancel()
+        self.ops_agent_loop.cancel()
         self.waitfree_pilot.cancel()
         self.boa_agent_loop.cancel()
         self.ops_talk_loop.cancel()
@@ -315,6 +317,22 @@ class PoringFood(commands.Cog):
                 await asyncio.to_thread(fill.notify, msgs)
         except Exception:  # noqa: BLE001
             log.exception("채우기 운영 실패")
+
+    @tasks.loop(minutes=5)
+    async def ops_agent_loop(self) -> None:
+        """LLM 운영자(poring_food/ops_agent.py): 규칙으로 못 푼 문제(자동 복구 한도·다시 시작 실패·업데이트 되돌리기 실패)가
+        쌓였을 때만 진단해 ⚙️ 운영 채널에. 그리고 매일 정한 시각에 하루 운영 요약(ops_digest.py, LLM 없음)."""
+        from poring_food import ops_agent, ops_digest
+        try:
+            msgs = await asyncio.to_thread(ops_agent.step)
+            if msgs:
+                await asyncio.to_thread(ops_agent.notify, msgs)
+        except Exception:  # noqa: BLE001
+            log.exception("운영자 진단 실패")
+        try:
+            await asyncio.to_thread(ops_digest.run)
+        except Exception:  # noqa: BLE001
+            log.exception("하루 운영 요약 실패")
 
     async def _load_council(self, ev: dict) -> None:
         from poring_food import loadshed   # (예전엔 이 import가 없어 회의가 늘 NameError로 실패했다)

@@ -105,6 +105,7 @@ def _auto_restart(t: dict, s: dict, now: datetime, restarter) -> str:
         if s.get("restart_capped"):
             return ""
         s["restart_capped"] = stamp
+        _escalate("restart_cap", t["name"], f"오늘 {RESTART_DAILY_MAX}번 다시 시작(`{cmd}`)해도 응답 없음 - {t.get('what', '')}")
         return (f"🧯 **{t['name']}** 자동 복구 한도 - 오늘 {RESTART_DAILY_MAX}번 다시 시작해도 응답이 없어요. 관리자 확인이 필요합니다 "
                 f"(`{cmd}`, 로그를 봐 주세요).")
     ok, err = restarter(cmd)
@@ -112,7 +113,17 @@ def _auto_restart(t: dict, s: dict, now: datetime, restarter) -> str:
     print(f"[응답 확인] {t['name']} 자동 다시 시작 ({'성공' if ok else '실패'}): {cmd} {err}")
     if ok:
         return f"🔧 **{t['name']}** 응답이 없어 다시 시작했어요 (오늘 {s['restarts']}번째, `{cmd}`) - 다시 응답하면 알릴게요."
+    _escalate("restart_failed", t["name"], f"`{cmd}` 실패: {err or '오류'}")
     return f"⚠️ **{t['name']}** 다시 시작하지 못했어요 (`{cmd}`): {err or '오류'}"
+
+
+def _escalate(kind: str, service: str, text: str) -> None:
+    """규칙으로 못 푼 문제 -> LLM 운영자(ops_agent)에게 진단을 맡긴다"""
+    try:
+        from . import ops_agent
+        ops_agent.report(kind, service, text)
+    except Exception as e:  # noqa: BLE001
+        print(f"[응답 확인] 운영자에게 넘기지 못함: {e}")
 _SAFE_URL = re.compile(r"^https?://[A-Za-z0-9.\-]+(:[0-9]+)?(/[A-Za-z0-9._~/\-]*)?$")
 
 
@@ -218,6 +229,9 @@ def step(now: datetime | None = None, prober=None, tlist: list[dict] | None = No
         s["fails"] = s.get("fails", 0) + 1
         if s["fails"] == 1:
             s["down_since"] = stamp
+        day = now.strftime("%Y-%m-%d")   # 하루 운영 요약용 - 오늘 응답 없던 분 (매분 확인이라 1번 = 약 1분)
+        s["down_min"] = (s.get("down_min", 0) if s.get("down_day") == day else 0) + 1
+        s["down_day"] = day
         if s["fails"] < FAIL_N:
             continue
         last = s.get("alerted")
