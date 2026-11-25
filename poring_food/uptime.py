@@ -18,6 +18,15 @@
 - FAIL_N(3)번 연속(약 3분) 응답이 없으면 "⛔ 응답 없음"을 채널(🛰️ 모니터링)과 관리자 카톡방에 알린다.
   계속 안 되면 REPEAT_MIN(180분)마다 다시, 돌아오면 "✅ 다시 응답"을 한 번 (몇 분 동안 멈췄는지).
 - 응답이 SLOW_SEC(5초)보다 느린 게 SLOW_N(5)번 이어지면 "🐢 느림"을 한 번 (빨라지면 조용히 풀림).
+- 자동 복구 (PORING_UPTIME_AUTORESTART, 기본 켬): RESTART_N(3)번 연속(약 3분) 응답이 없으면 그 서비스만 다시 시작한다
+  (plex01에 ssh - 서버 조절과 같은 PORING_LOADSHED_PLEX_SSH, 바꾸려면 PORING_UPTIME_RESTART_SSH).
+  응답하지 않는 서비스는 이미 아무도 못 쓰고 있으므로 재생 여부와 상관없이. 다시 시작 사이 RESTART_GAP_MIN(15분),
+  하루 RESTART_DAILY_MAX(3)번까지 - 넘으면 "자동 복구 한도"를 한 번 알리고 관리자에게 맡긴다.
+  명령 (PORING_UPTIME_RESTART="이름=명령;이름=명령"으로 바꿈, 명령을 비우면 그 서비스는 자동 복구 안 함):
+    YM_PLAYER              systemctl restart ym_player
+    Plex                   systemctl restart plexmediaserver
+    북오아시스             docker restart bookoasis
+    북오아시스 어시스턴트   systemctl restart bookoasis_assistant
 - PORING_UPTIME=0이면 끔. 카톡 알림은 PORING_HEALTH_ALERT를 따른다 (0이면 채널에만).
 저장: storage/poring_food/uptime.json {"svc": {이름: {"fails", "slow", "down_since", "alerted", "slow_alerted", "ms", "at", "error"}}}
 """
@@ -42,6 +51,68 @@ SLOW_SEC = float(os.getenv("PORING_UPTIME_SLOW_SEC", "5"))
 SLOW_N = 5
 REPEAT_MIN = 180
 NAME = "🛰️ 모니터링"
+AUTORESTART = os.getenv("PORING_UPTIME_AUTORESTART", "1") not in ("0", "false", "False", "")
+RESTART_N = max(2, int(os.getenv("PORING_UPTIME_RESTART_N", "3")))
+RESTART_GAP_MIN = int(os.getenv("PORING_UPTIME_RESTART_GAP_MIN", "15"))
+RESTART_DAILY_MAX = int(os.getenv("PORING_UPTIME_RESTART_DAILY_MAX", "3"))
+RESTART_TIMEOUT = 120
+_RESTART_DEFAULT = {"YM_PLAYER": "systemctl restart ym_player", "Plex": "systemctl restart plexmediaserver",
+                    "북오아시스": "docker restart bookoasis", "북오아시스 어시스턴트": "systemctl restart bookoasis_assistant"}
+
+
+def restart_cmds() -> dict:
+    """서비스 이름 -> 다시 시작 명령 (기본 + .env PORING_UPTIME_RESTART로 바꾸거나 비워서 끄기)"""
+    out = dict(_RESTART_DEFAULT)
+    for part in os.getenv("PORING_UPTIME_RESTART", "").split(";"):
+        name, eq, cmd = part.partition("=")
+        if eq and name.strip():
+            out[name.strip()] = cmd.strip()
+    return {k: v for k, v in out.items() if v}
+
+
+def _restart_ssh() -> str:
+    ssh = os.getenv("PORING_UPTIME_RESTART_SSH", "").strip()
+    if ssh:
+        return ssh
+    from . import loadshed
+    return loadshed.HOSTS["plex01"]["ssh"]
+
+
+def run_restart(cmd: str) -> tuple[bool, str]:
+    """다시 시작 명령 실행 (plex01에 ssh, ssh 주소가 비면 이 서버에서) -> (성공, 오류)"""
+    import subprocess
+    ssh = _restart_ssh()
+    args = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", ssh, cmd] if ssh else ["sh", "-c", cmd]
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, timeout=RESTART_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, repr(e)[:160]
+    return p.returncode == 0, (p.stderr or p.stdout or "").strip()[-160:]
+
+
+def _auto_restart(t: dict, s: dict, now: datetime, restarter) -> str:
+    """응답 없는 서비스 다시 시작 (조건이 맞을 때만) -> 알릴 글 (없으면 "")"""
+    cmd = restart_cmds().get(t["name"])
+    if not AUTORESTART or not cmd or s.get("fails", 0) < RESTART_N:
+        return ""
+    stamp, today = now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d")
+    if s.get("restart_day") != today:
+        s.update(restart_day=today, restarts=0, restart_capped="")
+    last = s.get("restart_at")
+    if last and (now - datetime.fromisoformat(last)).total_seconds() < RESTART_GAP_MIN * 60:
+        return ""
+    if s["restarts"] >= RESTART_DAILY_MAX:
+        if s.get("restart_capped"):
+            return ""
+        s["restart_capped"] = stamp
+        return (f"🧯 **{t['name']}** 자동 복구 한도 - 오늘 {RESTART_DAILY_MAX}번 다시 시작해도 응답이 없어요. 관리자 확인이 필요합니다 "
+                f"(`{cmd}`, 로그를 봐 주세요).")
+    ok, err = restarter(cmd)
+    s["restart_at"], s["restarts"] = stamp, s["restarts"] + 1
+    print(f"[응답 확인] {t['name']} 자동 다시 시작 ({'성공' if ok else '실패'}): {cmd} {err}")
+    if ok:
+        return f"🔧 **{t['name']}** 응답이 없어 다시 시작했어요 (오늘 {s['restarts']}번째, `{cmd}`) - 다시 응답하면 알릴게요."
+    return f"⚠️ **{t['name']}** 다시 시작하지 못했어요 (`{cmd}`): {err or '오류'}"
 _SAFE_URL = re.compile(r"^https?://[A-Za-z0-9.\-]+(:[0-9]+)?(/[A-Za-z0-9._~/\-]*)?$")
 
 
@@ -115,7 +186,7 @@ def _minutes(since: str, now: datetime) -> int:
         return 0
 
 
-def step(now: datetime | None = None, prober=None, tlist: list[dict] | None = None) -> list[str]:
+def step(now: datetime | None = None, prober=None, tlist: list[dict] | None = None, restarter=None) -> list[str]:
     """[스레드에서, 매분] 모두 물어보고 상태를 고친다. 알릴 글들을 돌려준다 (없으면 [])."""
     now = now or now_kst()
     tlist = [t for t in (tlist if tlist is not None else targets()) if t["url"]]
@@ -157,6 +228,9 @@ def step(now: datetime | None = None, prober=None, tlist: list[dict] | None = No
                         f"영향: {t['what']}이 안 될 수 있어요. (`{t['url']}`)")
             s["alerted"] = stamp
             print(f"[응답 확인] {t['name']} 응답 없음: {err}")
+        fix = _auto_restart(t, s, now, restarter or run_restart)
+        if fix:
+            msgs.append(fix)
     # 설정에서 빠진 서비스 기록은 지운다
     for name in [n for n in svc if n not in {t["name"] for t in tlist}]:
         svc.pop(name, None)

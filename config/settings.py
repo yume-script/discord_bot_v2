@@ -111,6 +111,9 @@ REDROID_WATCH_STATE_PATH = BASE_DIR / "storage" / "redroid_watch_state.json"
 # --- 포링푸드 (poring_food/ - 마법 판타지 세계 '오아시스 마을': 오아시스 마법도서관/별빛 환영극장/성벽 수비대, cogs/poring_food.py가 매시 실행) ---
 # 원래 별도 cron 프로젝트(/mnt/poring_food)였는데 봇으로 합쳤다. LLM/카톡 브릿지는 봇 설정을 쓴다.
 PORING_FOOD_ENABLED = os.environ.get("PORING_FOOD_ENABLED", "1") not in ("0", "false", "False", "")
+# 서버 관리(부하 조절·응답 확인과 자동 복구·원고 입고 대기열·다운로드 에이전트·앱 업데이트)는 이야기와 따로 켠다 -
+# PORING_FOOD_ENABLED=0(이야기 끔)이어도 SERVER_OPS_ENABLED=1(기본)이면 서버 관리는 돈다
+SERVER_OPS_ENABLED = os.environ.get("SERVER_OPS_ENABLED", "1") not in ("0", "false", "False", "")
 PORING_FOOD_RUN_MINUTE = _int("PORING_FOOD_RUN_MINUTE", 3)  # 매시 몇 분에 실행할지 (예전 cron: 매시 3분)
 PORING_FOOD_DATA_DIR = Path(os.environ.get("PORING_FOOD_DATA_DIR", str(BASE_DIR / "poring_food" / "data")))
 PORING_FOOD_STATE_DIR = Path(os.environ.get("PORING_FOOD_STATE_DIR", str(BASE_DIR / "storage" / "poring_food")))

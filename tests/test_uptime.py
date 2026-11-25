@@ -13,6 +13,7 @@ SVC = [{"name": "YM_PLAYER", "url": "http://ym:8899/api/auth/state", "what": "�
 @pytest.fixture(autouse=True)
 def _tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(uptime, "UPTIME_PATH", str(tmp_path / "uptime.json"))
+    monkeypatch.setattr(uptime, "AUTORESTART", False)   # (자동 복구는 아래 시험에서만 - 진짜 ssh를 부르지 않게)
 
 
 def run(minute, ym, plex=(True, 0.1, "")):
@@ -84,3 +85,46 @@ def test_notify_channel_and_kakao(monkeypatch):
     sent.clear()
     uptime.notify(["x"], T0, post=posted.append, send=sent.append)
     assert sent == []                                         # 카톡 알림을 끄면 채널에만
+
+
+def test_auto_restart_with_gap_and_daily_cap(monkeypatch):
+    monkeypatch.setattr(uptime, "AUTORESTART", True)
+    monkeypatch.delenv("PORING_UPTIME_RESTART", raising=False)
+    ran = []
+
+    def restarter(cmd):
+        ran.append(cmd)
+        return True, ""
+
+    def go(minute, ym):
+        res = {"http://ym:8899/api/auth/state": ym, "http://plex:32400/identity": (True, 0.1, "")}
+        return uptime.step(T0 + timedelta(minutes=minute), prober=lambda url: res[url], tlist=SVC, restarter=restarter)
+    down = (False, 8.0, "8초 안에 응답 없음")
+    assert go(0, down) == [] and go(1, down) == [] and ran == []
+    msgs = go(2, down)                                           # 3번 연속 -> 알리고 바로 다시 시작
+    assert ran == ["systemctl restart ym_player"] and any("🔧 **YM_PLAYER** 응답이 없어 다시 시작" in m for m in msgs)
+    assert go(3, down) == [] and len(ran) == 1                   # 간격(15분) 안에는 다시 안 함
+    go(2 + uptime.RESTART_GAP_MIN, down)
+    go(2 + 2 * uptime.RESTART_GAP_MIN, down)
+    assert len(ran) == uptime.RESTART_DAILY_MAX
+    capped = go(2 + 3 * uptime.RESTART_GAP_MIN, down)            # 하루 한도 -> 관리자에게 한 번만
+    assert len(ran) == uptime.RESTART_DAILY_MAX and any("자동 복구 한도" in m for m in capped)
+    assert not any("한도" in m for m in go(2 + 4 * uptime.RESTART_GAP_MIN, down))
+    back = go(200, (True, 0.1, ""))
+    assert back and back[0].startswith("✅ **YM_PLAYER** 다시 응답")
+
+
+def test_restart_commands_and_failure(monkeypatch):
+    monkeypatch.setattr(uptime, "AUTORESTART", True)
+    monkeypatch.setenv("PORING_UPTIME_RESTART", "Plex=;YM_PLAYER=systemctl restart ymp2")
+    cmds = uptime.restart_cmds()
+    assert "Plex" not in cmds and cmds["YM_PLAYER"] == "systemctl restart ymp2" and cmds["북오아시스"] == "docker restart bookoasis"
+    down = (False, 8.0, "연결 안 됨")
+    res = {"http://ym:8899/api/auth/state": down, "http://plex:32400/identity": down}
+    ran = []
+    msgs = []
+    for m in range(3):
+        msgs += uptime.step(T0 + timedelta(minutes=m), prober=lambda url: res[url], tlist=SVC,
+                            restarter=lambda cmd: (ran.append(cmd), (False, "Unit not found"))[1])
+    assert ran == ["systemctl restart ymp2"]                     # Plex는 비워서 자동 복구 안 함
+    assert any("⚠️ **YM_PLAYER** 다시 시작하지 못했어요" in m and "Unit not found" in m for m in msgs)

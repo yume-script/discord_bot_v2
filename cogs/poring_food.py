@@ -94,22 +94,25 @@ class PoringFood(commands.Cog):
         # [1회성] 인물 이름 변경 전 실행 기록을 새 이름으로 (조회 도구가 첫 회차 전에도 새 이름을 보게)
         from poring_food import rename_migration
         await asyncio.to_thread(rename_migration.migrate)
-        if settings.PORING_FOOD_ENABLED:
-            self.hourly.start()
+        story, ops = settings.PORING_FOOD_ENABLED, settings.PORING_FOOD_ENABLED or settings.SERVER_OPS_ENABLED
+        if ops:   # 서버 관리 - 이야기를 꺼도(PORING_FOOD_ENABLED=0) SERVER_OPS_ENABLED=1이면 돈다
             self.drain_outbox.start()
-            self.live_runner.start()
-            self.plex_watch.start()
-            self.book_watch.start()
             self.load_guard.start()
             self.uptime_watch.start()
             self.gdw_queue_watch.start()
             from poring_food import ops_talk
-            if ops_talk.enabled():   # 이슈가 생길 때 대화로 (정해진 시각의 기다무 판단·1시간 다운로드 판단은 끔)
+            if story and ops_talk.enabled():   # 이슈가 생길 때 인물 대화로 (정해진 시각의 기다무 판단·1시간 다운로드 판단은 끔)
                 self.ops_talk_loop.start()
             else:
-                self.waitfree_pilot.start()
+                if story:   # 기다무 시간대는 담당 인물 회의로 정한다 - 이야기를 끄면 하지 않음
+                    self.waitfree_pilot.start()
                 self.boa_agent_loop.start()
             self.app_updater.start()
+        if story:
+            self.hourly.start()
+            self.live_runner.start()
+            self.plex_watch.start()
+            self.book_watch.start()
             self.avatar_maker.start()
             self.lib3d_delivery.start()
             await self._start_webhook()
@@ -118,7 +121,8 @@ class PoringFood(commands.Cog):
                      settings.PORING_DISCORD_CHANNEL_ID or ("웹훅" if settings.PORING_DISCORD_WEBHOOK_URL else "없음"),
                      settings.PORING_KAKAO_ROOM_ID or "없음")
         else:
-            log.info("PORING_FOOD_ENABLED=0 - 포링푸드 매시 실행을 끈다.")
+            log.info("PORING_FOOD_ENABLED=0 - 포링푸드 이야기(매시 실행)를 끈다.%s",
+                     " 서버 관리는 계속 (SERVER_OPS_ENABLED=1)." if ops else " 서버 관리도 꺼짐 (SERVER_OPS_ENABLED=0).")
 
     async def cog_unload(self) -> None:
         self.hourly.cancel()
@@ -145,8 +149,9 @@ class PoringFood(commands.Cog):
         if not gdw_queue.enabled():
             return
         try:
+            quiet = None if settings.PORING_FOOD_ENABLED else (lambda *_a, **_k: None)   # 이야기를 끄면 인물 반응 없이 채널 알림만
             async with self._lock:
-                line = await asyncio.to_thread(gdw_queue.check)
+                line = await asyncio.to_thread(gdw_queue.check, None, None, quiet)
             if line:
                 log.info("포링푸드 원고 입고: %s", line)
         except Exception:  # noqa: BLE001
@@ -233,10 +238,11 @@ class PoringFood(commands.Cog):
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 서버 조절 실패")
             return
+        story = settings.PORING_FOOD_ENABLED   # (끄면 서버 조절·알림만 - 인물 세계 반영·비상 호출·부하 대책 회의는 안 함)
         # 불시 비상 호출: 재생 중에 서버 부하(CPU)가 갑자기 치솟으면 (poring_food/raids.py surge 모드)
         from poring_food import raids
         try:
-            sg = await asyncio.to_thread(raids.surge_due)
+            sg = await asyncio.to_thread(raids.surge_due) if story else None
             if sg:
                 async with self._lock:
                     await asyncio.to_thread(raids.run, None, False, None, None, sg)
@@ -259,6 +265,8 @@ class PoringFood(commands.Cog):
                 await asyncio.to_thread(facilities.notify, changed)
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 서버 조절/모니터링 알림 실패")
+        if not story:
+            return
         # 2) 인물 세계엔 잠금 안에서 바로 이어서 (거리 사건 + 관련 인물이 다음 회차를 기다리지 않고 지금 반응)
         async with self._lock:
             try:
@@ -357,6 +365,8 @@ class PoringFood(commands.Cog):
             await asyncio.to_thread(updater.notify, events)
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 시설 정비 알림 실패")
+        if not settings.PORING_FOOD_ENABLED:   # 이야기를 끄면 인물 세계 반영은 안 함
+            return
         async with self._lock:
             try:
                 await asyncio.to_thread(updater.reflect, events)
