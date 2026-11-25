@@ -1,5 +1,12 @@
 # 디스코드 봇 MCP 일부를 LiteLLM MCP 게이트웨이로
 
+> **바뀜**: tautulli·plex·bookoasis·docker_bookoasis는 다시 봇이 직접 띄운다 (`config/mcp_servers.yaml`). LiteLLM은 세션을 열 때마다
+> 거기 등록된 stdio 서버를 **전부** 새로 띄워서(세션 하나에 프로세스 10여 개), 서버 운영이 몇 분마다 부르면 LiteLLM 부하가 컸다.
+> 봇은 필요한 서버만 띄우고, 자주 부르는 서버(`MCP_PERSISTENT`, 기본 bookoasis·plex·tautulli·docker_bookoasis)는 세션을 열어 두고 다시 쓴다.
+> 게이트웨이에는 대화에서 가끔 쓰는 youtube·korea_weather만 남는다 - LiteLLM `config.yaml`의 `mcp_servers:`를 `mcp_servers.litellm.yaml`대로
+> 줄이고(직접 넣은 mcp-server-time 같은 것도 안 쓰면 지운다), `mcp.env`에서 TAUTULLI_API_KEY·PLEX_TOKEN은 빼도 된다.
+> override의 plex-mcp-server·ssh 키 볼륨과 `LITELLM_MCP_STDIO_EXTRA_COMMANDS=ssh`도 더는 필요 없다. 아래는 처음 옮길 때의 안내.
+
 봇이 직접 띄우던 MCP 서버 6개(youtube, tautulli, plex, korea_weather, bookoasis, docker_bookoasis)를 같은 서버의
 LiteLLM(도커)이 띄우고, 봇은 LiteLLM의 `/mcp/` 하나로 붙는다. 봇 서버의 파일·DB를 보는 서버(filesystem, sqlite,
 memory, docker_local, server_status, llm_usage)는 밖으로 내보내지 않게 봇에 그대로 둔다.
