@@ -85,8 +85,43 @@ def test_dirty_and_failure(monkeypatch, tmp_path):
     assert updater.guard("bookoasis", T0, _info(dirty=3), playing=0) is None     # update.sh가 알아서
     monkeypatch.setattr(updater, "STATE_PATH", str(tmp_path / "u3.json"))
     ev = updater.step(T0, checker={"bookoasis_assistant": _info()}.get, decide=lambda f: {"update": True},
-                      runner=lambda k, i: (False, "Traceback"))
-    assert ev[0]["kind"] == "failed" and "git checkout aaaaaaa" in ev[0]["text"]
+                      runner=lambda k, i: (False, "Traceback"), roller=lambda k, i: (False, "reset 실패"))
+    assert ev[0]["kind"] == "failed" and "git checkout aaaaaaa" in ev[0]["text"] and "되돌리기도 실패" in ev[0]["text"]
+
+
+def test_failure_rolls_back_and_skips_that_version(monkeypatch, tmp_path):
+    _env(monkeypatch, tmp_path)
+    rolled, runs = [], []
+    info = {"ym_player": _info()}
+    ev = updater.step(T0, checker=info.get, decide=lambda f: {"update": True},
+                      runner=lambda k, i: (runs.append(k), (False, "Traceback"))[1],
+                      roller=lambda k, i: (rolled.append((k, i["head"])), (True, "NOW aaaaaaa"))[1])
+    assert rolled == [("ym_player", "a" * 40)] and "이전 버전(aaaaaaa)으로 되돌려" in ev[0]["text"]
+    ev = updater.step(T0.replace(minute=31), checker=info.get, decide=lambda f: {"update": True},
+                      runner=lambda k, i: (runs.append(k), (True, ""))[1])
+    assert ev == [] and runs == ["ym_player"]            # 실패한 같은 버전은 다시 시도하지 않음
+    newer = {"ym_player": _info(up="e" * 40)}
+    updater.step(T0.replace(hour=6, minute=2), checker=newer.get, decide=lambda f: {"update": True},
+                 runner=lambda k, i: (runs.append(k), (True, ""))[1])
+    assert runs == ["ym_player", "ym_player"]            # 더 새 버전은 받음
+    assert "reset -q --hard {old}" in updater.APPS["ym_player"]["rollback"]
+    assert not updater.APPS["bookoasis"].get("rollback")   # 북오아시스(update.sh)·Plex(apt)·봇 자신은 되돌리기 없음
+
+
+def test_rule_decide(monkeypatch, tmp_path):
+    assert updater.rule_decide("- (fix) 빨라짐\n- 화면 정리")["update"]
+    for manual in ("- .env에 NEW_KEY 추가 필요", "- DB 마이그레이션을 직접 실행", "BREAKING: config 형식 변경",
+                   "- 수동으로 설정해 주세요", "- requires config change"):
+        d = updater.rule_decide(manual)
+        assert not d["update"] and "수동 작업 표시" in d["reason"], manual
+    _env(monkeypatch, tmp_path)   # decide를 안 주면 규칙으로 (LLM·인물 회의 없음)
+    monkeypatch.setattr(updater, "JUDGE", "rule")
+    runs = []
+    ev = updater.step(T0, checker={"bookoasis_assistant": _info(log=("- .env에 X 추가",))}.get,
+                      runner=lambda k, i: (runs.append(k), (True, ""))[1])
+    assert runs == [] and ev[0]["kind"] == "deferred" and ".env" in ev[0]["text"]
+    ev = updater.step(T0.replace(minute=31), checker={"ym_player": _info()}.get, runner=lambda k, i: (runs.append(k), (True, ""))[1])
+    assert runs == ["ym_player"] and ev[0]["kind"] == "updated"
 
 
 def test_tool_policy():
