@@ -334,11 +334,14 @@ python app.py
     저장소는 plex01에서 한 번 직접 바꿔 둔다: `sudo rm /etc/apt/sources.list.d/plexmediaserver.list` 후
     `curl -LsSf https://repo.plex.tv/scripts/setupRepo.sh | sudo bash` (묻고 답하는 스크립트라 봇이 대신 못 함). 도커 Plex는 대상이 아니다),
     그리고 **이 봇 자신**(etc의 봇 폴더 - `scripts/git_pull_deploy.sh`를 따로 띄워 받아서 스스로 다시 켠다. 시청·독서와 상관없어 재생 중이든
-    몇 시든 하고, 로컬 수정이 있으면 하지 않는다. 10분 안에 다시 켜지지 않으면 ⚠️로 알림. 경로는 `PORING_UPDATE_DISCORD_BOT_DIR`). 새 버전을 처음 보면 그 시설 기관 담당 인물이 LLM으로
-    받을지 정하고(.env/설정 추가·수동 마이그레이션·호환 깨짐이 적혀 있으면 미루고 알림) 이야기 한두 문장을 쓴다. 실행은 재생 없음 ·
+    몇 시든 하고, 로컬 수정이 있으면 하지 않는다. 10분 안에 다시 켜지지 않으면 ⚠️로 알림. 경로는 `PORING_UPDATE_DISCORD_BOT_DIR`). 새 버전을 처음 보면 받을지 정한다 -
+    기본은 **규칙**(`PORING_UPDATE_JUDGE=rule`, LLM 없음): 변경 내용에 .env/설정 추가·마이그레이션·호환 깨짐·수동 작업 표시가 있으면 미루고 알림,
+    없으면 받는다. `PORING_UPDATE_JUDGE=llm`이면 예전처럼 담당 인물 회의(LLM)가 정하고 이야기 한두 문장을 쓴다.
+    **실패하면 되돌리기**: YM_PLAYER·짐꾼·3D 서재(git으로 까는 앱)는 업데이트가 실패하면 이전 커밋으로 되돌려(`git reset --hard` + pip + 다시 시작)
+    다시 켜고, 그 버전은 더 새 버전이 오거나 손으로(`update_app`) 할 때까지 다시 시도하지 않는다 (북오아시스 update.sh·Plex apt·봇 자신은 알림만). 실행은 재생 없음 ·
     plex01 2단계 이하 · 로컬 수정 없음(북오아시스 제외 - update.sh가 처리) · 북오아시스는 04~08시일 때만. 끝나면 서비스/컨테이너가
     살아 있는지 확인하고 채널에 ✅/⚠️(되돌릴 커밋) + 거리 사건(관련 인물 바로 반응). 도구 `get_app_versions` / `update_app`(관리자).
-    `.env`: `PORING_UPDATE_AUTO=0`(끔), `PORING_UPDATE_<KEY>_DIR`, `PORING_UPDATE_<KEY>_HOURS`(예: `4-8`, 빈 값 = 언제든).
+    `.env`: `PORING_UPDATE_AUTO=0`(끔), `PORING_UPDATE_JUDGE`(rule/llm), `PORING_UPDATE_<KEY>_DIR`, `PORING_UPDATE_<KEY>_HOURS`(예: `4-8`, 빈 값 = 언제든).
   - 단계 변화와 조치는 💠 서버 조절 채널 한 줄 + 거리 사건(권지아·권태준·애순이가 바로 반응). 모니터링 사고 알림으로는 치지 않는다.
     장애 비상 위험도는 가장 높은 지수. `/포링푸드비상`에 지금 단계/지수/조치. 시험만 하려면 `PORING_LOADSHED_DRY=1`, 끄려면 `PORING_LOADSHED=0`.
 - **바로 전파** (`agents.react_now`, 봇 `load_guard` 매분): 서버 조절이 컨테이너를 내리거나/늦추거나 되돌린 순간, 그리고 표에 있는

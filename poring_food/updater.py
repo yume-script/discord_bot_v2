@@ -43,6 +43,10 @@ from .config import STATE_DIR
 ENABLED = os.getenv("PORING_UPDATE_AUTO", "1") not in ("0", "false", "False", "")
 STATE_PATH = os.path.join(STATE_DIR, "updater.json")
 CHECK_MIN = 30
+# 새 버전을 받을지: rule(기본) = 변경 내용에 수동 작업 표시가 없으면 받는다 (LLM 없음) / llm = 담당 인물 회의(예전 방식)
+JUDGE = os.getenv("PORING_UPDATE_JUDGE", "rule").strip().lower()
+MANUAL_RE = re.compile(r"\.env|환경\s*변수|마이그레이션|migrat|수동|손으로|직접\s*(설정|실행|설치)|breaking|호환\s*(깨|안\s*됨|되지)|"
+                       r"설정\s*(을|를)?\s*(추가|바꿔|변경)해|manual|requires? (?:a )?(?:config|setup)", re.I)
 MAX_STAGE = 2
 NAME = "🛠️ 시설 정비"
 
@@ -72,6 +76,8 @@ APPS = {
                   "run": ("git pull --ff-only -q && { [ ! -x .venv/bin/pip ] || .venv/bin/pip install -q -r requirements.txt; } "
                           "&& systemctl restart ym_player"), "notes": "",
                   "health": "sleep 5; systemctl is-active -q ym_player",
+                  "rollback": ("git reset -q --hard {old} && { [ ! -x .venv/bin/pip ] || .venv/bin/pip install -q -r requirements.txt; } "
+                               "&& systemctl restart ym_player"),
                   "hours": _hours("PORING_UPDATE_YM_PLAYER_HOURS", "")},
     "bookoasis_assistant": {"label": "짐꾼(bookoasis_assistant)", "facility": "편집국 원고 운반 자동화 봇",
                             "company": worldcfg.BOOK, "system": "assistant", "affects": ["bookoasis"],
@@ -80,6 +86,8 @@ APPS = {
                             "run": ("git pull --ff-only -q && { [ ! -x venv/bin/pip ] || venv/bin/pip install -q -r requirements.txt; } "
                                     "&& systemctl restart bookoasis_assistant"), "notes": "",
                             "health": "sleep 5; systemctl is-active -q bookoasis_assistant",
+                            "rollback": ("git reset -q --hard {old} && { [ ! -x venv/bin/pip ] || venv/bin/pip install -q -r requirements.txt; } "
+                                         "&& systemctl restart bookoasis_assistant"),
                             "hours": _hours("PORING_UPDATE_BOOKOASIS_ASSISTANT_HOURS", "")},
     # 3D 서재: 영상 재생·책 읽기 경로가 아니라 시간대 제한 없음. 새 의존성이 생길 수 있어 pip도 같이 (venv가 없으면 건너뜀)
     "bookoasis_3d": {"label": "3D 서재(bookoasis_3d)", "facility": "편집국 3D 서재", "company": worldcfg.BOOK,
@@ -88,6 +96,8 @@ APPS = {
                      "run": ("git pull --ff-only -q && { [ ! -x venv/bin/pip ] || venv/bin/pip install -q -r requirements.txt; } "
                              "&& systemctl restart bookoasis_3d"), "notes": "CHANGELOG.md",
                      "health": "sleep 5; systemctl is-active -q bookoasis_3d",
+                     "rollback": ("git reset -q --hard {old} && { [ ! -x venv/bin/pip ] || venv/bin/pip install -q -r requirements.txt; } "
+                                  "&& systemctl restart bookoasis_3d"),
                      "hours": _hours("PORING_UPDATE_BOOKOASIS_3D_HOURS", "")},
     # Plex: apt 저장소(repo.plex.tv)로 깐 것만. 다시 켜질 때 재생이 끊기므로 재생 없음 + 새벽 시간대에만
     "plex": {"label": "Plex Media Server", "facility": "영상팀 상영관", "company": worldcfg.CINEMA,
@@ -300,8 +310,30 @@ def run_update(key: str, info: dict) -> tuple[bool, str]:
     return rc == 0, out.strip()[-600:]
 
 
+def rule_decide(changes: str) -> dict:
+    """규칙 판단: 변경 내용에 수동 작업(.env·마이그레이션·호환 깨짐 등) 표시가 있으면 미루고, 없으면 받는다"""
+    m = MANUAL_RE.search(changes or "")
+    if m:
+        line = next((ln.strip() for ln in (changes or "").splitlines() if m.group(0) in ln), m.group(0))
+        return {"update": False, "reason": f"변경 내용에 수동 작업 표시 - \"{line[:80]}\"", "story": ""}
+    return {"update": True, "reason": "수동 작업 표시 없음 (규칙)", "story": ""}
+
+
+def rollback(key: str, info: dict) -> tuple[bool, str]:
+    """업데이트가 실패하면 이전 커밋으로 되돌리고 다시 켠다 (git으로 까는 앱만 - 로컬 수정이 있으면 애초에 업데이트하지 않으므로 reset이 안전)"""
+    app = APPS[key]
+    tpl = app.get("rollback")
+    if not tpl or not re.fullmatch(r"[0-9a-f]{7,40}", str(info.get("head") or "")):
+        return False, "되돌리기 없음"
+    script = f"{_cd(app)} && ({tpl.replace('{old}', info['head'])}); rc=$?; {app['health']}; h=$?; echo NOW $(git rev-parse --short HEAD) RC $rc HEALTH $h; [ $rc -eq 0 ] && [ $h -eq 0 ]"
+    rc, out = waitfree._remote(script, 600)
+    return rc == 0, out.strip()[-300:]
+
+
 def _decide(key: str, info: dict, who: str, decide=None) -> dict:
     app = APPS[key]
+    if decide is None and JUDGE != "llm":
+        return rule_decide(_changes(info))
     facts = (f"앱: {app['label']} (거리 시설: {app['facility']})\n"
              f"지금 버전: {info.get('version') or info['head'][:7]} → 새 버전: {info.get('new_version') or info['up'][:7]}\n"
              f"새 커밋 {len(info.get('log') or [])}개\n변경 내용:\n{_changes(info)}")
@@ -323,7 +355,7 @@ def _who(system: str) -> str:
 
 
 def step(now: datetime | None = None, checker=None, decide=None, runner=None, playing: int | None = -1,
-         only: str | None = None, force: bool = False) -> list[dict]:
+         only: str | None = None, force: bool = False, roller=None) -> list[dict]:
     """[30분마다, 스레드에서] 확인 → (새 버전이면) 판단 → 안전할 때 실행 → 알릴 일 목록.
     알릴 일: {"key", "who", "kind": "updated"|"failed"|"deferred", "text", "story", "title"}"""
     if not ENABLED:
@@ -355,6 +387,8 @@ def step(now: datetime | None = None, checker=None, decide=None, runner=None, pl
             continue
         if info["head"] == info["up"]:
             a.pop("pending", None)
+            continue
+        if a.get("failed_up") == info["up"] and not only:   # 실패해서 되돌린 버전 - 더 새 버전이 오거나 손으로(update_app) 할 때까지
             continue
         who = _who(app["system"])
         pend = a.get("pending") or {}
@@ -392,6 +426,14 @@ def step(now: datetime | None = None, checker=None, decide=None, runner=None, pl
             events.append({"key": key, "who": who, "kind": "updated", "title": f"{app['facility']} 정비 완료",
                            "story": pend["story"], "text": f"{app['label']} {info.get('version') or _short(info['head'])} → {ver} "
                            f"업데이트하고 다시 켬 ({pend['reason']})"})
+        elif app.get("rollback"):   # 이전 커밋으로 되돌리고 다시 켬 - 같은 버전은 다시 시도하지 않음 (관리자 확인)
+            back, bout = (roller or rollback)(key, info)
+            a["failed_up"] = info["up"]
+            events.append({"key": key, "who": who, "kind": "failed", "title": f"{app['facility']} 정비 실패",
+                           "story": "", "text": (f"⚠️ {app['label']} {ver} 업데이트 실패 → "
+                           + (f"이전 버전({_short(info['head'])})으로 되돌려 다시 켬. 이 버전은 다시 시도하지 않아요 - 확인 필요."
+                              if back else f"되돌리기도 실패 - 바로 확인 필요 ({app['dir']}에서 `git checkout {info['head'][:7]}` 후 다시 시작).")
+                           + f"\n```{out[-300:]}```" + ("" if back else f"\n```{bout}```"))})
         else:
             events.append({"key": key, "who": who, "kind": "failed", "title": f"{app['facility']} 정비 실패",
                            "story": "", "text": (f"⚠️ {app['label']} 업데이트 실패 - 확인 필요. "
