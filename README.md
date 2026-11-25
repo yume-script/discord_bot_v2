@@ -273,6 +273,11 @@ python app.py
     (YM_PLAYER `systemctl restart ym_player`, Plex `systemctl restart plexmediaserver`, 북오아시스 `docker restart bookoasis`,
     어시스턴트 `systemctl restart bookoasis_assistant` - `PORING_UPTIME_RESTART="이름=명령;이름="`으로 바꾸거나 끔).
     응답하지 않는 서비스는 이미 아무도 못 쓰므로 재생 여부와 상관없이, 다시 시작 사이 15분·하루 3번까지 - 넘으면 🧯 관리자에게.
+  - **채우기 운영** (`poring_food/fill.py`, `PORING_FILL`, 기본 켬, 5분마다, LLM 없음): 서버 조절이 '바쁠 때 늦추기'라면 이건
+    '한가할 때 다 돌리기'. 재생 중이면 텔레그램 인코딩 우선순위를 낮게(재생 변환이 먼저), 재생이 끝나고 10분(`PORING_FILL_IDLE_MIN`)
+    지났고 서버가 2단계(`PORING_FILL_MAX_STAGE`) 이하면 인코딩 우선순위 보통(가장 빠름), rclone 업로드 속도 제한 풀기(서버 조절이
+    늦추는 중이 아닐 때), 웹툰 다운로더가 놀고 있으면 전체 실행(3시간에 한 번까지). 바뀔 때만 쓰고 한 일만 채널(⚙️ 운영)에 알린다.
+    웹툰 동시 수·일정, 텔레그램 규칙·시간대는 건드리지 않는다. `/서비스상태`에 지금 모드가 나온다. BOA 2.79.7+ 필요.
   - **서버 관리와 이야기 따로 켜기** (`SERVER_OPS_ENABLED`, 기본 켬): `PORING_FOOD_ENABLED=0`으로 이야기(매시 회차·인물 대화·
     장면·취미)를 꺼도 서버 조절·응답 확인과 자동 복구·원고 입고 대기열·다운로드 에이전트(1시간마다 직접 판단)·앱 업데이트는 돈다.
     이때는 인물 회의(서버 관리 대화·부하 대책 회의·기다무 시간대 회의)와 인물 세계 반영·비상 호출은 하지 않는다.
