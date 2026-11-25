@@ -269,6 +269,13 @@ python app.py
     북오아시스(`PORING_BOOKOASIS_URL`), 북오아시스 어시스턴트(`PORING_ASSISTANT_URL` `/healthz`), 그 밖(`PORING_UPTIME_EXTRA="IPTV=http://…"`).
     3번 연속(약 3분) 응답이 없거나 5xx면 채널(🛰️ 모니터링)과 관리자 카톡방에 ⛔, 계속이면 3시간마다 다시, 돌아오면 ✅(몇 분 멈췄는지).
     5분째 5초 넘게 걸리면 🐢 한 번. 주소가 없는 서비스는 확인하지 않는다. `/서비스상태`(관리자)로 지금 결과(응답 시간)를 본다.
+    **자동 복구** (`PORING_UPTIME_AUTORESTART`, 기본 켬): 3번 연속 응답이 없으면 그 서비스만 plex01에서 다시 시작한다
+    (YM_PLAYER `systemctl restart ym_player`, Plex `systemctl restart plexmediaserver`, 북오아시스 `docker restart bookoasis`,
+    어시스턴트 `systemctl restart bookoasis_assistant` - `PORING_UPTIME_RESTART="이름=명령;이름="`으로 바꾸거나 끔).
+    응답하지 않는 서비스는 이미 아무도 못 쓰므로 재생 여부와 상관없이, 다시 시작 사이 15분·하루 3번까지 - 넘으면 🧯 관리자에게.
+  - **서버 관리와 이야기 따로 켜기** (`SERVER_OPS_ENABLED`, 기본 켬): `PORING_FOOD_ENABLED=0`으로 이야기(매시 회차·인물 대화·
+    장면·취미)를 꺼도 서버 조절·응답 확인과 자동 복구·원고 입고 대기열·다운로드 에이전트(1시간마다 직접 판단)·앱 업데이트는 돈다.
+    이때는 인물 회의(서버 관리 대화·부하 대책 회의·기다무 시간대 회의)와 인물 세계 반영·비상 호출은 하지 않는다.
   - **부하 대책 회의** (`PORING_LOADSHED_COUNCIL`, 기본 켬): 경보가 2단계(`PORING_LOADSHED_COUNCIL_STAGE`) 이상으로 오르면 30분에 한 번,
     담당자들이 자기 시설이 부하에 얼마나 원인인지 숫자로 **보고**하고(서버 담당 권지아 - 호스트 전체에서 CPU를 쓰는 곳, 원인을 맡은 담당,
     시청 담당 소라) 대표 **애순이가 지시**한다: 원인을 만든 쪽(웹툰 내려받기 → 원고 운반 봇, 영상 입고 → 업로드)을 지금 늦출지, 지켜볼지.
