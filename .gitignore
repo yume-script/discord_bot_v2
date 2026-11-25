@@ -1,5 +1,7 @@
 # 시크릿 - 토큰/API 키가 들어 있으므로 절대 커밋하지 않는다
 .env
+poring.env
+*.env.bak.*
 *.key
 *.pem
 

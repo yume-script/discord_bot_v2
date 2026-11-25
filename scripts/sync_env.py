@@ -90,6 +90,10 @@ def build(template_path: str, env_path: str) -> tuple[str, list[str], list[str],
 
 
 def main(argv: list[str] | None = None) -> int:
+    # .env를 이미 나눴으면(poring.env가 있으면) 둘 다 맞춘다 - 새 포링 이야기 변수가 .env로 들어가지 않게 (split_env.py)
+    if os.path.exists(os.path.join(BASE_DIR, "poring.env")) and not any(a.startswith("--env") or a.startswith("--example") for a in (argv or sys.argv[1:])):
+        import split_env
+        return split_env.main(argv)
     ap = argparse.ArgumentParser(description="env.example에 맞춰 .env를 채운다 (기존 값 유지, 새 변수만 추가)")
     ap.add_argument("--env", default=os.path.join(BASE_DIR, ".env"))
     ap.add_argument("--example", default=os.path.join(BASE_DIR, "env.example"))
