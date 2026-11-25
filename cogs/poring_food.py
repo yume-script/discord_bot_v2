@@ -100,6 +100,7 @@ class PoringFood(commands.Cog):
             self.load_guard.start()
             self.uptime_watch.start()
             self.gdw_queue_watch.start()
+            self.fill_loop.start()
             from poring_food import ops_talk
             if story and ops_talk.enabled():   # 이슈가 생길 때 인물 대화로 (정해진 시각의 기다무 판단·1시간 다운로드 판단은 끔)
                 self.ops_talk_loop.start()
@@ -133,6 +134,7 @@ class PoringFood(commands.Cog):
         self.load_guard.cancel()
         self.uptime_watch.cancel()
         self.gdw_queue_watch.cancel()
+        self.fill_loop.cancel()
         self.waitfree_pilot.cancel()
         self.boa_agent_loop.cancel()
         self.ops_talk_loop.cancel()
@@ -299,6 +301,20 @@ class PoringFood(commands.Cog):
                 await asyncio.to_thread(uptime.notify, msgs)
         except Exception:  # noqa: BLE001
             log.exception("포링푸드 서비스 응답 확인 실패")
+
+    @tasks.loop(minutes=5)
+    async def fill_loop(self) -> None:
+        """채우기 운영(poring_food/fill.py), 5분마다: 재생 중엔 텔레그램 인코딩을 양보, 아무도 안 보면 인코딩 최대·rclone 업로드
+        제한 풀기·놀고 있는 웹툰 다운로더 실행. LLM·인물 대화 없이 규칙으로."""
+        from poring_food import fill
+        if not fill.ENABLED:
+            return
+        try:
+            msgs = await asyncio.to_thread(fill.step)
+            if msgs:
+                await asyncio.to_thread(fill.notify, msgs)
+        except Exception:  # noqa: BLE001
+            log.exception("채우기 운영 실패")
 
     async def _load_council(self, ev: dict) -> None:
         from poring_food import loadshed   # (예전엔 이 import가 없어 회의가 늘 NameError로 실패했다)
@@ -922,8 +938,9 @@ class PoringFood(commands.Cog):
         if not is_admin(interaction.user.id):
             await interaction.response.send_message("🚫 관리자만 사용할 수 있는 명령이에요.", ephemeral=True)
             return
-        from poring_food import uptime
+        from poring_food import fill, uptime
         text = await asyncio.to_thread(uptime.status_text)
+        text += "\n\n" + await asyncio.to_thread(fill.status_text)   # 채우기 운영 (재생 중 양보 / 한가할 때 채우기)
         await interaction.response.send_message(text[:1990], ephemeral=True)
 
     @app_commands.command(name="포링푸드명단", description="[관리자] 지금 스스로 사는 인물들의 소속/자리/맡은 일/지금 하는 일을 봅니다")
