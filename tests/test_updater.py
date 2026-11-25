@@ -29,6 +29,8 @@ def _env(monkeypatch, tmp_path, stage=1, playing=0):
     monkeypatch.setattr(loadshed, "_load", lambda: {"hosts": {"plex01": {"stage": stage}}})
     monkeypatch.setattr(loadshed, "_viewing", lambda: (playing, 0))
     monkeypatch.setattr(updater, "_who", lambda company: "담당자")
+    from poring_food import ops_agent
+    monkeypatch.setattr(ops_agent, "STATE_PATH", str(tmp_path / "ops_agent.json"))
 
 
 def test_step_updates_when_safe(monkeypatch, tmp_path):
