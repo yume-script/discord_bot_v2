@@ -56,12 +56,27 @@ WTM_HUMAN_ONLY = {   # 돈·취향·작업 방식 - 사람이 정한다 (BOA 잠
     "HIDE_BL_GL": "BL·GL 숨기기(취향)", "WORKER_MODE": "작업 프로세스 방식", "LOW_PRIORITY_MODE": "CPU 양보 끄기",
     "AUTO_SUBSCRIBE_NEW_TITLES": "신간 전부 자동 구독",
 }
-LIMITS = {   # 칸: (최소, 최대) - 서버 경보 2단계 이상이면 아래 BUSY_MAX
+LIMITS = {   # 칸: (최소, 최대) - 서버 경보 2단계 이상이면 아래 STAGE_CAPS
     "PARALLEL_TITLES": (1, 10), "MAX_CONCURRENT_DOWNLOADS": (1, 16), "DELAY_SECONDS": (0.2, 10),
     "MAX_NEW_EPISODES_PER_TITLE": (1, 50), "WAITFREE_CHECK_MINUTES": (3, 60), "REQUEST_TIMEOUT_SECONDS": (5, 60),
     "INITIAL_EPISODES_LIMIT": (0, 200), "FINISHED_SCAN_HOUR": (0, 23), "WAITFREE_PLAN_HOUR": (0, 23),
 }
-BUSY_MAX = {"PARALLEL_TITLES": 3, "MAX_CONCURRENT_DOWNLOADS": 8}
+# 서버 경보 단계별 속도 상한 (동시 작품, 동시 이미지, 회차 간 대기 최소) - 부하가 높으면 멈추지 않고 이만큼 늦춘다.
+# 채우기 운영(fill)이 규칙으로 5분마다 맞추고 한가해지면 되돌린다. 에이전트의 쓰기도 이 상한을 넘지 못한다
+STAGE_CAPS = {2: (3, 8, 0.2), 3: (2, 6, 1.0), 4: (1, 4, 2.0)}
+# 끄지 않는 칸 - 부하가 높으면 끄지 말고 속도를 낮춘다 (끄는 것은 관리자만)
+NEVER_OFF = {"ENABLE_SCHEDULER": "자동 실행", "KAKAO_ENABLE": "카카오 받기"}
+
+
+def stage_caps(stage: int):
+    """경보 단계 -> (동시 작품 최대, 동시 이미지 최대, 회차 간 대기 최소) 또는 None (2단계 미만)"""
+    if stage is None or stage < 2:
+        return None
+    return STAGE_CAPS[min(int(stage), max(STAGE_CAPS))]
+
+
+def _off(v) -> bool:
+    return v in (False, "false", "False", "0", 0, None, "off")
 # 관리자가 올려 둔 속도(동시 작품·이미지 수, 고속 모드)는 서버가 한가할 때(경보 2단계 미만) 낮추지 않는다 - 제안으로만
 SPEED_KEYS = ("PARALLEL_TITLES", "MAX_CONCURRENT_DOWNLOADS")
 TGUP_LIMITS = {"encode_slots": (1, 2), "interval": (5, 1440)}
@@ -121,6 +136,9 @@ def guard(name: str, args: dict, stage: int, state: dict, now: float | None = No
         for k, v in values.items():
             if k in WTM_HUMAN_ONLY:
                 return f"{k}({WTM_HUMAN_ONLY[k]})는 관리자가 정함"
+            if k in NEVER_OFF and _off(v):
+                return (f"{k}({NEVER_OFF[k]})는 끄지 않음 - 서버가 바쁘면 멈추지 말고 속도를 낮춘다 "
+                        "(경보 단계에 맞춰 채우기 운영이 자동으로 낮추고 한가해지면 되돌림)")
             if k == "FAST_MODE" and v in (True, "true", "1", 1) and stage >= 2:
                 return f"서버 경보 {stage}단계라 고속 모드는 켜지 않음"
             cur = state.get("wtm_current") or {}
@@ -143,10 +161,12 @@ def guard(name: str, args: dict, stage: int, state: dict, now: float | None = No
                 except (TypeError, ValueError):
                     return f"{k}는 숫자여야 함"
                 lo, hi = LIMITS[k]
-                if stage >= 2 and k in BUSY_MAX:
-                    hi = min(hi, BUSY_MAX[k])
+                caps = stage_caps(stage)
+                if caps:
+                    hi = min(hi, {"PARALLEL_TITLES": caps[0], "MAX_CONCURRENT_DOWNLOADS": caps[1]}.get(k, hi))
+                    lo = max(lo, caps[2]) if k == "DELAY_SECONDS" else lo
                 if not lo <= num <= hi:
-                    return f"{k}={v}는 안전 범위({lo}~{hi}{', 서버 경보 2단계 이상' if stage >= 2 and k in BUSY_MAX else ''}) 밖"
+                    return f"{k}={v}는 안전 범위({lo}~{hi}{f', 서버 경보 {stage}단계' if caps else ''}) 밖"
         return ""
     if name == "tgup_set_settings":
         st = args.get("settings") if isinstance(args.get("settings"), dict) else {}
@@ -169,6 +189,8 @@ def guard(name: str, args: dict, stage: int, state: dict, now: float | None = No
     if name == "wtm_run":
         job = args.get("job")
         if job == "cancel_job":
+            if stage >= 2:
+                return f"서버 경보 {stage}단계라도 작업을 멈추지 않음 - 속도는 채우기 운영이 경보 단계에 맞춰 낮춤"
             return ""
         if job not in ("scan_now", "run_full_cycle_now", "scan_finished_now"):
             return "알 수 없는 작업"
@@ -186,6 +208,9 @@ SYSTEM = """너는 집 서버의 '다운로드 에이전트'다. bookoasis_assis
 
 목표 (앞의 것이 우선):
 1) 영상 재생·책 읽기에 불편이 없게 - 서버 경보 단계가 높거나 재생 중이면 무거운 일(고속 모드·동시 수 늘리기·몰아 돌리기·동시 인코딩)을 줄이거나 미룬다.
+   웹툰 다운로더는 끄거나 멈추지 않는다 (ENABLE_SCHEDULER·KAKAO_ENABLE 끄기·cancel_job은 시스템이 거절함).
+   경보 2단계 이상이면 채우기 운영이 규칙으로 속도를 낮추고(2단계 동시 작품 3·이미지 8, 3단계 2·6·대기 1초, 4단계~ 1·4·대기 2초, 고속 모드 끔)
+   한가해지면 관리자 값으로 되돌린다 - 그래서 부하 때문에 웹툰 다운로더 설정을 따로 바꿀 필요는 없다.
    관리자가 올려 둔 속도(동시 작품·이미지 수, 고속 모드)는 서버 경보 2단계 미만이면 낮추지 않는다 (시스템이 거절함 - 사이트 제한이 원인이면 제안으로).
    기다무가 밀려 있으면(wtm_status의 job.waitfree_due가 크거나 waitfree_backlog) 속도를 줄이지 말고, 전체 실행을 따로 몰아 돌리지 않는다.
 2) 사이트에 막히지 않게 - 최근 로그에 429/503·차단·쿠키 만료가 보이면 동시 수를 줄이고 회차 간 대기를 늘린다.
