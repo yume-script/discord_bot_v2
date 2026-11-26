@@ -83,3 +83,31 @@ def test_other_loop_does_not_use_kept_session(env):
         assert asyncio.run(main()) == "a@1" and mm._persist == {}
     finally:
         mm._main_loop = None
+
+
+def test_status_rows_ping_and_text(env, monkeypatch):
+    from cogs.admin import mcp_status_text
+
+    class Tools:
+        tools = [1, 2, 3]
+
+    async def lt(self):
+        return Tools()
+    monkeypatch.setattr(FakeSession, "list_tools", lt, raising=False)
+    monkeypatch.setattr(mm, "_boot_status", {"bookoasis": {"ok": True, "tools": 12, "error": ""},
+                                             "other": {"ok": False, "tools": 0, "error": "연결 시간 초과 (30초)"}})
+
+    async def main():
+        mm._main_loop = asyncio.get_running_loop()
+        rows = mm.status_rows()
+        assert [(r["name"], r["ok"], r["kept"]) for r in rows] == [("bookoasis", True, "아직 안 엶 (처음 쓸 때 엶)"), ("other", False, "")]
+        pings = await mm.ping_all()
+        assert pings["bookoasis"][0] and pings["bookoasis"][1] == "도구 3개" and pings["other"][0]
+        rows = mm.status_rows()
+        assert rows[0]["kept"] == "열어 둠"                   # 물어보느라 열어 둔 세션
+        text = mcp_status_text(rows, pings)
+        assert "1/2 연결" in text and "✅ **bookoasis** - 도구 12개 · 세션: 열어 둠 · 지금: 응답" in text
+        assert "❌ **other** - 연결 시간 초과 (30초)" in text
+        await mm.close_persistent()
+    asyncio.run(main())
+    mm._main_loop = None

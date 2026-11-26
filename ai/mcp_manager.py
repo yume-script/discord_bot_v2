@@ -38,6 +38,7 @@ _ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _GATEWAY_SEPS = ("-", "__", "_", ".", "/")
 _gateway_of: dict[str, tuple[str, str]] = {}   # 원래 서버 이름 -> (게이트웨이 서버 이름, 도구 이름 앞머리 "plex-")
 # yaml에 적힌 게이트웨이 서버들 (부팅 때 연결에 실패해도 남겨 둔다 - server_session이 나중에 다시 붙는다)
+_boot_status: dict[str, dict] = {}   # 서버 -> {"ok", "tools", "error", "via"} - 부팅 때 연결 결과 (/MCP상태)
 _main_loop = None   # 봇 이벤트 루프 (init_mcp가 정함) - 계속 열어 둔 세션은 이 루프에서만
 _gateway_servers_cfg: dict[str, tuple[str, list[str]]] = {}   # 원래 서버 이름 -> (게이트웨이 서버 이름, 그 게이트웨이의 서버 목록)
 
@@ -154,6 +155,7 @@ async def init_mcp() -> list:
 
     gateway_of: dict[str, tuple[str, str]] = {}
     _gateway_servers_cfg.clear()
+    _boot_status.clear()
     for server_name, raw_cfg in server_config.items():
         gateway_servers, gateway_admin = [], set()
         try:
@@ -166,6 +168,7 @@ async def init_mcp() -> list:
                 cfg, admin_only = prepare_server_config(raw_cfg)
         except MissingEnvError as exc:
             log.error(f"MCP 서버 '{server_name}' 설정의 환경변수 {exc}가 .env에 없음 - 이 서버만 건너뛴다.")
+            _boot_status[server_name] = {"ok": False, "tools": 0, "error": f".env에 {exc} 없음"}
             continue
         configs_by_server[server_name] = cfg
         try:
@@ -173,10 +176,14 @@ async def init_mcp() -> list:
             server_tools = await asyncio.wait_for(client.get_tools(), timeout=MCP_CONNECT_TIMEOUT_SEC)
         except asyncio.TimeoutError:
             log.error(f"MCP 서버 '{server_name}' 연결 타임아웃({MCP_CONNECT_TIMEOUT_SEC}s) - 이 서버만 건너뛴다.")
+            _boot_status[server_name] = {"ok": False, "tools": 0, "error": f"연결 시간 초과 ({MCP_CONNECT_TIMEOUT_SEC}초)"}
             continue
-        except Exception:
+        except Exception as e:
             log.exception(f"MCP 서버 '{server_name}' 연결 실패 - 이 서버만 건너뛴다.")
+            _boot_status[server_name] = {"ok": False, "tools": 0, "error": _short_err(e)}
             continue
+        _boot_status[server_name] = {"ok": True, "tools": len(server_tools), "error": "",
+                                     "gateway": list(gateway_servers) if gateway_servers else []}
 
         clients.append(client)
         clients_by_server[server_name] = client
@@ -226,6 +233,58 @@ async def init_mcp() -> list:
     if admin_only_tools:
         log.info("관리자 전용 MCP 도구: %s", sorted(admin_only_tools))
     return _tools
+
+
+def _short_err(e: BaseException) -> str:
+    """예외 묶음(ExceptionGroup)이면 안쪽 첫 원인까지 - 한 줄로"""
+    while getattr(e, "exceptions", None):
+        e = e.exceptions[0]
+    return f"{type(e).__name__}: {e}"[:200]
+
+
+def status_rows() -> list[dict]:
+    """/MCP상태: 설정의 서버마다 {name, ok, tools, error, via, kept} - 부팅 때 결과 + 지금 열어 둔 세션"""
+    rows = []
+    for name, st in _boot_status.items():
+        gw = st.get("gateway") or []
+        rows.append({"name": name, "ok": st["ok"], "tools": st["tools"], "error": st["error"], "via": "",
+                     "kept": _kept_state(name), "gateway_of": gw})
+        for s in gw:   # 게이트웨이 너머 서버는 따로 한 줄씩 (도구 수는 그 서버 것만)
+            rows.append({"name": s, "ok": st["ok"] and s in _tools_by_server, "tools": len(_tools_by_server.get(s, [])),
+                         "error": "" if s in _tools_by_server else ("게이트웨이에 이 서버 도구가 없음" if st["ok"] else st["error"]),
+                         "via": name, "kept": "", "gateway_of": []})
+    return rows
+
+
+def _kept_state(name: str) -> str:
+    if name not in PERSISTENT:
+        return ""
+    h = _persist.get(name)
+    if not h:
+        return "아직 안 엶 (처음 쓸 때 엶)"
+    if h.get("session") is not None and not h["task"].done() and not h["stop"].is_set():
+        return "열어 둠"
+    return f"끊김 - 다음에 다시 엶 ({_short_err(h['error'])})" if h.get("error") else "닫힘 - 다음에 다시 엶"
+
+
+async def ping_all(timeout: float = 30) -> dict[str, tuple[bool, str, float]]:
+    """설정의 서버마다 지금 도구 목록을 물어본다 -> {서버: (응답했나, 도구 수 또는 오류, 걸린 초)} (게이트웨이 너머 서버는 게이트웨이로)"""
+    import time as _t
+    out = {}
+
+    async def one(name: str):
+        t0 = _t.monotonic()
+        try:
+            async with server_session(name) as s:
+                res = await asyncio.wait_for(s.list_tools(), timeout)
+            tools = getattr(res, "tools", res) or []
+            out[name] = (True, f"도구 {len(tools)}개", _t.monotonic() - t0)
+        except Exception as e:  # noqa: BLE001
+            out[name] = (False, "시간 초과" if isinstance(e, asyncio.TimeoutError) else _short_err(e), _t.monotonic() - t0)
+    gateways = {gw for gw, _ in _gateway_servers_cfg.values()}
+    names = [n for n in _configs_by_server if n not in gateways] + list(_gateway_servers_cfg)
+    await asyncio.gather(*(one(n) for n in names))
+    return out
 
 
 def _renamed(tool, new_name: str):
