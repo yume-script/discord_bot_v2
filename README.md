@@ -273,6 +273,7 @@ python app.py
     북오아시스(`PORING_BOOKOASIS_URL`), 북오아시스 어시스턴트(`PORING_ASSISTANT_URL` `/healthz`), 그 밖(`PORING_UPTIME_EXTRA="IPTV=http://…"`).
     3번 연속(약 3분) 응답이 없거나 5xx면 채널(🛰️ 모니터링)과 관리자 카톡방에 ⛔, 계속이면 3시간마다 다시, 돌아오면 ✅(몇 분 멈췄는지).
     5분째 5초 넘게 걸리면 🐢 한 번. 주소가 없는 서비스는 확인하지 않는다. `/서비스상태`(관리자)로 지금 결과(응답 시간)를 본다.
+    MCP 서버 연결은 `/mcp상태`(관리자): 서버마다 부팅 때 결과(도구 수·실패 까닭), LiteLLM 게이트웨이 경유 여부, 열어 둔 세션 상태, `확인: 지금 물어보기`면 지금 응답·걸린 시간.
     **자동 복구** (`PORING_UPTIME_AUTORESTART`, 기본 켬): 3번 연속 응답이 없으면 그 서비스만 plex01에서 다시 시작한다
     (YM_PLAYER `systemctl restart ym_player`, Plex `systemctl restart plexmediaserver`, 북오아시스 `docker restart bookoasis`,
     어시스턴트 `systemctl restart bookoasis_assistant` - `PORING_UPTIME_RESTART="이름=명령;이름="`으로 바꾸거나 끔).
