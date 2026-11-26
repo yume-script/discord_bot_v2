@@ -130,7 +130,7 @@ def test_throttle_slows_not_stops_then_restores():
     boa = Boa("low", wtm=ADMIN)
     msgs = run(0, 2, stage=4, boa=boa, rclone=Rclone("off"))
     assert any("속도만 낮춤" in m for m in msgs)
-    assert boa.wtm == {**ADMIN, "FAST_MODE": False, "PARALLEL_TITLES": 1, "MAX_CONCURRENT_DOWNLOADS": 4, "DELAY_SECONDS": 2.0}
+    assert boa.wtm == {**ADMIN, "FAST_MODE": False, "PARALLEL_TITLES": 2, "MAX_CONCURRENT_DOWNLOADS": 4, "DELAY_SECONDS": 2.0}
     assert boa.wtm["ENABLE_SCHEDULER"] is True                       # 끄지 않음
     assert "낮춰 둠" in fill.status_text(T0)
     run(5, 2, stage=4, boa=boa, rclone=Rclone("off"))
