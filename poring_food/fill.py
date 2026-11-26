@@ -12,10 +12,14 @@
          -> 웹툰 다운로더가 놀고 있으면 전체 실행 (RUN_GAP_MIN(180분)에 한 번까지 - 사이트에 몰아치지 않게,
             카카오 기다무가 밀려 있으면(BOA 작업 상태 waitfree_backlog) 하지 않음 - 같은 계정·서버를 나눠 써서 기다무가 더 늦어짐)
   hold   그 사이 (재생 끝난 지 얼마 안 됨, 경보가 높음, 숫자 모름) -> 그대로 둔다
+속도 (모드와 상관없이, 경보 단계를 알 때):
+  서버 경보 2단계 이상 -> 웹툰 다운로더를 끄지 않고 속도만 낮춘다 (boa_agent.STAGE_CAPS: 고속 모드 끔, 동시 작품·이미지 상한, 회차 간 대기 최소).
+         처음 낮출 때 관리자 값을 저장해 두고, 단계가 바뀌면 저장한 값 기준으로 다시 맞춘다 (4단계 -> 2단계면 조금 풀기).
+  경보 2단계 미만이 CALM_MIN(15분) 이어짐 -> 저장한 관리자 값으로 되돌린다 (그 사이 관리자가 손으로 바꾼 칸은 그대로 둔다).
 - 바뀔 때만 쓰고(지금 값과 같으면 안 씀), 한 일만 채널(⚙️ 운영)에 한 줄로 알린다. 인물 대화·LLM 없음.
-- 웹툰 다운로더의 동시 수·일정, 텔레그램 규칙·시간대는 건드리지 않는다 (사람 또는 다운로드 에이전트가 정함).
+- 웹툰 다운로더의 일정, 텔레그램 규칙·시간대는 건드리지 않는다 (사람 또는 다운로드 에이전트가 정함).
 설정 (.env): PORING_FILL=0이면 끔, PORING_FILL_MAX_STAGE, PORING_FILL_IDLE_MIN, PORING_FILL_RUN_GAP_MIN, PORING_FILL_WTM_RUN=0(웹툰 실행 안 함)
-저장: storage/poring_food/fill.json {"mode", "since", "last_play", "last_run", "last"}
+저장: storage/poring_food/fill.json {"mode", "since", "last_play", "last_run", "last", "speed": {"saved", "applied", "stage", "calm_since"}}
 """
 from __future__ import annotations
 
@@ -32,6 +36,9 @@ MAX_STAGE = int(os.getenv("PORING_FILL_MAX_STAGE", "2"))
 IDLE_MIN = int(os.getenv("PORING_FILL_IDLE_MIN", "10"))
 RUN_GAP_MIN = int(os.getenv("PORING_FILL_RUN_GAP_MIN", "180"))
 WTM_RUN = os.getenv("PORING_FILL_WTM_RUN", "1") not in ("0", "false", "False", "")
+CALM_MIN = int(os.getenv("PORING_FILL_CALM_MIN", "15"))
+SPEED = os.getenv("PORING_FILL_SPEED", "1") not in ("0", "false", "False", "")
+SPEED_FIELDS = ("FAST_MODE", "PARALLEL_TITLES", "MAX_CONCURRENT_DOWNLOADS", "DELAY_SECONDS")
 FRESH_MIN = 5                      # 서버 조절 기록이 이보다 오래됐으면 모르는 것으로
 HOST = "plex01"
 STATE_PATH = os.path.join(STATE_DIR, "fill.json")
@@ -151,6 +158,85 @@ def apply(mode: str, obs: dict, state: dict, now: datetime, boa=None, rclone=Non
     return done
 
 
+def _same(a, b) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return _on(a) == _on(b)
+    if a is None or b is None:
+        return a is b
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return str(a) == str(b)
+
+
+def _on(v) -> bool:
+    return str(v).lower() in ("true", "1", "on")
+
+
+def throttle(obs: dict, state: dict, now: datetime, boa=None) -> list[str]:
+    """경보 단계에 맞춰 웹툰 다운로더 속도를 낮추고(멈추지 않음) 한가해지면 되돌린다 -> 한 일"""
+    from .boa_agent import stage_caps
+    if not SPEED or obs.get("stage") is None:
+        return []
+    boa = boa or _boa
+    stage = obs["stage"]
+    sp = state.get("speed") or {}
+    caps = stage_caps(stage)
+    if not caps:
+        if not sp.get("saved"):
+            return []
+        calm = sp.get("calm_since") or now.isoformat(timespec="seconds")
+        sp["calm_since"] = calm
+        state["speed"] = sp
+        if now - datetime.fromisoformat(calm) < timedelta(minutes=CALM_MIN):
+            return []
+    else:
+        sp.pop("calm_since", None)
+    try:
+        cur = {f.get("key"): f.get("value") for f in (boa("wtm_settings") or {}).get("fields") or [] if f.get("key") in SPEED_FIELDS}
+    except Exception as e:  # noqa: BLE001
+        print(f"[운영] 웹툰 다운로더 설정을 읽지 못함: {e}")
+        return []
+    if not cur:
+        return []
+    applied = sp.get("applied") or {}
+    if not caps:   # 되돌리기 - 우리가 바꾼 뒤 관리자가 손댄 칸은 그대로
+        want = {k: v for k, v in (sp.get("saved") or {}).items() if k in cur and k in applied and _same(cur[k], applied[k])}
+        label = "서버가 한가해져 웹툰 다운로드 속도 되돌림"
+    else:
+        saved = dict(sp.get("saved") or {})
+        for k, v in cur.items():   # 처음 낮출 때, 또는 관리자가 그 사이 바꾼 칸은 지금 값을 관리자 값으로
+            if k not in saved or (k in applied and not _same(v, applied[k])):
+                saved[k] = v
+        sp["saved"] = saved
+        base = {k: saved.get(k, cur.get(k)) for k in cur}
+        want = {}
+        if "FAST_MODE" in base:
+            want["FAST_MODE"] = False
+        for k, cap in (("PARALLEL_TITLES", caps[0]), ("MAX_CONCURRENT_DOWNLOADS", caps[1])):
+            if base.get(k) is not None:
+                want[k] = min(int(float(base[k])), cap)
+        if base.get("DELAY_SECONDS") is not None:
+            want["DELAY_SECONDS"] = max(float(base["DELAY_SECONDS"]), caps[2])
+        label = f"서버 경보 {stage}단계 - 웹툰 다운로드를 멈추지 않고 속도만 낮춤"
+    change = {k: v for k, v in want.items() if not _same(cur.get(k), v)}
+    done = []
+    if change:
+        try:
+            boa("wtm_set_settings", {"values": change})
+            done.append(label + ": " + ", ".join(f"{k} {cur.get(k)} → {v}" for k, v in change.items()))
+        except Exception as e:  # noqa: BLE001
+            print(f"[운영] 웹툰 다운로드 속도를 맞추지 못함: {e}")
+            state["speed"] = sp
+            return []
+    if caps:
+        sp["applied"], sp["stage"] = {**cur, **want}, stage
+        state["speed"] = sp
+    else:
+        state.pop("speed", None)
+    return done
+
+
 def step(now: datetime | None = None, obs: dict | None = None, boa=None, rclone=None) -> list[str]:
     """[스레드에서, 5분마다] 알릴 글들 (없으면 [])"""
     if not ENABLED:
@@ -170,7 +256,8 @@ def step(now: datetime | None = None, obs: dict | None = None, boa=None, rclone=
         if mode != "hold":
             msgs.append(f"모드: **{MODE_LABEL[mode]}** (재생 {obs.get('playing')} · 서버 {obs.get('stage')}단계)")
         state["mode"], state["since"] = mode, stamp
-    done = apply(mode, obs, state, now, boa, rclone) if mode != "hold" else []
+    done = throttle(obs, state, now, boa)
+    done += apply(mode, obs, state, now, boa, rclone) if mode != "hold" else []
     msgs += [f"• {d}" for d in done]
     if done:
         state["last"] = {"at": stamp, "mode": mode, "done": done}
@@ -198,6 +285,9 @@ def status_text(now: datetime | None = None) -> str:
         lines.append(f"• 이 모드 시작: {st['since'][11:16]}")
     if last:
         lines.append(f"• 마지막으로 한 일 ({last.get('at', '')[11:16]}): " + " / ".join(last.get("done") or []))
+    sp = st.get("speed") or {}
+    if sp.get("saved"):
+        lines.append(f"• 웹툰 속도: 서버 경보 {sp.get('stage', '?')}단계로 낮춰 둠 (한가해지면 {CALM_MIN}분 뒤 되돌림)")
     if st.get("last_run"):
         lines.append(f"• 웹툰 전체 실행: {st['last_run'][5:16].replace('T', ' ')}")
     return "\n".join(lines)

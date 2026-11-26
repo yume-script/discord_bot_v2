@@ -15,8 +15,9 @@ def _tmp(tmp_path, monkeypatch):
 
 
 class Boa:
-    def __init__(self, priority="low", wtm_running=False, backlog=False, backlog_at=None):
+    def __init__(self, priority="low", wtm_running=False, backlog=False, backlog_at=None, wtm=None):
         self.st = {"encode_priority": priority}
+        self.wtm = dict(wtm or {})
         self.wtm_running = wtm_running
         self.backlog, self.backlog_at = backlog, backlog_at
         self.calls = []
@@ -33,6 +34,11 @@ class Boa:
                             "waitfree_due_at": self.backlog_at or T0.timestamp()}, "title_job": {"running": False}}
         if name == "wtm_run":
             return "시작"
+        if name == "wtm_settings":
+            return {"fields": [{"key": k, "value": v} for k, v in self.wtm.items()]}
+        if name == "wtm_set_settings":
+            self.wtm.update(args["values"])
+            return {"changed": {}}
         raise AssertionError(name)
 
 
@@ -115,3 +121,41 @@ def test_no_full_run_while_waitfree_backlog():
     old = Boa("high", backlog=True, backlog_at=(T0 - timedelta(hours=3)).timestamp())
     run(15, 0, boa=old, rclone=Rclone("off"))
     assert any(c[0] == "wtm_run" for c in old.calls)            # 오래된 기록(1시간 넘음)은 믿지 않음
+
+
+ADMIN = {"FAST_MODE": True, "PARALLEL_TITLES": 6, "MAX_CONCURRENT_DOWNLOADS": 10, "DELAY_SECONDS": 1, "ENABLE_SCHEDULER": True}
+
+
+def test_throttle_slows_not_stops_then_restores():
+    boa = Boa("low", wtm=ADMIN)
+    msgs = run(0, 2, stage=4, boa=boa, rclone=Rclone("off"))
+    assert any("속도만 낮춤" in m for m in msgs)
+    assert boa.wtm == {**ADMIN, "FAST_MODE": False, "PARALLEL_TITLES": 1, "MAX_CONCURRENT_DOWNLOADS": 4, "DELAY_SECONDS": 2.0}
+    assert boa.wtm["ENABLE_SCHEDULER"] is True                       # 끄지 않음
+    assert "낮춰 둠" in fill.status_text(T0)
+    run(5, 2, stage=4, boa=boa, rclone=Rclone("off"))
+    assert sum(1 for c in boa.calls if c[0] == "wtm_set_settings") == 1   # 같은 단계면 다시 안 씀
+    run(10, 1, stage=2, boa=boa, rclone=Rclone("off"))              # 단계가 내려가면 관리자 값 기준으로 조금 풀기
+    assert (boa.wtm["PARALLEL_TITLES"], boa.wtm["MAX_CONCURRENT_DOWNLOADS"], boa.wtm["DELAY_SECONDS"]) == (3, 8, 1)
+    run(15, 0, stage=1, boa=boa, rclone=Rclone("off"))
+    assert boa.wtm["PARALLEL_TITLES"] == 3                           # 한가해진 지 15분 안 됨
+    run(31, 0, stage=0, boa=boa, rclone=Rclone("off"))
+    assert boa.wtm == ADMIN                                          # 되돌림
+    assert "speed" not in fill._load()
+
+
+def test_throttle_keeps_admin_manual_change():
+    boa = Boa("low", wtm=ADMIN)
+    run(0, 1, stage=3, boa=boa, rclone=Rclone("off"))
+    assert boa.wtm["PARALLEL_TITLES"] == 2
+    boa.wtm["MAX_CONCURRENT_DOWNLOADS"] = 3                          # 관리자가 그 사이 손으로 더 낮춤
+    run(5, 0, stage=0, boa=boa, rclone=Rclone("off"))
+    run(25, 0, stage=0, boa=boa, rclone=Rclone("off"))
+    assert boa.wtm["PARALLEL_TITLES"] == 6 and boa.wtm["FAST_MODE"] is True
+    assert boa.wtm["MAX_CONCURRENT_DOWNLOADS"] == 3                  # 관리자가 바꾼 칸은 그대로
+
+
+def test_throttle_needs_known_stage():
+    boa = Boa("low", wtm=ADMIN)
+    fill.step(T0, {"playing": None, "stage": None, "rclone_slowed": False}, boa=boa, rclone=Rclone("off"))
+    assert boa.wtm == ADMIN

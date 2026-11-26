@@ -13,6 +13,14 @@ def test_guard():
     assert ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 6}})                        # 상한 10
     assert not ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 11}})                   # 범위 밖
     assert not ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 4}}, stage=2)           # 바쁠 땐 3까지
+    assert not ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 2}}, stage=4)           # 4단계~ 1까지
+    assert not ok("wtm_set_settings", {"values": {"DELAY_SECONDS": 1}}, stage=4)             # 4단계~ 대기 2초 이상
+    # 끄지 않음 - 늦추기만
+    assert not ok("wtm_set_settings", {"values": {"ENABLE_SCHEDULER": False}}, stage=4)
+    assert not ok("wtm_set_settings", {"values": {"KAKAO_ENABLE": "false"}})
+    assert ok("wtm_set_settings", {"values": {"ENABLE_SCHEDULER": True}})
+    assert not ok("wtm_run", {"job": "cancel_job"}, stage=4)
+    assert ok("wtm_run", {"job": "cancel_job"})
     assert not ok("wtm_set_settings", {"values": {"FAST_MODE": True}}, stage=2)
     assert ok("wtm_set_settings", {"values": {"FAST_MODE": True}}, stage=1)
     assert not ok("wtm_set_settings", {"values": {"SCHEDULE_CRON": "*/10 * * * *"}})        # 너무 잦음
