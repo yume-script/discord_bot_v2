@@ -15,9 +15,10 @@ def _tmp(tmp_path, monkeypatch):
 
 
 class Boa:
-    def __init__(self, priority="low", wtm_running=False):
+    def __init__(self, priority="low", wtm_running=False, backlog=False, backlog_at=None):
         self.st = {"encode_priority": priority}
         self.wtm_running = wtm_running
+        self.backlog, self.backlog_at = backlog, backlog_at
         self.calls = []
 
     def __call__(self, name, args=None):
@@ -28,7 +29,8 @@ class Boa:
             self.st.update(args["settings"])
             return {"changed": {}}
         if name == "wtm_status":
-            return {"job": {"running": self.wtm_running}, "title_job": {"running": False}}
+            return {"job": {"running": self.wtm_running, "waitfree_backlog": self.backlog,
+                            "waitfree_due_at": self.backlog_at or T0.timestamp()}, "title_job": {"running": False}}
         if name == "wtm_run":
             return "시작"
         raise AssertionError(name)
@@ -104,3 +106,12 @@ def test_observe_reads_loadshed(monkeypatch):
     monkeypatch.setattr(loadshed, "_load", lambda: {"hosts": {"plex01": {"at": (now - timedelta(minutes=30)).isoformat(),
                                                                           "playing": 0, "stage": 0}}})
     assert fill.observe(now)["playing"] is None                 # 오래된 기록 -> 모름
+
+
+def test_no_full_run_while_waitfree_backlog():
+    boa = Boa("high", backlog=True, backlog_at=(T0 + timedelta(minutes=10)).timestamp())
+    run(15, 0, boa=boa, rclone=Rclone("off"))
+    assert not any(c[0] == "wtm_run" for c in boa.calls)        # 기다무가 밀린 동안은 전체 실행 안 함
+    old = Boa("high", backlog=True, backlog_at=(T0 - timedelta(hours=3)).timestamp())
+    run(15, 0, boa=old, rclone=Rclone("off"))
+    assert any(c[0] == "wtm_run" for c in old.calls)            # 오래된 기록(1시간 넘음)은 믿지 않음
