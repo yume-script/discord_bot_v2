@@ -9,7 +9,8 @@
   fill   재생이 끝나고 IDLE_MIN(10분) 지남 + 경보 MAX_STAGE(2)단계 이하
          -> 텔레그램 인코딩 우선순위 '보통'(가장 빠름)
          -> rclone 업로드 속도 제한 풀기 (서버 조절이 늦추고 있지 않을 때만, PORING_LOADSHED_RCLONE_RC가 있을 때)
-         -> 웹툰 다운로더가 놀고 있으면 전체 실행 (RUN_GAP_MIN(180분)에 한 번까지 - 사이트에 몰아치지 않게)
+         -> 웹툰 다운로더가 놀고 있으면 전체 실행 (RUN_GAP_MIN(180분)에 한 번까지 - 사이트에 몰아치지 않게,
+            카카오 기다무가 밀려 있으면(BOA 작업 상태 waitfree_backlog) 하지 않음 - 같은 계정·서버를 나눠 써서 기다무가 더 늦어짐)
   hold   그 사이 (재생 끝난 지 얼마 안 됨, 경보가 높음, 숫자 모름) -> 그대로 둔다
 - 바뀔 때만 쓰고(지금 값과 같으면 안 씀), 한 일만 채널(⚙️ 운영)에 한 줄로 알린다. 인물 대화·LLM 없음.
 - 웹툰 다운로더의 동시 수·일정, 텔레그램 규칙·시간대는 건드리지 않는다 (사람 또는 다운로드 에이전트가 정함).
@@ -135,8 +136,13 @@ def apply(mode: str, obs: dict, state: dict, now: datetime, boa=None, rclone=Non
         if not last or now - datetime.fromisoformat(last) >= timedelta(minutes=RUN_GAP_MIN):
             try:
                 st = boa("wtm_status") or {}
-                busy = bool((st.get("job") or {}).get("running")) or bool((st.get("title_job") or {}).get("running"))
-                if not busy:
+                job = st.get("job") or {}
+                busy = bool(job.get("running")) or bool((st.get("title_job") or {}).get("running"))
+                # 카카오 기다무가 밀려 있으면 전체 실행을 따로 돌리지 않는다 (같은 계정·서버를 나눠 써서 기다무가 더 늦어짐) - BOA 2.80.0+
+                backlog = bool(job.get("waitfree_backlog")) and (now.timestamp() - float(job.get("waitfree_due_at") or 0)) < 3600
+                if backlog:
+                    state["skipped_backlog"] = now.isoformat(timespec="seconds")
+                elif not busy:
                     boa("wtm_run", {"job": "run_full_cycle_now"})
                     state["last_run"] = now.isoformat(timespec="seconds")
                     done.append("웹툰 다운로더가 놀고 있어 전체 실행 시작")

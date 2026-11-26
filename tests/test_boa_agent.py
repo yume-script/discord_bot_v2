@@ -10,13 +10,22 @@ def test_guard():
     st = {}
     ok = lambda name, args, stage=0: ba.guard(name, args, stage, st) == ""  # noqa: E731
     assert ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 3, "SCHEDULE_CRON": "0 */2 * * *", "KAKAO_USE_WAITFREE": True}})
-    assert not ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 6}})                    # 범위 밖
-    assert not ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 3}}, stage=2)           # 바쁠 땐 2까지
+    assert ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 6}})                        # 상한 10
+    assert not ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 11}})                   # 범위 밖
+    assert not ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 4}}, stage=2)           # 바쁠 땐 3까지
     assert not ok("wtm_set_settings", {"values": {"FAST_MODE": True}}, stage=2)
     assert ok("wtm_set_settings", {"values": {"FAST_MODE": True}}, stage=1)
     assert not ok("wtm_set_settings", {"values": {"SCHEDULE_CRON": "*/10 * * * *"}})        # 너무 잦음
     assert not ok("wtm_set_settings", {"values": {"KAKAO_USE_PAID_TICKETS": True}})          # 돈 - 관리자
     assert not ok("wtm_set_settings", {"values": {"DELAY_SECONDS": 0.1}})
+    # 관리자가 올려 둔 속도는 한가할 때 낮추지 않음 (바쁠 때는 낮춰도 됨)
+    st["wtm_current"] = {"PARALLEL_TITLES": 6, "MAX_CONCURRENT_DOWNLOADS": 10, "FAST_MODE": True}
+    assert not ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 4}})
+    assert not ok("wtm_set_settings", {"values": {"MAX_CONCURRENT_DOWNLOADS": 5}})
+    assert not ok("wtm_set_settings", {"values": {"FAST_MODE": False}})
+    assert ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 8}})
+    assert ok("wtm_set_settings", {"values": {"PARALLEL_TITLES": 3, "FAST_MODE": False}}, stage=2)
+    st.pop("wtm_current")
     assert ok("tgup_set_settings", {"settings": {"encode_slots": 2, "hours": "1-7"}})
     assert not ok("tgup_set_settings", {"settings": {"encode_slots": 2}}, stage=2)
     assert not ok("tgup_set_settings", {"settings": {"encode_slots": 4}})

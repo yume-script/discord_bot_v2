@@ -57,11 +57,13 @@ WTM_HUMAN_ONLY = {   # 돈·취향·작업 방식 - 사람이 정한다 (BOA 잠
     "AUTO_SUBSCRIBE_NEW_TITLES": "신간 전부 자동 구독",
 }
 LIMITS = {   # 칸: (최소, 최대) - 서버 경보 2단계 이상이면 아래 BUSY_MAX
-    "PARALLEL_TITLES": (1, 4), "MAX_CONCURRENT_DOWNLOADS": (1, 8), "DELAY_SECONDS": (0.5, 10),
+    "PARALLEL_TITLES": (1, 10), "MAX_CONCURRENT_DOWNLOADS": (1, 16), "DELAY_SECONDS": (0.2, 10),
     "MAX_NEW_EPISODES_PER_TITLE": (1, 50), "WAITFREE_CHECK_MINUTES": (3, 60), "REQUEST_TIMEOUT_SECONDS": (5, 60),
     "INITIAL_EPISODES_LIMIT": (0, 200), "FINISHED_SCAN_HOUR": (0, 23), "WAITFREE_PLAN_HOUR": (0, 23),
 }
-BUSY_MAX = {"PARALLEL_TITLES": 2, "MAX_CONCURRENT_DOWNLOADS": 5}
+BUSY_MAX = {"PARALLEL_TITLES": 3, "MAX_CONCURRENT_DOWNLOADS": 8}
+# 관리자가 올려 둔 속도(동시 작품·이미지 수, 고속 모드)는 서버가 한가할 때(경보 2단계 미만) 낮추지 않는다 - 제안으로만
+SPEED_KEYS = ("PARALLEL_TITLES", "MAX_CONCURRENT_DOWNLOADS")
 TGUP_LIMITS = {"encode_slots": (1, 2), "interval": (5, 1440)}
 MAX_SUBSCRIPTION_CHANGES = 10   # 한 번 판단에 구독 바꾸기
 MAX_NEW_RULES = 2
@@ -121,6 +123,16 @@ def guard(name: str, args: dict, stage: int, state: dict, now: float | None = No
                 return f"{k}({WTM_HUMAN_ONLY[k]})는 관리자가 정함"
             if k == "FAST_MODE" and v in (True, "true", "1", 1) and stage >= 2:
                 return f"서버 경보 {stage}단계라 고속 모드는 켜지 않음"
+            cur = state.get("wtm_current") or {}
+            if stage < 2 and k == "FAST_MODE" and v in (False, "false", "0", 0, None) and cur.get("FAST_MODE") in (True, "true", "1", 1):
+                return "서버가 한가할 때(경보 2단계 미만)는 관리자가 켠 고속 모드를 끄지 않음 - 사이트 제한(429/503)이 원인이면 제안으로"
+            if stage < 2 and k in SPEED_KEYS and cur.get(k) is not None:
+                try:
+                    if float(v) < float(cur[k]):
+                        return (f"서버가 한가할 때(경보 2단계 미만)는 관리자가 정한 {k}({cur[k]})를 낮추지 않음 - "
+                                "사이트 제한(429/503)이 원인이면 제안으로")
+                except (TypeError, ValueError):
+                    pass
             if k == "SCHEDULE_CRON":
                 why = _cron_gap_ok(v)
                 if why:
@@ -174,6 +186,8 @@ SYSTEM = """너는 집 서버의 '다운로드 에이전트'다. bookoasis_assis
 
 목표 (앞의 것이 우선):
 1) 영상 재생·책 읽기에 불편이 없게 - 서버 경보 단계가 높거나 재생 중이면 무거운 일(고속 모드·동시 수 늘리기·몰아 돌리기·동시 인코딩)을 줄이거나 미룬다.
+   관리자가 올려 둔 속도(동시 작품·이미지 수, 고속 모드)는 서버 경보 2단계 미만이면 낮추지 않는다 (시스템이 거절함 - 사이트 제한이 원인이면 제안으로).
+   기다무가 밀려 있으면(wtm_status의 job.waitfree_due가 크거나 waitfree_backlog) 속도를 줄이지 말고, 전체 실행을 따로 몰아 돌리지 않는다.
 2) 사이트에 막히지 않게 - 최근 로그에 429/503·차단·쿠키 만료가 보이면 동시 수를 줄이고 회차 간 대기를 늘린다.
    텔레그램이 업로드를 늦추면(tgup_status의 throttle_warnings·accounts.upload.state=limited) 동시 인코딩을 늘리지 말고,
    제한이 오래가면 그 계정이 덜 쓰이게(규칙의 tg_alt로 다른 계정을 같이 쓰게) 하는 것을 생각한다.
@@ -240,6 +254,11 @@ def _tools(call, stage: int, state: dict, applied: list, proposals: list):
         def run(**kwargs) -> str:
             args = {k: v for k, v in kwargs.items() if v is not None}
             if write:
+                if name == "wtm_set_settings" and "wtm_current" not in state:   # 지금 값 (관리자가 올려 둔 속도를 낮추지 않게)
+                    try:
+                        state["wtm_current"] = {f.get("key"): f.get("value") for f in (call("wtm_settings", {}) or {}).get("fields") or []}
+                    except Exception:  # noqa: BLE001
+                        state["wtm_current"] = {}
                 why = "점검만 하는 중 (적용 안 함)" if state.get("review") else guard(name, args, stage, state)
                 if why:
                     proposals.append(f"{name} {json.dumps(args, ensure_ascii=False)[:200]} - {why}")
@@ -364,6 +383,7 @@ def run(now: datetime | None = None, call=None, model=None, stage: int | None = 
         {"at": now.isoformat(timespec="minutes"), "model": used, "summary": summary.strip()[:800], "changes": changes,
          "proposals": proposals}]
     state["last_at"] = now.isoformat(timespec="minutes")
+    state.pop("wtm_current", None)   # (이번 판단에서만 쓴 지금 값 - 저장하지 않음)
     _save(state)
     if changes or proposals:
         text = f"-# {NAME} · {now:%H:%M} · {used}\n{summary.strip()[:1200]}"
