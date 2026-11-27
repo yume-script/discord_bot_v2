@@ -15,6 +15,9 @@ RCLONE_CONFIG=${RCLONE_CONFIG:-/mnt/ff/db/rclone.conf}
 RC_URL=${RC_URL:-http://127.0.0.1:5276}
 MIN_AGE=${MIN_AGE:-30}
 BWLIMIT=${BWLIMIT:-08:00,5M 01:00,off}
+RC_USER=${RC_USER:-}; RC_PASS=${RC_PASS:-}     # 마운트 rc를 --rc-user/--rc-pass로 띄웠을 때
+MOVER_RC_PORT=${MOVER_RC_PORT:-5277}           # 이 업로드의 rc (127.0.0.1만) - village-ctl이 결계 단계에 맞춰 속도를 바꾼다
+AUTH=(); [ -n "$RC_USER" ] && [ -n "$RC_PASS" ] && AUTH=(-u "$RC_USER:$RC_PASS")
 LIST=$(mktemp /tmp/village-mover.XXXXXX)
 trap 'rm -f "$LIST"' EXIT
 exec 9>/run/village-mover.lock
@@ -29,14 +32,15 @@ N=$(wc -l < "$LIST")
 [ "$N" -gt 0 ] || { echo "MOVER_OK files=0"; exit 0; }
 
 rclone copy "$STAGING" "$REMOTE" --config "$RCLONE_CONFIG" --files-from-raw "$LIST" --no-traverse \
-  --bwlimit "$BWLIMIT" --tpslimit 5 --transfers 3 --retries 3 --log-level ERROR
+  --bwlimit "$BWLIMIT" --tpslimit 5 --transfers 3 --retries 3 --log-level ERROR \
+  --rc --rc-addr="127.0.0.1:$MOVER_RC_PORT" --rc-no-auth
 RC=$?
 # 올린 파일이 든 폴더만 원격 마운트 목록을 새로 고친다 (전체 새로 고침은 수백만 개라 비싸다)
 sed -n 's#/[^/]*$##p' "$LIST" | sort -u | while IFS= read -r d; do
-  curl -s -m 30 -X POST "$RC_URL/vfs/refresh" -H 'Content-Type: application/json' \
+  curl -s -m 30 "${AUTH[@]}" -X POST "$RC_URL/vfs/refresh" -H 'Content-Type: application/json' \
     --data "$(python3 -c 'import json,sys; print(json.dumps({"dir": sys.argv[1]}))' "$d")" >/dev/null || true
 done
-curl -s -m 30 -X POST "$RC_URL/vfs/refresh" >/dev/null || true   # 맨 위 폴더 (최상위에 바로 놓인 파일)
+curl -s -m 30 "${AUTH[@]}" -X POST "$RC_URL/vfs/refresh" >/dev/null || true   # 맨 위 폴더 (최상위에 바로 놓인 파일)
 
 MOVED=0; KEPT=0
 while IFS= read -r f; do

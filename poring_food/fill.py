@@ -104,14 +104,12 @@ def _boa(name: str, args: dict | None = None):
 
 def _rclone_rate(rate: str | None = None) -> str | None:
     """rclone rc core/bwlimit - rate를 주면 바꾸고, 안 주면 지금 값. 주소가 없거나 실패하면 None"""
-    import requests
-
     from . import loadshed
     url = loadshed.HOSTS[HOST].get("rclone")
     if not url:
         return None
     try:
-        r = requests.post(f"{url}/core/bwlimit", json={"rate": rate} if rate else {}, timeout=8)
+        r = loadshed.rclone_rc(url, "core/bwlimit", {"rate": rate} if rate else {})
         return str((r.json() or {}).get("rate") or "") if r.status_code == 200 else None
     except Exception as e:  # noqa: BLE001
         print(f"[운영] rclone bwlimit 실패: {e!r}"[:160])

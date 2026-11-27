@@ -23,6 +23,11 @@
   경보가 늘 5단계였다(웹툰·채우기까지 계속 묶임). 재생 서비스의 압박 5/10/20/30/40% = 1~5단계(PORING_LOADSHED_STAGES_SVC) -
   지수 칸에는 재생 중 기준(65/70/75/85/90)으로 바꿔 넣는다. 서비스 압박을 못 읽으면(cgroup v1·권한) 예전처럼 CPU %.
   호스트(zeeps) CPU는 원인 가리기에만 쓰고 지수에는 메모리·I/O만 넣는다.
+  지금 보고 있는 종류가 쓰는 것만 넣는다 (SVC_WHEN, PORING_LOADSHED_SVC_WHEN): Plex 재생 -> plexmediaserver·gds2(rclone 마운트,
+  호스트 village-ctl probe), YM_PLAYER 텔레그램·IPTV·팟캐스트 -> ym_player, IPTV -> flaskfarm, 북오아시스 -> bookoasis·rclone-zeeps-member.
+  보지 않는 쪽의 백그라운드 작업(flaskfarm 내려받기, Plex 스캔 등)이 CPU를 기다려도 단계를 올리지 않는다.
+- rclone rc: --rc-user/--rc-pass로 띄웠으면 PORING_LOADSHED_RCLONE_RC_USER/_PASS (fill.py도 같이 씀).
+  호스트 village-mover(스테이징 -> 드라이브 업로드)는 village-ctl "stage N"이 그 업로드의 rc로 2~3단계 2M, 4단계~ 512k로 늦춘다.
 - 서버별로 매분 잰다: etc = 이 서버 /proc, plex01 = `ssh <host>`. PORING_LOADSHED_ZEEPS_SSH가 있으면 호스트(zeeps)도 재서
   두 서버 지수에 같이 반영한다(호스트 부하는 모든 CT에 걸리므로). 부하의 원인도 호스트 기준으로 가린다: 호스트의
   village-ctl.sh "top"(게스트별·프로세스별 CPU)으로 모든 게스트(다른 CT/VM 포함)와 호스트 자체를 본다 (loadcause.host_procs).
@@ -318,6 +323,33 @@ def svc_index(svc: dict | None) -> float | None:
     return _scale(max(vals), STAGES_SVC, STAGES_PLAY) if vals else None
 
 
+# 서비스·컨테이너·rclone 마운트 -> 그것을 쓰는 재생 종류 (그 종류를 보고 있을 때만 서비스 지수에 넣는다).
+# 종류: plex(Plex 세션 - Plex 앱·YM_PLAYER의 Plex), ymp(YM_PLAYER 텔레그램·IPTV·팟캐스트), live(IPTV·라디오 중계), book(북오아시스)
+SVC_WHEN_DEFAULT = ("plexmediaserver.service=plex,ym_player.service=ymp,docker-bookoasis=book,docker-flaskfarm=live,"
+                    "gds2.service=plex,rclone-zeeps-member.service=book")
+
+
+def _svc_when() -> dict[str, set[str]]:
+    out = {}
+    for part in os.getenv("PORING_LOADSHED_SVC_WHEN", SVC_WHEN_DEFAULT).split(","):
+        name, _, kinds = part.strip().partition("=")
+        if name and kinds:
+            out[name] = {k.strip() for k in kinds.split("|") if k.strip()}
+    return out
+
+
+SVC_WHEN = _svc_when()
+
+
+def svc_watched(svc: dict | None, kinds: dict | None) -> dict:
+    """지금 보고 있는 종류가 쓰는 것만 (종류별 재생 수를 모르면 전부, 목록에 없는 이름은 늘).
+    예: 아무도 IPTV를 안 보면 flaskfarm이 CPU를 기다려도(다른 작업) 지수에 넣지 않는다"""
+    svc = svc or {}
+    if not kinds:
+        return dict(svc)
+    return {n: v for n, v in svc.items() if n not in SVC_WHEN or any((kinds.get(k) or 0) > 0 for k in SVC_WHEN[n])}
+
+
 def svc_alarm(svc: dict | None) -> bool:
     return any(max(v.get("avg10") or 0, v.get("io10") or 0) >= SVC_ALARM for v in (svc or {}).values() if isinstance(v, dict))
 
@@ -501,6 +533,9 @@ def watching_text(now: datetime | None = None, w: dict | None = None) -> str:
     return "\n".join(lines)
 
 
+_KINDS: dict | None = None   # 마지막 _viewing()이 본 종류별 재생 수 {"plex", "ymp", "live", "book"} (모르면 None)
+
+
 def _viewing() -> tuple[int | None, int | None]:
     """(지금 재생 중인 수, 그중 버벅이는 수). 재생 = Plex 세션(Plex 앱 + YM_PLAYER의 Plex 재생) + YM_PLAYER 텔레그램/IPTV·라디오
     + 북오아시스를 쓰는 사람(책·웹툰 읽기, TTS, 오디오북, 영상 - bookoasis MCP get_active_users).
@@ -522,6 +557,9 @@ def _viewing() -> tuple[int | None, int | None]:
     if act is not None and (act.get("stalls") or act.get("retries")):   # YM_PLAYER 재생기가 알린 끊김/재연결 (최근 5분)
         struggle = (struggle or 0) + act.get("stalls", 0) + act.get("retries", 0)
     books = _readers()   # 북오아시스에서 책·웹툰·오디오북·영상을 보는 사람 (사용자 개입으로 친다)
+    global _KINDS
+    _KINDS = None if plex is None and ym is None and books is None else {
+        "plex": plex, "ymp": ym, "live": None if act is None else int(act.get("live", 0) or 0), "book": books}
     if plex is None and ym is None and books is None:
         return None, struggle
     return (plex or 0) + (ym or 0) + (books or 0), struggle
@@ -557,6 +595,7 @@ def measure() -> dict:
     # 호스트 전체에서 CPU를 쓰는 곳 (게스트별·프로세스별) - 부하 원인은 호스트 기준으로 가린다
     out["_host_top"] = loadcause.parse_host_top(_run("zeeps", ["top"]) or "") if ZEEPS_SSH else None
     out["_playing"], out["_struggle"] = _viewing()
+    out["_kinds"] = dict(_KINDS) if _KINDS else None
     return out
 
 
@@ -731,6 +770,21 @@ def _docker(host: str, do: str, name: str) -> bool:
     return _run(host, ["docker", do, name]) is not None
 
 
+RCLONE_RC_USER = os.getenv("PORING_LOADSHED_RCLONE_RC_USER", "").strip()
+RCLONE_RC_PASS = os.getenv("PORING_LOADSHED_RCLONE_RC_PASS", "")
+
+
+def rclone_auth() -> tuple[str, str] | None:
+    """rclone rc 로그인 (--rc-user/--rc-pass로 띄웠을 때). 둘 다 있어야 보낸다"""
+    return (RCLONE_RC_USER, RCLONE_RC_PASS) if RCLONE_RC_USER and RCLONE_RC_PASS else None
+
+
+def rclone_rc(url: str, method: str, body: dict, timeout: int = 8):
+    """rclone rc 호출 (로그인이 설정돼 있으면 같이) -> requests 응답"""
+    import requests
+    return requests.post(f"{url}/{method}", json=body, auth=rclone_auth(), timeout=timeout)
+
+
 def _rclone(host: str, rate: str) -> bool:
     import requests
     url = HOSTS[host].get("rclone")
@@ -740,7 +794,10 @@ def _rclone(host: str, rate: str) -> bool:
         print(f"[서버 조절] (시험) rclone bwlimit {rate}")
         return True
     try:
-        return requests.post(f"{url}/core/bwlimit", json={"rate": rate}, timeout=8).status_code == 200
+        r = rclone_rc(url, "core/bwlimit", {"rate": rate})
+        if r.status_code in (401, 403):
+            print("[서버 조절] rclone rc가 로그인을 요구합니다 - PORING_LOADSHED_RCLONE_RC_USER/_PASS를 확인하세요")
+        return r.status_code == 200
     except requests.RequestException as e:
         print(f"[서버 조절] rclone bwlimit 실패: {e!r}"[:200])
         return False
@@ -790,6 +847,10 @@ def parse_ctl(out: str, stage: int, host: str = "zeeps") -> list[dict]:
                          "why": f"서버 경보 {stage}단계 - 정기 스캔은 다음 타이머 때 다시 (실시간 감시는 유지)"})
         elif len(parts) >= 3 and parts[0] == "quota":
             quota = parts[2]
+        elif len(parts) >= 2 and parts[0] == "mover":   # village-mover(스테이징 -> 드라이브 업로드) 속도
+            sched = parts[1] == "schedule"
+            done.append({"host": host, "do": "unthrottle" if sched else "throttle", "name": "village-mover", "kind": "mover",
+                         "why": f"서버 경보 {stage}단계 - 드라이브 업로드 " + ("원래 시간표대로" if sched else f"{parts[1]}/s로")})
     if quota:
         slow = quota != "60%"
         done.append({"host": host, "do": "throttle" if slow else "unthrottle", "name": "clamav", "kind": "quota",
@@ -867,7 +928,10 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     svc = {}
     for h in HOSTS:
         svc.update(((readings.get(h) or {}).get("probe") or {}).get("svc") or {})
-    svc_idx = svc_index(svc)
+    svc.update((readings.get("_zeeps") or {}).get("svc") or {})   # 호스트의 rclone 마운트 (village-ctl probe)
+    # 보고 있는 종류가 쓰는 것만 지수에 (아무것도 안 걸리면 0 - 지금 보는 것은 기다리지 않음)
+    used = svc_watched(svc, readings.get("_kinds"))
+    svc_idx = svc_index(used) if used else (0.0 if svc else None)
     if readings.get("_struggle"):
         data["struggle_at"] = stamp0
     struggling = bool(playing) and data.get("struggle_at", "") >= (now - timedelta(minutes=STRUGGLE_HOLD_MIN)).isoformat()
@@ -893,7 +957,7 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             elif svc_idx is not None:   # 재생 중(또는 모름): 재생 서비스가 CPU를 기다리는 정도 + 메모리·I/O (서버 전체 CPU %는 안 봄)
                 # 재생 중 I/O는 서버 전체가 아니라 재생 서비스의 io.pressure로 본다 (svc에 들어 있음). 메모리는 85%부터
                 index = max(svc_idx, mem_index(probe, STAGES_PLAY) or 0, mem_index(zeeps, STAGES_PLAY) or 0)
-                alarm = svc_alarm(svc) or mem_alarm(probe.get("psi")) or mem_alarm((zeeps or {}).get("psi"))
+                alarm = svc_alarm(used) or mem_alarm(probe.get("psi")) or mem_alarm((zeeps or {}).get("psi"))
             else:
                 index = max(probe["index"], (zeeps or {}).get("index") or 0)
                 alarm = psi_alarm(probe.get("psi")) or psi_alarm((zeeps or {}).get("psi"))
@@ -902,7 +966,8 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             st["samples"] = kept[-(KEEP_SAMPLES - 1):] + [[stamp, index, alarm]]
             st["last_cpu"], st["at"] = index, stamp
             st["detail"] = {k: probe.get(k) for k in ("cpu", "busy", "mem")} | {"psi": probe.get("psi") or {}, "idle": idle,
-                                                                                "svc": svc, "svc_index": svc_idx}
+                                                                                "svc": svc, "svc_index": svc_idx,
+                                                                                "svc_used": sorted(used), "kinds": readings.get("_kinds")}
         if r.get("running") is not None:   # 매분 도는 컨테이너 목록 - facilities.quick이 사람이 끄고 켠 것도 바로 잡는다
             st["running"], st["running_at"] = sorted(r["running"]), stamp
         st["playing"] = playing
