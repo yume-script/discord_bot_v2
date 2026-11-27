@@ -87,6 +87,7 @@ def _levels(env: str, default: str) -> list[float]:
 STAGES = _levels("PORING_LOADSHED_STAGES", "70,75,80,93,96")            # 재생 없을 때 1~5단계 시작 지수
 STAGES_PLAY = _levels("PORING_LOADSHED_STAGES_PLAY", "65,70,75,85,90")  # 재생 중일 때
 STAGES_SVC = _levels("PORING_LOADSHED_STAGES_SVC", "5,10,20,30,40")       # 재생 중: 재생 서비스 CPU 압박(%) 1~5단계
+STAGES_MEM = _levels("PORING_LOADSHED_STAGES_MEM", "85,88,91,94,97")     # 메모리 사용 %(MemAvailable 기준) 1~5단계
 SVC_ALARM = float(os.getenv("PORING_LOADSHED_SVC_ALARM", "20") or 20)    # 재생 서비스 압박 avg10이 이만큼이면 지연 경보(+1단계)
 TOP = len(STAGES)
 DOWN_GAP = 3.0                              # 내릴 때 기준보다 이만큼 더 낮아야 (단계 간격이 4%p라)
@@ -273,10 +274,12 @@ def svc_probe(units: list[str]) -> str:
     if not safe:
         return ""
     # systemd가 아는 cgroup 경로를 먼저 (안 돌면 비어 있음 -> system.slice 아래로). 루트 cgroup은 절대 안 읽는다
-    return ("; for u in " + " ".join(safe) + "; do printf 'svc_%s ' $u; "
-            "cg=$(systemctl show -p ControlGroup --value $u 2>/dev/null); f=/sys/fs/cgroup/system.slice/$u/cpu.pressure; "
-            "[ -n \"$cg\" ] && [ \"$cg\" != / ] && [ -r /sys/fs/cgroup$cg/cpu.pressure ] && f=/sys/fs/cgroup$cg/cpu.pressure; "
-            "head -1 $f 2>/dev/null || echo; done")
+    # cpu.pressure -> svc_<unit>, io.pressure -> svcio_<unit>
+    return ("; for u in " + " ".join(safe) + "; do "
+            "cg=$(systemctl show -p ControlGroup --value $u 2>/dev/null); d=/sys/fs/cgroup/system.slice/$u; "
+            "[ -n \"$cg\" ] && [ \"$cg\" != / ] && [ -r /sys/fs/cgroup$cg/cpu.pressure ] && d=/sys/fs/cgroup$cg; "
+            "printf 'svc_%s ' $u; head -1 $d/cpu.pressure 2>/dev/null || echo; "
+            "printf 'svcio_%s ' $u; head -1 $d/io.pressure 2>/dev/null || echo; done")
 
 
 def parse_psi_avg(line: str, key: str) -> float | None:
@@ -285,14 +288,9 @@ def parse_psi_avg(line: str, key: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
-def svc_index(svc: dict | None) -> float | None:
-    """재생 서비스 압박(%, 가장 큰 서비스의 avg60) -> 재생 중 지수 칸의 값 (STAGES_SVC를 STAGES_PLAY에 맞춰 선형으로).
-    서비스 압박을 못 읽었으면 None"""
-    vals = [v.get("avg60") for v in (svc or {}).values() if isinstance(v, dict) and v.get("avg60") is not None]
-    if not vals:
-        return None
-    p = max(vals)
-    xs, ys = [0.0, *STAGES_SVC, 100.0], [0.0, *STAGES_PLAY, 100.0]
+def _scale(p: float, levels: list[float], table: list[float]) -> float:
+    """levels(1~5단계 경계)의 값 p를 table(지수 칸의 1~5단계 경계)에 선형으로 옮긴다"""
+    xs, ys = [0.0, *levels, 100.0], [0.0, *table, 100.0]
     for i in range(1, len(xs)):
         if p <= xs[i]:
             x0, x1, y0, y1 = xs[i - 1], xs[i], ys[i - 1], ys[i]
@@ -300,8 +298,22 @@ def svc_index(svc: dict | None) -> float | None:
     return 100.0
 
 
+def svc_index(svc: dict | None) -> float | None:
+    """재생 서비스 압박(%, 서비스들의 CPU·I/O avg60 중 가장 큰 값) -> 재생 중 지수 칸의 값 (STAGES_SVC -> STAGES_PLAY).
+    서비스 압박을 못 읽었으면 None"""
+    vals = [x for v in (svc or {}).values() if isinstance(v, dict) for x in (v.get("avg60"), v.get("io60")) if x is not None]
+    return _scale(max(vals), STAGES_SVC, STAGES_PLAY) if vals else None
+
+
 def svc_alarm(svc: dict | None) -> bool:
-    return any((v.get("avg10") or 0) >= SVC_ALARM for v in (svc or {}).values() if isinstance(v, dict))
+    return any(max(v.get("avg10") or 0, v.get("io10") or 0) >= SVC_ALARM for v in (svc or {}).values() if isinstance(v, dict))
+
+
+def mem_index(probe: dict | None, table: list[float]) -> float | None:
+    """메모리 사용 % -> 지수 칸 (STAGES_MEM -> table). 리눅스는 남는 메모리를 캐시·RAM 디스크로 쓰므로 75%쯤은 정상 -
+    85%부터 단계로 친다. 정말 모자라면 메모리 압박(PSI memory)이 경보로 따로 잡는다."""
+    mem = (probe or {}).get("mem")
+    return None if mem is None else _scale(mem, STAGES_MEM, table)
 
 
 def parse_probe(out: str) -> dict | None:
@@ -322,7 +334,12 @@ def parse_probe(out: str) -> dict | None:
             unit, _, rest = ln[4:].partition(" ")
             a10, a60 = parse_psi_avg(rest, "avg10"), parse_psi_avg(rest, "avg60")
             if a60 is not None:
-                svc[unit] = {"avg10": a10, "avg60": a60}
+                svc.setdefault(unit, {}).update({"avg10": a10, "avg60": a60})
+        elif ln.startswith("svcio_"):
+            unit, _, rest = ln[6:].partition(" ")
+            a10, a60 = parse_psi_avg(rest, "avg10"), parse_psi_avg(rest, "avg60")
+            if a60 is not None:
+                svc.setdefault(unit, {}).update({"io10": a10, "io60": a60})
     io = psi.get("io")
     index = max(v for v in (busy, mem, io) if v is not None)
     return {"cpu": cpu_from(stats[0], stats[1]), "busy": busy, "mem": mem, "psi": psi, "index": round(index, 1),
@@ -542,8 +559,12 @@ def idle_index(probe: dict | None) -> float | None:
     메모리가 차거나 디스크가 막히는 것은 그래도 위험하니 그대로 본다."""
     if not probe:
         return None
-    vals = [v for v in (probe.get("mem"), (probe.get("psi") or {}).get("io")) if v is not None]
+    vals = [v for v in (mem_index(probe, STAGES), (probe.get("psi") or {}).get("io")) if v is not None]
     return round(max(vals), 1) if vals else 0.0
+
+
+def mem_alarm(psi: dict | None) -> bool:
+    return ((psi or {}).get("memory") or 0) > 1
 
 
 def psi_alarm_idle(psi: dict | None) -> bool:
@@ -857,8 +878,9 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
                 index = max(idle_index(probe) or 0, idle_index(zeeps) or 0)
                 alarm = psi_alarm_idle(probe.get("psi")) or psi_alarm_idle((zeeps or {}).get("psi"))
             elif svc_idx is not None:   # 재생 중(또는 모름): 재생 서비스가 CPU를 기다리는 정도 + 메모리·I/O (서버 전체 CPU %는 안 봄)
-                index = max(svc_idx, idle_index(probe) or 0, idle_index(zeeps) or 0)
-                alarm = svc_alarm(svc) or psi_alarm_idle(probe.get("psi")) or psi_alarm_idle((zeeps or {}).get("psi"))
+                # 재생 중 I/O는 서버 전체가 아니라 재생 서비스의 io.pressure로 본다 (svc에 들어 있음). 메모리는 85%부터
+                index = max(svc_idx, mem_index(probe, STAGES_PLAY) or 0, mem_index(zeeps, STAGES_PLAY) or 0)
+                alarm = svc_alarm(svc) or mem_alarm(probe.get("psi")) or mem_alarm((zeeps or {}).get("psi"))
             else:
                 index = max(probe["index"], (zeeps or {}).get("index") or 0)
                 alarm = psi_alarm(probe.get("psi")) or psi_alarm((zeeps or {}).get("psi"))
