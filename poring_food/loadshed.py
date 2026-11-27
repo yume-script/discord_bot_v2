@@ -44,6 +44,8 @@
   (봇 키는 authorized_keys command=로 이 스크립트에 묶여 probe/stage/status 말고는 못 한다). 호스트는
   /run/village/stage를 쓰고(가이드 6.3 게이트 - 방역/정비 타이머가 ExecCondition으로 읽고 스스로 건너뜀),
   1단계~ 바이러스 검사 CPUQuota 25%, 2단계~ 돌고 있는 정기 스캔(risk/deep) 중단, 0단계면 60%로. 실시간 감시(malware-watch)는 유지.
+- CT 안의 바이러스 검사(plex01 clamav-risk-scan.service, PORING_LOADSHED_PLEX01_SCAN): 호스트 것과 같은 규칙을 그 CT에 ssh로 건다
+  (1단계~ CPUQuota 25%·CPUWeight 5, 2단계~ 돌고 있으면 중단, 0단계면 60%·100). 단계는 서버들 중 가장 높은 단계.
 
 부하 대책 회의 (PORING_LOADSHED_COUNCIL, 기본 켬): 경보가 COUNCIL_STAGE(2)단계 이상으로 오르면 (30분에 한 번)
 - 담당자들이 자기 시설이 부하에 얼마나 원인인지 숫자로 보고한다 - 서버 담당(권지아: 호스트 전체에서 CPU를 쓰는 곳),
@@ -155,6 +157,8 @@ HOSTS = {
                "units": _names("PORING_LOADSHED_PLEX01_UNITS", "bookoasis_assistant.service"),
                # 재생 쪽 서비스 (이 서비스들이 CPU를 기다리는 정도로 재생 중 단계를 정한다)
                "svc": _names("PORING_LOADSHED_SVC_UNITS", "plexmediaserver.service,ym_player.service"),
+               # 이 CT 안에서 도는 바이러스 검사 (호스트 village-ctl은 호스트 것만 조절한다) - 호스트와 같은 규칙으로
+               "scan": _names("PORING_LOADSHED_PLEX01_SCAN", "clamav-risk-scan.service"),
                "rclone": _url("PORING_LOADSHED_RCLONE_RC")},
 }
 ZEEPS_SSH = os.getenv("PORING_LOADSHED_ZEEPS_SSH", "").strip()      # 호스트(zeeps) 지수도 같이 볼 때 (읽기만)
@@ -263,7 +267,11 @@ def svc_probe(units: list[str]) -> str:
     safe = [u for u in units if re.fullmatch(r"[A-Za-z0-9_.@-]+", u)]
     if not safe:
         return ""
-    return "; for u in " + " ".join(safe) + "; do printf 'svc_%s ' $u; head -1 /sys/fs/cgroup/system.slice/$u/cpu.pressure 2>/dev/null || echo; done"
+    # systemd가 아는 cgroup 경로를 먼저 (안 돌면 비어 있음 -> system.slice 아래로). 루트 cgroup은 절대 안 읽는다
+    return ("; for u in " + " ".join(safe) + "; do printf 'svc_%s ' $u; "
+            "cg=$(systemctl show -p ControlGroup --value $u 2>/dev/null); f=/sys/fs/cgroup/system.slice/$u/cpu.pressure; "
+            "[ -n \"$cg\" ] && [ \"$cg\" != / ] && [ -r /sys/fs/cgroup$cg/cpu.pressure ] && f=/sys/fs/cgroup$cg/cpu.pressure; "
+            "head -1 $f 2>/dev/null || echo; done")
 
 
 def parse_psi_avg(line: str, key: str) -> float | None:
@@ -733,19 +741,19 @@ def _throttle(host: str, a: dict) -> dict | None:
 CLAM_LABEL = "보안 점검(ClamAV 바이러스 검사)"
 
 
-def parse_ctl(out: str, stage: int) -> list[dict]:
-    """village-ctl.sh "stage N" 출력 -> 한 일 [{"host": "zeeps", ...}] (바뀐 것만 나온다)."""
+def parse_ctl(out: str, stage: int, host: str = "zeeps") -> list[dict]:
+    """village-ctl.sh "stage N"(또는 scan_script) 출력 -> 한 일 [{"host": host, ...}] (바뀐 것만 나온다)."""
     done, quota = [], ""
     for line in (out or "").splitlines():
         parts = line.split()
         if len(parts) >= 2 and parts[0] == "stopped":
-            done.append({"host": "zeeps", "do": "stop", "name": parts[1],
+            done.append({"host": host, "do": "stop", "name": parts[1],
                          "why": f"서버 경보 {stage}단계 - 정기 스캔은 다음 타이머 때 다시 (실시간 감시는 유지)"})
         elif len(parts) >= 3 and parts[0] == "quota":
             quota = parts[2]
     if quota:
         slow = quota != "60%"
-        done.append({"host": "zeeps", "do": "throttle" if slow else "unthrottle", "name": "clamav", "kind": "quota",
+        done.append({"host": host, "do": "throttle" if slow else "unthrottle", "name": "clamav", "kind": "quota",
                      "why": f"서버 경보 {stage}단계 - 바이러스 검사 CPU {quota}로"})
     return done
 
@@ -767,7 +775,41 @@ def _write_stage(stage: int) -> list[dict]:
     return parse_ctl(p.stdout, stage)
 
 
-def step(now: datetime | None = None, measurer=None, docker=None, throttler=None, stage_writer=None) -> list[dict]:
+SCAN_QUOTA = {"hi": ("25%", 5), "lo": ("60%", 100)}   # (CPUQuota, CPUWeight) - 호스트 village-ctl과 같은 값
+
+
+def scan_script(units: list[str], stage: int, prev: str | None) -> tuple[str, str]:
+    """CT 안의 바이러스 검사 조절 셸 (호스트 village-ctl과 같은 규칙): 1단계~ CPU 25%·CPUWeight 5, 0단계면 60%·100,
+    2단계~ 돌고 있는 정기 스캔 중단 (타이머는 그대로 - 다음 때 다시). 제한 값은 바뀔 때만 다시 건다.
+    반환: (셸, 이번 단계의 제한 칸). 할 일이 없으면 셸은 ""."""
+    safe = [u for u in units if re.fullmatch(r"[A-Za-z0-9_.@-]+", u)]
+    level = "hi" if stage >= 1 else "lo"
+    parts = []
+    if safe and prev != level:
+        q, w = SCAN_QUOTA[level]
+        parts += [f"systemctl set-property --runtime {u} CPUQuota={q} CPUWeight={w} && echo quota {u} {q}" for u in safe]
+    if stage >= 2:
+        parts += [f"systemctl is-active -q {u} && systemctl stop {u} && echo stopped {u}" for u in safe]
+    return ("; ".join(parts) + "; true") if parts else "", level
+
+
+def _scan_gate(host: str, stage: int, st: dict) -> list[dict]:
+    """[매분] 그 서버(CT) 안의 바이러스 검사를 단계에 맞춰 조절. 반환: 실제로 바뀐 것."""
+    script, level = scan_script(HOSTS[host].get("scan") or [], stage, st.get("scan_level"))
+    if not script:
+        return []
+    if DRY_RUN:
+        print(f"[서버 조절] (시험) {host} 바이러스 검사 {level} {stage}단계")
+        return []
+    out = _sh(host, script)
+    if out is None:
+        return []
+    st["scan_level"] = level
+    return parse_ctl(out, stage, host)
+
+
+def step(now: datetime | None = None, measurer=None, docker=None, throttler=None, stage_writer=None,
+         scan_gate=None) -> list[dict]:
     """[매분, 스레드에서] 재고 -> 단계 -> 실제로 내리고/올리고/늦추고/되돌린다. 반환: 실제로 한 일 (단계 변화 포함)."""
     if not ENABLED:
         return []
@@ -886,6 +928,14 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
         a["cpu"] = (zeeps or {}).get("index")
         done.append(a)
         print(f"[서버 조절] zeeps {a['name']} {'늦춤' if a['do'] == 'throttle' else '되돌림' if a['do'] == 'unthrottle' else '중단'} - {a['why']}")
+    # CT 안의 바이러스 검사 (호스트 것과 같은 규칙, 같은 단계 = 가장 높은 단계 - 호스트 위에서 같이 CPU를 나눠 쓰므로)
+    for host in HOSTS:
+        if not HOSTS[host].get("scan") or (hosts.get(host) or {}).get("at") != stamp:   # 못 쟀으면(못 붙으면) 안 건드림
+            continue
+        for a in (scan_gate or _scan_gate)(host, top, hosts[host]):
+            a["cpu"] = hosts[host].get("last_cpu")
+            done.append(a)
+            print(f"[서버 조절] {host} {a['name']} {'늦춤' if a['do'] == 'throttle' else '되돌림' if a['do'] == 'unthrottle' else '중단'} - {a['why']}")
     if done:
         data["log"] = (data.get("log") or [])[-99:] + [{**a, "at": now.isoformat(timespec="minutes")} for a in done]
     _save(data)

@@ -45,6 +45,13 @@ def clean_state():
     yield
 
 
+@pytest.fixture(autouse=True)
+def no_real_scan_gate(monkeypatch):
+    """서버 조절 step()이 테스트 중에 진짜 ssh로 CT 안의 바이러스 검사를 건드리지 않게"""
+    from poring_food import loadshed
+    monkeypatch.setattr(loadshed, "_scan_gate", lambda host, stage, st: [])
+
+
 @pytest.fixture
 def state_dir():
     return _STATE
