@@ -480,3 +480,52 @@ def test_notify_merges_same_stage_on_guests():
     posts = []
     loadshed.notify(done, T0, post=posts.append)
     assert len(posts) == 2 and "etc·plex01" in posts[0]
+
+
+def test_service_pressure_parse_and_scale():
+    """재생 서비스의 cgroup cpu.pressure를 읽어 재생 중 지수 칸으로 (5/10/20/30/40% -> 65/70/75/85/90)"""
+    a, b = "cpu  100 50 100 800 0 0 0 0 0 0", "cpu  190 100 190 820 0 0 0 0 0 0"
+    out = (f"{a}\n{b}\nMemTotal: 1000 kB\nMemAvailable: 600 kB\n"
+           "svc_plexmediaserver.service some avg10=9.36 avg60=16.75 avg300=16.31 total=1\n"
+           "svc_ym_player.service some avg10=0.00 avg60=0.01 avg300=0.19 total=1\nsvc_missing.service \n")
+    p = loadshed.parse_probe(out)
+    assert p["svc"] == {"plexmediaserver.service": {"avg10": 9.36, "avg60": 16.75},
+                        "ym_player.service": {"avg10": 0.0, "avg60": 0.01}}            # 못 읽은 서비스는 빠짐
+    idx = loadshed.svc_index(p["svc"])
+    assert 73 < idx < 74 and loadshed.stage_of(idx, True) == 2                          # 16.75% -> 2단계
+    assert loadshed.svc_index({"x": {"avg10": 1, "avg60": 1.5}}) < 65                   # 압박이 거의 없으면 0단계
+    assert loadshed.stage_of(loadshed.svc_index({"x": {"avg10": 1, "avg60": 45}}), True) == 5
+    assert loadshed.svc_index({}) is None and not loadshed.svc_alarm({"x": {"avg10": 5, "avg60": 5}})
+    assert loadshed.svc_alarm({"x": {"avg10": 25, "avg60": 5}})
+    assert "plexmediaserver.service" in loadshed.svc_probe(["plexmediaserver.service", "bad;rm -rf /"]) \
+        and "rm -rf" not in loadshed.svc_probe(["plexmediaserver.service", "bad;rm -rf /"])
+
+
+def _svc_probe(cpu, svc60, mem=30.0):
+    return {"index": cpu, "cpu": cpu, "busy": cpu, "mem": mem, "psi": {"cpu": 50.0},
+            "svc": {"plexmediaserver.service": {"avg10": svc60, "avg60": svc60}}}
+
+
+def test_playing_uses_service_pressure_not_server_cpu():
+    """재생 중이어도 서버 CPU가 100%인 것만으로는 경보를 올리지 않는다 - 재생 서비스가 CPU를 기다릴 때만"""
+    for i in range(8):   # 서버 CPU 100% · 호스트 PSI cpu 50, 그러나 Plex는 거의 안 기다림
+        now = T0 + timedelta(minutes=i)
+        r = {"etc": {"probe": _probe(100), "running": {}}, "plex01": {"probe": _svc_probe(100, 2.0), "running": {}},
+             "_zeeps": {"index": 100, "cpu": 100, "busy": 100, "mem": 40.0, "psi": {"cpu": 50.0}},
+             "_playing": 1, "_struggle": 0}
+        loadshed.step(now, measurer=lambda r=r: r, throttler=lambda h, a: {}, docker=lambda h, do, n: True)
+    assert _stage() == 0 and _stage("etc") == 0
+    done = []
+    for i in range(8, 16):   # Plex가 시간의 35%를 CPU를 기다림 -> 4단계까지 (재생 중이라 1분마다 한 단계)
+        now = T0 + timedelta(minutes=i)
+        r = {"etc": {"probe": _probe(100), "running": {}}, "plex01": {"probe": _svc_probe(100, 35.0), "running": {}},
+             "_playing": 1, "_struggle": 0}
+        done += loadshed.step(now, measurer=lambda r=r: r, throttler=lambda h, a: {}, docker=lambda h, do, n: True)
+    assert _stage() >= 4
+    assert loadshed._load()["hosts"]["plex01"]["detail"]["svc_index"] is not None
+
+
+def test_without_service_pressure_falls_back_to_cpu():
+    """서비스 압박을 못 읽으면(cgroup v1·권한) 예전처럼 서버 CPU로"""
+    _run([95] * 8, playing=1)
+    assert _stage() == 5
