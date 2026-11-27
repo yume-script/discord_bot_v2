@@ -17,6 +17,11 @@
 - 이 기능이 직접 한 것만 되돌린다 (원래 꺼져 있던 컨테이너는 안 켠다). 못 재면 아무것도 안 한다.
 
 부하 지수 = max(CPU us+sy+irq+steal (nice 제외 - nice된 작업은 바로 양보하므로), 메모리 사용 %, I/O 압박 PSI some avg10).
+재생 중 CPU는 "재생 쪽 서비스가 CPU를 기다리는 정도"로 본다 (SVC_UNITS, 기본 plexmediaserver·ym_player의 cgroup cpu.pressure some avg60):
+  서버 전체 CPU %(호스트 포함)는 백그라운드(인코딩·웹툰·바이러스 검사)가 남는 CPU를 다 써도 100%로 나와서, 재생이 멀쩡한데도
+  경보가 늘 5단계였다(웹툰·채우기까지 계속 묶임). 재생 서비스의 압박 5/10/20/30/40% = 1~5단계(PORING_LOADSHED_STAGES_SVC) -
+  지수 칸에는 재생 중 기준(65/70/75/85/90)으로 바꿔 넣는다. 서비스 압박을 못 읽으면(cgroup v1·권한) 예전처럼 CPU %.
+  호스트(zeeps) CPU는 원인 가리기에만 쓰고 지수에는 메모리·I/O만 넣는다.
 - 서버별로 매분 잰다: etc = 이 서버 /proc, plex01 = `ssh <host>`. PORING_LOADSHED_ZEEPS_SSH가 있으면 호스트(zeeps)도 재서
   두 서버 지수에 같이 반영한다(호스트 부하는 모든 CT에 걸리므로). 부하의 원인도 호스트 기준으로 가린다: 호스트의
   village-ctl.sh "top"(게스트별·프로세스별 CPU)으로 모든 게스트(다른 CT/VM 포함)와 호스트 자체를 본다 (loadcause.host_procs).
@@ -79,6 +84,8 @@ def _levels(env: str, default: str) -> list[float]:
 
 STAGES = _levels("PORING_LOADSHED_STAGES", "70,75,80,93,96")            # 재생 없을 때 1~5단계 시작 지수
 STAGES_PLAY = _levels("PORING_LOADSHED_STAGES_PLAY", "65,70,75,85,90")  # 재생 중일 때
+STAGES_SVC = _levels("PORING_LOADSHED_STAGES_SVC", "5,10,20,30,40")       # 재생 중: 재생 서비스 CPU 압박(%) 1~5단계
+SVC_ALARM = float(os.getenv("PORING_LOADSHED_SVC_ALARM", "20") or 20)    # 재생 서비스 압박 avg10이 이만큼이면 지연 경보(+1단계)
 TOP = len(STAGES)
 DOWN_GAP = 3.0                              # 내릴 때 기준보다 이만큼 더 낮아야 (단계 간격이 4%p라)
 UP_EVERY_MIN = 5                            # 한 단계 올린 뒤 다음 단계까지 (조치 효과 검증 시간)
@@ -146,6 +153,8 @@ HOSTS = {
                "docker_mcp": os.getenv("PORING_DOCKER_PLEX_MCP_SERVER", "docker_bookoasis"),
                "stop": _names("PORING_LOADSHED_PLEX01", ""),
                "units": _names("PORING_LOADSHED_PLEX01_UNITS", "bookoasis_assistant.service"),
+               # 재생 쪽 서비스 (이 서비스들이 CPU를 기다리는 정도로 재생 중 단계를 정한다)
+               "svc": _names("PORING_LOADSHED_SVC_UNITS", "plexmediaserver.service,ym_player.service"),
                "rclone": _url("PORING_LOADSHED_RCLONE_RC")},
 }
 ZEEPS_SSH = os.getenv("PORING_LOADSHED_ZEEPS_SSH", "").strip()      # 호스트(zeeps) 지수도 같이 볼 때 (읽기만)
@@ -249,8 +258,41 @@ _PROBE = ("head -1 /proc/stat; sleep 1; head -1 /proc/stat; grep -E '^(MemTotal|
           "for r in cpu io memory; do printf 'psi_%s ' $r; head -1 /proc/pressure/$r 2>/dev/null || echo; done")
 
 
+def svc_probe(units: list[str]) -> str:
+    """재생 서비스의 cgroup cpu.pressure를 읽는 셸 (cgroup v2, systemd의 system.slice 아래)"""
+    safe = [u for u in units if re.fullmatch(r"[A-Za-z0-9_.@-]+", u)]
+    if not safe:
+        return ""
+    return "; for u in " + " ".join(safe) + "; do printf 'svc_%s ' $u; head -1 /sys/fs/cgroup/system.slice/$u/cpu.pressure 2>/dev/null || echo; done"
+
+
+def parse_psi_avg(line: str, key: str) -> float | None:
+    some = (line or "").split("full", 1)[0]          # 'some ...' 줄만 (full 줄이 붙어 와도)
+    m = re.search(r"\b" + key + r"=([0-9.]+)", some) if "some" in some else None
+    return float(m.group(1)) if m else None
+
+
+def svc_index(svc: dict | None) -> float | None:
+    """재생 서비스 압박(%, 가장 큰 서비스의 avg60) -> 재생 중 지수 칸의 값 (STAGES_SVC를 STAGES_PLAY에 맞춰 선형으로).
+    서비스 압박을 못 읽었으면 None"""
+    vals = [v.get("avg60") for v in (svc or {}).values() if isinstance(v, dict) and v.get("avg60") is not None]
+    if not vals:
+        return None
+    p = max(vals)
+    xs, ys = [0.0, *STAGES_SVC, 100.0], [0.0, *STAGES_PLAY, 100.0]
+    for i in range(1, len(xs)):
+        if p <= xs[i]:
+            x0, x1, y0, y1 = xs[i - 1], xs[i], ys[i - 1], ys[i]
+            return round(y0 + (y1 - y0) * (p - x0) / ((x1 - x0) or 1), 1)
+    return 100.0
+
+
+def svc_alarm(svc: dict | None) -> bool:
+    return any((v.get("avg10") or 0) >= SVC_ALARM for v in (svc or {}).values() if isinstance(v, dict))
+
+
 def parse_probe(out: str) -> dict | None:
-    """_PROBE 출력 -> {"cpu"(nice 포함), "busy", "mem", "psi": {cpu, io, memory}, "index"}."""
+    """_PROBE 출력 -> {"cpu"(nice 포함), "busy", "mem", "psi": {cpu, io, memory}, "index", "svc": {서비스: {avg10, avg60}}}."""
     lines = (out or "").strip().splitlines()
     stats = [ln for ln in lines if ln.startswith("cpu ")]
     if len(stats) < 2:
@@ -258,15 +300,20 @@ def parse_probe(out: str) -> dict | None:
     busy, mem = busy_from(stats[0], stats[1]), parse_mem("\n".join(lines))
     if busy is None:
         return None
-    psi = {}
+    psi, svc = {}, {}
     for ln in lines:
         if ln.startswith("psi_"):
             kind, _, rest = ln[4:].partition(" ")
             psi[kind] = parse_psi(rest)
+        elif ln.startswith("svc_"):
+            unit, _, rest = ln[4:].partition(" ")
+            a10, a60 = parse_psi_avg(rest, "avg10"), parse_psi_avg(rest, "avg60")
+            if a60 is not None:
+                svc[unit] = {"avg10": a10, "avg60": a60}
     io = psi.get("io")
     index = max(v for v in (busy, mem, io) if v is not None)
     return {"cpu": cpu_from(stats[0], stats[1]), "busy": busy, "mem": mem, "psi": psi, "index": round(index, 1),
-            "raw": stats[1]}
+            "raw": stats[1], "svc": svc}
 
 
 def smooth(probe: dict | None, store: dict, stamp: str, since: str) -> dict | None:
@@ -456,7 +503,7 @@ def measure() -> dict:
     "_struggle": 버벅이는 재생 수|None}."""
     out = {}
     for host in HOSTS:
-        probe = parse_probe(_sh(host, _PROBE) or "")
+        probe = parse_probe(_sh(host, _PROBE + svc_probe(HOSTS[host].get("svc") or [])) or "")
         stats = _run(host, ["docker", "stats", "--no-stream", "--format", "'{{.Name}}\t{{.CPUPerc}}'"]
                      if HOSTS[host]["ssh"] else ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}"])
         ps = _sh(host, "ps -eo pcpu=,args= --sort=-pcpu 2>/dev/null | head -25")   # 원인 가리기용 (loadcause)
@@ -735,6 +782,11 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
     zeeps = smooth(readings.get("_zeeps") or None, data.setdefault("zeeps", {}), stamp0, since_raw)
     playing = readings.get("_playing")
     idle = playing == 0   # 재생이 없다고 확인됨 (모르면 None - 그땐 예전처럼 CPU도 본다)
+    # 재생 쪽 서비스(Plex·YMP)의 CPU 압박 - 읽혔으면 재생 중 CPU는 이것으로 (모든 서버에 같이 - 같은 호스트 위)
+    svc = {}
+    for h in HOSTS:
+        svc.update(((readings.get(h) or {}).get("probe") or {}).get("svc") or {})
+    svc_idx = svc_index(svc)
     if readings.get("_struggle"):
         data["struggle_at"] = stamp0
     struggling = bool(playing) and data.get("struggle_at", "") >= (now - timedelta(minutes=STRUGGLE_HOLD_MIN)).isoformat()
@@ -757,6 +809,9 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             if idle:   # 아무도 안 봄: CPU는 일(입고·인코딩)에 다 써도 된다 - 메모리·I/O만 본다
                 index = max(idle_index(probe) or 0, idle_index(zeeps) or 0)
                 alarm = psi_alarm_idle(probe.get("psi")) or psi_alarm_idle((zeeps or {}).get("psi"))
+            elif svc_idx is not None:   # 재생 중(또는 모름): 재생 서비스가 CPU를 기다리는 정도 + 메모리·I/O (서버 전체 CPU %는 안 봄)
+                index = max(svc_idx, idle_index(probe) or 0, idle_index(zeeps) or 0)
+                alarm = svc_alarm(svc) or psi_alarm_idle(probe.get("psi")) or psi_alarm_idle((zeeps or {}).get("psi"))
             else:
                 index = max(probe["index"], (zeeps or {}).get("index") or 0)
                 alarm = psi_alarm(probe.get("psi")) or psi_alarm((zeeps or {}).get("psi"))
@@ -764,7 +819,8 @@ def step(now: datetime | None = None, measurer=None, docker=None, throttler=None
             kept = [x for x in (st.get("samples") or []) if len(x) >= 3]
             st["samples"] = kept[-(KEEP_SAMPLES - 1):] + [[stamp, index, alarm]]
             st["last_cpu"], st["at"] = index, stamp
-            st["detail"] = {k: probe.get(k) for k in ("cpu", "busy", "mem")} | {"psi": probe.get("psi") or {}, "idle": idle}
+            st["detail"] = {k: probe.get(k) for k in ("cpu", "busy", "mem")} | {"psi": probe.get("psi") or {}, "idle": idle,
+                                                                                "svc": svc, "svc_index": svc_idx}
         if r.get("running") is not None:   # 매분 도는 컨테이너 목록 - facilities.quick이 사람이 끄고 켠 것도 바로 잡는다
             st["running"], st["running_at"] = sorted(r["running"]), stamp
         st["playing"] = playing
