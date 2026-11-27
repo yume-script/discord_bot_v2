@@ -529,3 +529,45 @@ def test_without_service_pressure_falls_back_to_cpu():
     """서비스 압박을 못 읽으면(cgroup v1·권한) 예전처럼 서버 CPU로"""
     _run([95] * 8, playing=1)
     assert _stage() == 5
+
+
+def test_guest_scan_script_follows_host_rules():
+    """CT 안의 바이러스 검사: 1단계~ 25%·weight 5, 2단계~ 돌고 있으면 중단, 0단계면 60%·100 - 바뀔 때만 다시 건다"""
+    u = ["clamav-risk-scan.service"]
+    s, lv = loadshed.scan_script(u, 1, None)
+    assert lv == "hi" and "CPUQuota=25% CPUWeight=5" in s and "stop" not in s
+    s, lv = loadshed.scan_script(u, 1, "hi")
+    assert s == "" and lv == "hi"                                         # 같은 칸이면 아무것도 안 한다
+    s, _ = loadshed.scan_script(u, 3, "hi")
+    assert "set-property" not in s and "systemctl stop clamav-risk-scan.service" in s
+    s, lv = loadshed.scan_script(u, 0, "hi")
+    assert lv == "lo" and "CPUQuota=60% CPUWeight=100" in s and "stop" not in s
+    assert loadshed.scan_script(["bad;rm -rf /"], 3, None)[0] == ""
+    done = loadshed.parse_ctl("quota clamav-risk-scan.service 25%\nstopped clamav-risk-scan.service\n", 2, "plex01")
+    assert [(d["host"], d["do"], d["name"]) for d in done] == [("plex01", "stop", "clamav-risk-scan.service"),
+                                                               ("plex01", "throttle", "clamav")]
+
+
+def test_guest_scan_gate_runs_with_top_stage_and_remembers_level(monkeypatch):
+    calls = []
+
+    def fake_sh(host, script):
+        calls.append((host, script))
+        return "quota clamav-risk-scan.service 25%\n" if "set-property" in script else ""
+    monkeypatch.setattr(loadshed, "_sh", fake_sh)
+    st = {}
+    assert [d["do"] for d in _REAL_SCAN_GATE("plex01", 1, st)] == ["throttle"] and st["scan_level"] == "hi"
+    assert _REAL_SCAN_GATE("plex01", 1, st) == [] and len(calls) == 1      # 같은 칸이면 ssh도 안 한다
+    monkeypatch.setattr(loadshed, "_sh", lambda h, s: None)               # 못 붙으면 기억도 안 바꾼다 (다음 분에 다시)
+    assert _REAL_SCAN_GATE("plex01", 0, st) == [] and st["scan_level"] == "hi"
+    # step은 가장 높은 단계로 부른다
+    seen = []
+    for i in range(3):
+        r = {"etc": {"probe": _probe(10), "running": {}}, "plex01": {"probe": _probe(10), "running": {}}, "_playing": 1}
+        loadshed.step(T0 + timedelta(minutes=i), measurer=lambda r=r: r, throttler=lambda h, a: {},
+                      docker=lambda h, do, n: True, stage_writer=lambda s: [],
+                      scan_gate=lambda h, s, st: seen.append((h, s)) or [])
+    assert seen == [("plex01", 0)] * 3
+
+
+_REAL_SCAN_GATE = loadshed._scan_gate
