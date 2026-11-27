@@ -343,11 +343,16 @@ SVC_WHEN = _svc_when()
 
 def svc_watched(svc: dict | None, kinds: dict | None) -> dict:
     """지금 보고 있는 종류가 쓰는 것만 (종류별 재생 수를 모르면 전부, 목록에 없는 이름은 늘).
+    한 종류만 모를 때(예: 북오아시스 읽는 사람 수를 못 받음 - None)도 그 종류가 쓰는 것은 넣는다 (모르면 안전하게).
     예: 아무도 IPTV를 안 보면 flaskfarm이 CPU를 기다려도(다른 작업) 지수에 넣지 않는다"""
     svc = svc or {}
     if not kinds:
         return dict(svc)
-    return {n: v for n, v in svc.items() if n not in SVC_WHEN or any((kinds.get(k) or 0) > 0 for k in SVC_WHEN[n])}
+
+    def on(k):
+        v = kinds.get(k)
+        return v is None or v > 0
+    return {n: v for n, v in svc.items() if n not in SVC_WHEN or any(on(k) for k in SVC_WHEN[n])}
 
 
 def svc_alarm(svc: dict | None) -> bool:

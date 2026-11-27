@@ -628,6 +628,9 @@ def test_only_watched_services_count():
     assert set(loadshed.svc_watched(svc, plex_only)) == {"plexmediaserver.service", "gds2.service", "기타"}
     assert set(loadshed.svc_watched(svc, {"plex": 0, "ymp": 1, "live": 1, "book": 0})) == {"docker-flaskfarm", "기타"}
     assert loadshed.svc_watched(svc, None) == svc                       # 종류를 모르면 전부 (예전처럼)
+    # 북오아시스 읽는 사람 수만 모름(None) -> 그쪽은 넣는다 (모르면 안전하게)
+    assert set(loadshed.svc_watched(svc, {"plex": 1, "ymp": 0, "live": 0, "book": None})) == \
+        {"plexmediaserver.service", "gds2.service", "docker-bookoasis", "기타"}
     assert loadshed.stage_of(loadshed.svc_index(loadshed.svc_watched(svc, plex_only)), True) == 2   # gds2 12%
     # step: Plex만 보는 중 - flaskfarm 25%는 빼고, 호스트의 gds2 마운트 압박은 넣는다
     for i in range(8):
