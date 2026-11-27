@@ -618,3 +618,55 @@ def test_docker_watch_path_containers_count_too():
                              "svc_plexmediaserver.service some avg10=1.00 avg60=1.00 avg300=1 total=1\n")
     assert set(p["svc"]) == {"docker-bookoasis", "plexmediaserver.service"}
     assert loadshed.stage_of(loadshed.svc_index(p["svc"]), True) == 3 and loadshed.svc_alarm(p["svc"])   # 북오아시스가 버벅임
+
+
+def test_only_watched_services_count():
+    """보고 있는 종류가 쓰는 서비스만 지수에 - IPTV를 안 보면 flaskfarm의 대기는 빼고, Plex를 보면 gds2(rclone 마운트)도"""
+    svc = {"plexmediaserver.service": {"avg10": 1, "avg60": 1}, "docker-flaskfarm": {"avg10": 29, "avg60": 25},
+           "gds2.service": {"avg10": 2, "avg60": 12}, "docker-bookoasis": {"avg10": 0, "avg60": 2}, "기타": {"avg60": 3}}
+    plex_only = {"plex": 1, "ymp": 0, "live": 0, "book": 0}
+    assert set(loadshed.svc_watched(svc, plex_only)) == {"plexmediaserver.service", "gds2.service", "기타"}
+    assert set(loadshed.svc_watched(svc, {"plex": 0, "ymp": 1, "live": 1, "book": 0})) == {"docker-flaskfarm", "기타"}
+    assert loadshed.svc_watched(svc, None) == svc                       # 종류를 모르면 전부 (예전처럼)
+    assert loadshed.stage_of(loadshed.svc_index(loadshed.svc_watched(svc, plex_only)), True) == 2   # gds2 12%
+    # step: Plex만 보는 중 - flaskfarm 25%는 빼고, 호스트의 gds2 마운트 압박은 넣는다
+    for i in range(8):
+        pr = {"index": 100, "cpu": 100, "busy": 100, "mem": 60.0, "psi": {},
+              "svc": {"plexmediaserver.service": {"avg10": 1, "avg60": 1}, "docker-flaskfarm": {"avg10": 29, "avg60": 25}}}
+        z = {"index": 50, "cpu": 50, "busy": 50, "mem": 40.0, "psi": {}, "svc": {"gds2.service": {"avg10": 1, "avg60": 2}}}
+        r = {"etc": {"probe": _probe(10), "running": {}}, "plex01": {"probe": pr, "running": {}}, "_zeeps": z,
+             "_playing": 1, "_struggle": 0, "_kinds": plex_only}
+        loadshed.step(T0 + timedelta(minutes=i), measurer=lambda r=r: r, throttler=lambda h, a: {}, docker=lambda h, do, n: True,
+                      stage_writer=lambda s: [])
+    st = loadshed._load()["hosts"]["plex01"]
+    assert _stage() == 0 and st["detail"]["svc_used"] == ["gds2.service", "plexmediaserver.service"]
+    # 북오아시스만 보는데 그 컨테이너 값이 없음 -> 지수 0 (서버 CPU %로 돌아가지 않는다)
+    r["_kinds"], r["_zeeps"] = {"plex": 0, "ymp": 0, "live": 0, "book": 1}, None
+    loadshed.step(T0 + timedelta(minutes=9), measurer=lambda r=r: r, throttler=lambda h, a: {}, docker=lambda h, do, n: True,
+                  stage_writer=lambda s: [])
+    st = loadshed._load()["hosts"]["plex01"]
+    assert st["detail"]["svc_index"] == 0.0 and st["last_cpu"] < 65
+
+
+def test_mover_lines_and_rc_auth(monkeypatch):
+    done = loadshed.parse_ctl("mover 2M\nquota clamav-risk-scan.service 25%\n", 3)
+    assert ("zeeps", "throttle", "village-mover") in [(d["host"], d["do"], d["name"]) for d in done]
+    assert "2M/s" in done[0]["why"]
+    assert loadshed.parse_ctl("mover schedule\n", 0)[0]["do"] == "unthrottle"
+    seen = {}
+
+    class R:
+        status_code = 200
+
+    def post(url, json=None, auth=None, timeout=0):
+        seen.update(url=url, json=json, auth=auth)
+        return R()
+    import requests
+    monkeypatch.setattr(requests, "post", post)
+    monkeypatch.setitem(loadshed.HOSTS["plex01"], "rclone", "http://10.0.0.5:5276")
+    monkeypatch.setattr(loadshed, "DRY_RUN", False)
+    assert loadshed._rclone("plex01", "5M:off") and seen["auth"] is None              # 로그인 설정이 없으면 안 보냄
+    monkeypatch.setattr(loadshed, "RCLONE_RC_USER", "village")
+    monkeypatch.setattr(loadshed, "RCLONE_RC_PASS", "pw")
+    assert loadshed._rclone("plex01", "off") and seen == {"url": "http://10.0.0.5:5276/core/bwlimit", "json": {"rate": "off"},
+                                                          "auth": ("village", "pw")}

@@ -27,6 +27,9 @@ RC_URL=http://127.0.0.1:5276           # 기존 zeeps_member 마운트의 rc (�
 MIN_AGE=30                             # 분 - 이만큼 안 바뀐 파일만 올린다 (받는 중인 파일 제외)
 MINFREE=20G                            # 로컬 여유가 이보다 적으면 새 파일은 원격으로 바로
 BWLIMIT="08:00,5M 01:00,off"           # 업로드: 08~01시 5MB/s, 01~08시 제한 없음
+#RC_USER=village                       # 마운트 rc를 --rc-user/--rc-pass로 띄웠다면 (vfs/refresh에 씀)
+#RC_PASS=...
+#MOVER_RC_PORT=5277                    # 업로드 rc (127.0.0.1만) - 결계 단계 2~3이면 2M, 4 이상이면 512k (village-ctl)
 C
 fi
 . "$CONF"
