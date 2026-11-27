@@ -571,3 +571,11 @@ def test_guest_scan_gate_runs_with_top_stage_and_remembers_level(monkeypatch):
 
 
 _REAL_SCAN_GATE = loadshed._scan_gate
+
+
+def test_watched_services_are_read_even_if_protected():
+    """재생 서비스(Plex·YMP)는 보호 대상이라 조치 목록에서는 빠지지만, 압박을 읽는 목록에는 남아야 한다"""
+    assert loadshed.HOSTS["plex01"]["svc"] == ["plexmediaserver.service", "ym_player.service"]
+    assert all(loadshed.protected(u) for u in loadshed.HOSTS["plex01"]["svc"])
+    assert "clamav-risk-scan.service" in loadshed.HOSTS["plex01"]["scan"]
+    assert "plexmediaserver.service" in loadshed.svc_probe(loadshed.HOSTS["plex01"]["svc"])
