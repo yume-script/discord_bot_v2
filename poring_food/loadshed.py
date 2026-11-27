@@ -124,6 +124,11 @@ def protected(name: str) -> bool:
     return n in PROTECTED or n.startswith(_PROTECTED_PREFIX)
 
 
+def _watch_names(env: str, default: str) -> list[str]:
+    """읽기만 할 서비스 이름 (재생 서비스 압박) - 보호 대상이어도 그대로 둔다 (아무 조치도 안 하므로)."""
+    return [n.strip() for n in os.getenv(env, default).split(",") if _SAFE.match(n.strip())]
+
+
 def _names(env: str, default: str) -> list[str]:
     """"docker-warproxy, x" -> 안전한 이름만, 보호 대상은 뺀다 (로그로 알림)."""
     out = []
@@ -156,9 +161,9 @@ HOSTS = {
                "stop": _names("PORING_LOADSHED_PLEX01", ""),
                "units": _names("PORING_LOADSHED_PLEX01_UNITS", "bookoasis_assistant.service"),
                # 재생 쪽 서비스 (이 서비스들이 CPU를 기다리는 정도로 재생 중 단계를 정한다)
-               "svc": _names("PORING_LOADSHED_SVC_UNITS", "plexmediaserver.service,ym_player.service"),
+               "svc": _watch_names("PORING_LOADSHED_SVC_UNITS", "plexmediaserver.service,ym_player.service"),
                # 이 CT 안에서 도는 바이러스 검사 (호스트 village-ctl은 호스트 것만 조절한다) - 호스트와 같은 규칙으로
-               "scan": _names("PORING_LOADSHED_PLEX01_SCAN", "clamav-risk-scan.service"),
+               "scan": _names("PORING_LOADSHED_PLEX01_SCAN", "clamav-risk-scan.service,clamav-deep-scan.service"),
                "rclone": _url("PORING_LOADSHED_RCLONE_RC")},
 }
 ZEEPS_SSH = os.getenv("PORING_LOADSHED_ZEEPS_SSH", "").strip()      # 호스트(zeeps) 지수도 같이 볼 때 (읽기만)
