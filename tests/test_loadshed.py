@@ -417,14 +417,15 @@ def test_idle_cpu_full_is_fine_but_memory_and_play_still_count():
     done = _run([100] * 15, playing=0, struggle=0, slow_log=slow)
     assert not [d for d in done if d["do"] == "stage"] and _stage() == 0 and not slow
     st = loadshed._load()["hosts"]["plex01"]
-    assert st["last_cpu"] == 30.0 and st["detail"]["idle"] and st["detail"]["busy"] == 100
+    assert st["last_cpu"] == loadshed._scale(30.0, loadshed.STAGES_MEM, loadshed.STAGES) and st["detail"]["idle"] and st["detail"]["busy"] == 100
     assert loadshed.watchers(T0 + timedelta(minutes=15)) == 0
     assert "보는 사람 없음" in loadshed.summary(T0 + timedelta(minutes=15))
     # 재생이 시작되면 그 분부터 CPU 포함 기준 (100%면 바로 5단계)
     done = _run([100] * 3, start=T0 + timedelta(minutes=15), playing=1)
     assert [d["to"] for d in done if d["do"] == "stage" and d["host"] == "plex01"][:1] == [5]
     # 모르면(None) 예전처럼 CPU도 본다
-    assert loadshed.idle_index({"mem": 40.0, "psi": {"io": 12.0}, "busy": 100}) == 40.0
+    assert loadshed.idle_index({"mem": 40.0, "psi": {"io": 52.0}, "busy": 100}) == 52.0          # I/O 압박은 그대로
+    assert loadshed.idle_index({"mem": 75.6, "psi": {}, "busy": 100}) < loadshed.STAGES[0]       # 메모리 75%는 정상
     assert loadshed.psi_alarm_idle({"cpu": 50}) is False and loadshed.psi_alarm_idle({"io": 11}) is True
 
 
@@ -579,3 +580,25 @@ def test_watched_services_are_read_even_if_protected():
     assert all(loadshed.protected(u) for u in loadshed.HOSTS["plex01"]["svc"])
     assert "clamav-risk-scan.service" in loadshed.HOSTS["plex01"]["scan"]
     assert "plexmediaserver.service" in loadshed.svc_probe(loadshed.HOSTS["plex01"]["svc"])
+
+
+def test_memory_counts_from_85_percent_and_playback_io_is_the_service_io():
+    """메모리 75%(RAM 디스크·캐시)는 0단계, 85/88/91/94/97% = 1~5단계. 재생 중 I/O는 서버 전체가 아니라 재생 서비스의 io.pressure"""
+    assert loadshed.stage_of(loadshed.mem_index({"mem": 75.6}, loadshed.STAGES_PLAY), True) == 0
+    assert loadshed.stage_of(loadshed.mem_index({"mem": 86}, loadshed.STAGES_PLAY), True) == 1
+    assert loadshed.stage_of(loadshed.mem_index({"mem": 97}, loadshed.STAGES_PLAY), True) == 5
+    a, b = "cpu  100 50 100 800 0 0 0 0 0 0", "cpu  190 100 190 820 0 0 0 0 0 0"
+    p = loadshed.parse_probe(f"{a}\n{b}\nMemTotal: 1000 kB\nMemAvailable: 600 kB\n"
+                             "svc_plexmediaserver.service some avg10=1.00 avg60=1.38 avg300=1 total=1\n"
+                             "svcio_plexmediaserver.service some avg10=25.00 avg60=12.00 avg300=1 total=1\n")
+    assert p["svc"]["plexmediaserver.service"] == {"avg10": 1.0, "avg60": 1.38, "io10": 25.0, "io60": 12.0}
+    assert loadshed.stage_of(loadshed.svc_index(p["svc"]), True) == 2 and loadshed.svc_alarm(p["svc"])   # Plex가 I/O를 기다림
+    assert "io.pressure" in loadshed.svc_probe(["plexmediaserver.service"])
+    # 지금 CT105 모양: 메모리 75.6%, 서버 I/O 압박 40%, Plex는 거의 안 기다림 -> 0단계
+    for i in range(12):
+        now = T0 + timedelta(minutes=i)
+        pr = {"index": 100, "cpu": 100, "busy": 100, "mem": 75.6, "psi": {"cpu": 60.0, "io": 40.0, "memory": 0.0},
+              "svc": {"plexmediaserver.service": {"avg10": 1.56, "avg60": 1.38, "io10": 0.5, "io60": 0.4}}}
+        r = {"etc": {"probe": _probe(20), "running": {}}, "plex01": {"probe": pr, "running": {}}, "_playing": 1, "_struggle": 0}
+        loadshed.step(now, measurer=lambda r=r: r, throttler=lambda h, a: {}, docker=lambda h, do, n: True)
+    assert _stage() == 0 and _stage("etc") == 0
