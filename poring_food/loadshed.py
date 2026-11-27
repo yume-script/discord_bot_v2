@@ -17,7 +17,8 @@
 - 이 기능이 직접 한 것만 되돌린다 (원래 꺼져 있던 컨테이너는 안 켠다). 못 재면 아무것도 안 한다.
 
 부하 지수 = max(CPU us+sy+irq+steal (nice 제외 - nice된 작업은 바로 양보하므로), 메모리 사용 %, I/O 압박 PSI some avg10).
-재생 중 CPU는 "재생 쪽 서비스가 CPU를 기다리는 정도"로 본다 (SVC_UNITS, 기본 plexmediaserver·ym_player의 cgroup cpu.pressure some avg60):
+재생 중 CPU는 "재생 쪽 서비스가 CPU를 기다리는 정도"로 본다 (SVC_UNITS, 기본 plexmediaserver·ym_player의 cgroup cpu.pressure some avg60,
+  + SVC_CONTAINERS 도커 컨테이너 bookoasis(책·웹툰 열람)·flaskfarm(IPTV)의 docker-<id>.scope, io.pressure도 같이):
   서버 전체 CPU %(호스트 포함)는 백그라운드(인코딩·웹툰·바이러스 검사)가 남는 CPU를 다 써도 100%로 나와서, 재생이 멀쩡한데도
   경보가 늘 5단계였다(웹툰·채우기까지 계속 묶임). 재생 서비스의 압박 5/10/20/30/40% = 1~5단계(PORING_LOADSHED_STAGES_SVC) -
   지수 칸에는 재생 중 기준(65/70/75/85/90)으로 바꿔 넣는다. 서비스 압박을 못 읽으면(cgroup v1·권한) 예전처럼 CPU %.
@@ -163,6 +164,8 @@ HOSTS = {
                "units": _names("PORING_LOADSHED_PLEX01_UNITS", "bookoasis_assistant.service"),
                # 재생 쪽 서비스 (이 서비스들이 CPU를 기다리는 정도로 재생 중 단계를 정한다)
                "svc": _watch_names("PORING_LOADSHED_SVC_UNITS", "plexmediaserver.service,ym_player.service"),
+               # 시청 경로인 도커 컨테이너도 같이 (책·웹툰 열람 = bookoasis, IPTV 중계 = flaskfarm)
+               "svc_docker": _watch_names("PORING_LOADSHED_SVC_CONTAINERS", "bookoasis,flaskfarm"),
                # 이 CT 안에서 도는 바이러스 검사 (호스트 village-ctl은 호스트 것만 조절한다) - 호스트와 같은 규칙으로
                "scan": _names("PORING_LOADSHED_PLEX01_SCAN", "clamav-risk-scan.service,clamav-deep-scan.service"),
                "rclone": _url("PORING_LOADSHED_RCLONE_RC")},
@@ -268,14 +271,24 @@ _PROBE = ("head -1 /proc/stat; sleep 1; head -1 /proc/stat; grep -E '^(MemTotal|
           "for r in cpu io memory; do printf 'psi_%s ' $r; head -1 /proc/pressure/$r 2>/dev/null || echo; done")
 
 
-def svc_probe(units: list[str]) -> str:
-    """재생 서비스의 cgroup cpu.pressure를 읽는 셸 (cgroup v2, systemd의 system.slice 아래)"""
+def svc_probe(units: list[str], containers: list[str] | tuple = ()) -> str:
+    """재생 서비스의 cgroup cpu.pressure·io.pressure를 읽는 셸 (cgroup v2).
+    units: systemd 서비스 (systemd의 ControlGroup -> 없으면 system.slice 아래).
+    containers: 도커 컨테이너 이름 -> 'docker-<이름>'으로 (system.slice/docker-<id>.scope, 없으면 /docker/<id>)"""
     safe = [u for u in units if re.fullmatch(r"[A-Za-z0-9_.@-]+", u)]
+    cons = [c for c in containers if re.fullmatch(r"[A-Za-z0-9_.-]+", c)]
+    out = ""
+    if cons:
+        out += ("; for c in " + " ".join(cons) + "; do id=$(docker inspect -f '{{.Id}}' $c 2>/dev/null); d=; "
+                "for x in /sys/fs/cgroup/system.slice/docker-$id.scope /sys/fs/cgroup/docker/$id; do "
+                "[ -n \"$id\" ] && [ -r $x/cpu.pressure ] && d=$x && break; done; "
+                "printf 'svc_docker-%s ' $c; { [ -n \"$d\" ] && head -1 $d/cpu.pressure; } || echo; "
+                "printf 'svcio_docker-%s ' $c; { [ -n \"$d\" ] && head -1 $d/io.pressure; } || echo; done")
     if not safe:
-        return ""
+        return out
     # systemd가 아는 cgroup 경로를 먼저 (안 돌면 비어 있음 -> system.slice 아래로). 루트 cgroup은 절대 안 읽는다
     # cpu.pressure -> svc_<unit>, io.pressure -> svcio_<unit>
-    return ("; for u in " + " ".join(safe) + "; do "
+    return out + ("; for u in " + " ".join(safe) + "; do "
             "cg=$(systemctl show -p ControlGroup --value $u 2>/dev/null); d=/sys/fs/cgroup/system.slice/$u; "
             "[ -n \"$cg\" ] && [ \"$cg\" != / ] && [ -r /sys/fs/cgroup$cg/cpu.pressure ] && d=/sys/fs/cgroup$cg; "
             "printf 'svc_%s ' $u; head -1 $d/cpu.pressure 2>/dev/null || echo; "
@@ -533,7 +546,7 @@ def measure() -> dict:
     "_struggle": 버벅이는 재생 수|None}."""
     out = {}
     for host in HOSTS:
-        probe = parse_probe(_sh(host, _PROBE + svc_probe(HOSTS[host].get("svc") or [])) or "")
+        probe = parse_probe(_sh(host, _PROBE + svc_probe(HOSTS[host].get("svc") or [], HOSTS[host].get("svc_docker") or [])) or "")
         stats = _run(host, ["docker", "stats", "--no-stream", "--format", "'{{.Name}}\t{{.CPUPerc}}'"]
                      if HOSTS[host]["ssh"] else ["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.CPUPerc}}"])
         ps = _sh(host, "ps -eo pcpu=,args= --sort=-pcpu 2>/dev/null | head -25")   # 원인 가리기용 (loadcause)

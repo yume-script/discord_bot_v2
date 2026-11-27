@@ -602,3 +602,19 @@ def test_memory_counts_from_85_percent_and_playback_io_is_the_service_io():
         r = {"etc": {"probe": _probe(20), "running": {}}, "plex01": {"probe": pr, "running": {}}, "_playing": 1, "_struggle": 0}
         loadshed.step(now, measurer=lambda r=r: r, throttler=lambda h, a: {}, docker=lambda h, do, n: True)
     assert _stage() == 0 and _stage("etc") == 0
+
+
+def test_docker_watch_path_containers_count_too():
+    """책·웹툰 열람(bookoasis)·IPTV(flaskfarm) 도커 컨테이너의 압박도 서비스 지수에 (보호 대상이어도 읽기는)"""
+    assert loadshed.HOSTS["plex01"]["svc_docker"] == ["bookoasis", "flaskfarm"]
+    sh = loadshed.svc_probe(["plexmediaserver.service"], ["bookoasis", "flaskfarm", "bad;rm -rf /"])
+    assert "docker inspect" in sh and "svc_docker-%s" in sh and "bookoasis flaskfarm;" in sh and "rm -rf" not in sh
+    assert loadshed.svc_probe([], ["bookoasis"]).startswith("; for c in bookoasis;")
+    a, b = "cpu  100 50 100 800 0 0 0 0 0 0", "cpu  190 100 190 820 0 0 0 0 0 0"
+    p = loadshed.parse_probe(f"{a}\n{b}\nMemTotal: 1000 kB\nMemAvailable: 600 kB\n"
+                             "svc_docker-bookoasis some avg10=30.00 avg60=25.00 avg300=1 total=1\n"
+                             "svcio_docker-bookoasis some avg10=1.00 avg60=1.00 avg300=1 total=1\n"
+                             "svc_docker-flaskfarm \nsvcio_docker-flaskfarm \n"
+                             "svc_plexmediaserver.service some avg10=1.00 avg60=1.00 avg300=1 total=1\n")
+    assert set(p["svc"]) == {"docker-bookoasis", "plexmediaserver.service"}
+    assert loadshed.stage_of(loadshed.svc_index(p["svc"]), True) == 3 and loadshed.svc_alarm(p["svc"])   # 북오아시스가 버벅임
